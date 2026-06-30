@@ -1,0 +1,83 @@
+{"category": "interface", "id": "api:backend-control-api", "path": ".knowledge/api/backend-control-api.md", "role": "primary", "title": "Backend Control API", "type": "api"}
+{"category": "interface", "id": "api:derived-asset-serving-api", "path": ".knowledge/api/derived-asset-serving-api.md", "role": "primary", "title": "Derived Asset Serving API", "type": "api"}
+{"category": "interface", "id": "api:download-api", "path": ".knowledge/api/download-api.md", "role": "primary", "title": "File Access API", "type": "api"}
+{"category": "interface", "id": "api:health-api", "path": ".knowledge/api/health-api.md", "role": "primary", "title": "Health API", "type": "api"}
+{"category": "interface", "id": "api:session-progress-api", "path": ".knowledge/api/session-progress-api.md", "role": "primary", "title": "Session Progress API", "type": "api"}
+{"category": "interface", "id": "api:share-url-api", "path": ".knowledge/api/share-url-api.md", "role": "primary", "title": "Share URL API", "type": "api"}
+{"category": "interface", "id": "api:shared-key-api", "path": ".knowledge/api/shared-key-api.md", "role": "primary", "title": "Shared Key API", "type": "api"}
+{"category": "interface", "id": "api:upload-api", "path": ".knowledge/api/upload-api.md", "role": "primary", "title": "Upload API", "type": "api"}
+{"category": "concept", "id": "concept:upload-experience-improvements", "path": ".knowledge/concept/upload-experience-improvements.md", "role": "supporting", "title": "Upload Experience Improvements", "type": "concept"}
+{"category": "structure", "id": "data:derived-asset", "path": ".knowledge/data/derived-asset.md", "role": "supporting", "title": "Derived Asset", "type": "data"}
+{"category": "structure", "id": "data:extracted-content", "path": ".knowledge/data/extracted-content.md", "role": "supporting", "title": "Extracted Content", "type": "data"}
+{"category": "structure", "id": "data:file-item", "path": ".knowledge/data/file-item.md", "role": "supporting", "title": "File Item", "type": "data"}
+{"category": "structure", "id": "data:metadata-payload", "path": ".knowledge/data/metadata-payload.md", "role": "supporting", "title": "Metadata Payload", "type": "data"}
+{"category": "structure", "id": "data:openai-compatible-processor-config", "path": ".knowledge/data/openai-compatible-processor-config.md", "role": "supporting", "title": "OpenAI Compatible Processor Config", "type": "data"}
+{"category": "structure", "id": "data:processor-result", "path": ".knowledge/data/processor-result.md", "role": "supporting", "title": "Processor Result", "type": "data"}
+{"category": "structure", "id": "data:security-check-result", "path": ".knowledge/data/security-check-result.md", "role": "supporting", "title": "Security Check Result", "type": "data"}
+{"category": "structure", "id": "data:shared-key-record", "path": ".knowledge/data/shared-key-record.md", "role": "supporting", "title": "Shared Key Record", "type": "data"}
+{"category": "structure", "id": "data:storage-key-allocation", "path": ".knowledge/data/storage-key-allocation.md", "role": "supporting", "title": "Storage Key Allocation", "type": "data"}
+{"category": "structure", "id": "data:upload-batch", "path": ".knowledge/data/upload-batch.md", "role": "supporting", "title": "Upload Batch", "type": "data"}
+{"category": "structure", "id": "data:upload-record", "path": ".knowledge/data/upload-record.md", "role": "supporting", "title": "Upload Record", "type": "data"}
+{"category": "constraint", "id": "decision:consistency-model", "path": ".knowledge/decision/consistency-model.md", "role": "supporting", "title": "Consistency Model", "type": "decision"}
+{"category": "constraint", "id": "decision:derived-asset-readiness-policy", "path": ".knowledge/decision/derived-asset-readiness-policy.md", "role": "supporting", "title": "Derived Asset Readiness Policy", "type": "decision"}
+{"category": "constraint", "id": "decision:metadata-submit-trigger", "path": ".knowledge/decision/metadata-submit-trigger.md", "role": "supporting", "title": "Metadata Submit Trigger", "type": "decision"}
+{"category": "constraint", "id": "decision:serverless-upload-state", "path": ".knowledge/decision/serverless-upload-state.md", "role": "supporting", "title": "Serverless Upload State", "type": "decision"}
+{"category": "constraint", "id": "decision:upload-transport-boundary", "path": ".knowledge/decision/upload-transport-boundary.md", "role": "supporting", "title": "Upload Transport Boundary", "type": "decision"}
+{"category": "behavior", "id": "flow:demo-download-modes", "path": ".knowledge/flow/demo-download-modes.md", "role": "primary", "title": "Demo Download Modes", "type": "flow"}
+{"category": "behavior", "id": "flow:document-preview-generation", "path": ".knowledge/flow/document-preview-generation.md", "role": "primary", "title": "Document Preview Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:download-variant-generation", "path": ".knowledge/flow/download-variant-generation.md", "role": "primary", "title": "Download Variant Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:drag-drop-immediate-upload", "path": ".knowledge/flow/drag-drop-immediate-upload.md", "role": "primary", "title": "Drag Drop Immediate Upload", "type": "flow"}
+{"category": "behavior", "id": "flow:hls-generation", "path": ".knowledge/flow/hls-generation.md", "role": "primary", "title": "HLS Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:image-thumbnail-generation", "path": ".knowledge/flow/image-thumbnail-generation.md", "role": "primary", "title": "Image Thumbnail Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:ocr-extraction-generation", "path": ".knowledge/flow/ocr-extraction-generation.md", "role": "primary", "title": "OCR Extraction Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:security-gated-upload-acceptance", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "role": "primary", "title": "Security Gated Upload Acceptance", "type": "flow"}
+{"category": "behavior", "id": "flow:session-assembly", "path": ".knowledge/flow/session-assembly.md", "role": "primary", "title": "Session Assembly", "type": "flow"}
+{"category": "behavior", "id": "flow:svg-preview-generation", "path": ".knowledge/flow/svg-preview-generation.md", "role": "primary", "title": "SVG Preview Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:text-extraction-generation", "path": ".knowledge/flow/text-extraction-generation.md", "role": "primary", "title": "Text Extraction Generation", "type": "flow"}
+{"category": "behavior", "id": "flow:upload-and-post", "path": ".knowledge/flow/upload-and-post.md", "role": "primary", "title": "Upload And Post", "type": "flow"}
+{"category": "behavior", "id": "flow:video-preview-generation", "path": ".knowledge/flow/video-preview-generation.md", "role": "primary", "title": "Video Preview Generation", "type": "flow"}
+{"category": "constraint", "id": "policy:archive-bomb-protection", "path": ".knowledge/policy/archive-bomb-protection.md", "role": "supporting", "title": "Archive Bomb Protection", "type": "policy"}
+{"category": "constraint", "id": "policy:audit-log-policy", "path": ".knowledge/policy/audit-log-policy.md", "role": "supporting", "title": "Audit Log Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:backend-control-plane-policy", "path": ".knowledge/policy/backend-control-plane-policy.md", "role": "supporting", "title": "Backend Control Plane Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:checksum-dedupe-policy", "path": ".knowledge/policy/checksum-dedupe-policy.md", "role": "supporting", "title": "Checksum Dedupe Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:download-variant-policy", "path": ".knowledge/policy/download-variant-policy.md", "role": "supporting", "title": "Download Variant Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:external-delegation-policy", "path": ".knowledge/policy/external-delegation-policy.md", "role": "supporting", "title": "External Delegation Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:file-intake-security", "path": ".knowledge/policy/file-intake-security.md", "role": "supporting", "title": "File Intake Security", "type": "policy"}
+{"category": "constraint", "id": "policy:http-cors-header-policy", "path": ".knowledge/policy/http-cors-header-policy.md", "role": "supporting", "title": "HTTP CORS Header Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:jwt-claim-authorization", "path": ".knowledge/policy/jwt-claim-authorization.md", "role": "supporting", "title": "JWT Claim Authorization", "type": "policy"}
+{"category": "constraint", "id": "policy:metadata-stripping-policy", "path": ".knowledge/policy/metadata-stripping-policy.md", "role": "supporting", "title": "Metadata Stripping Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:object-access-policy", "path": ".knowledge/policy/object-access-policy.md", "role": "supporting", "title": "Object Access Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:placeholder-serving-policy", "path": ".knowledge/policy/placeholder-serving-policy.md", "role": "supporting", "title": "Placeholder Serving Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:preview-format-policy", "path": ".knowledge/policy/preview-format-policy.md", "role": "supporting", "title": "Preview Format Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:preview-generation-policy", "path": ".knowledge/policy/preview-generation-policy.md", "role": "supporting", "title": "Preview Generation Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:processor-execution-policy", "path": ".knowledge/policy/processor-execution-policy.md", "role": "supporting", "title": "Processor Execution Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:reverse-proxy-routing-policy", "path": ".knowledge/policy/reverse-proxy-routing-policy.md", "role": "supporting", "title": "Reverse Proxy Routing Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:search-extraction-policy", "path": ".knowledge/policy/search-extraction-policy.md", "role": "supporting", "title": "Search Extraction Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:share-url-policy", "path": ".knowledge/policy/share-url-policy.md", "role": "supporting", "title": "Share URL Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:shared-key-policy", "path": ".knowledge/policy/shared-key-policy.md", "role": "supporting", "title": "Shared Key Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:storage-key-allocation-policy", "path": ".knowledge/policy/storage-key-allocation-policy.md", "role": "supporting", "title": "Storage Key Allocation Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:tool-backend-selection-policy", "path": ".knowledge/policy/tool-backend-selection-policy.md", "role": "supporting", "title": "Tool Backend Selection Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:webhook-policy", "path": ".knowledge/policy/webhook-policy.md", "role": "supporting", "title": "Webhook Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:work-sentinel-cleanup", "path": ".knowledge/policy/work-sentinel-cleanup.md", "role": "supporting", "title": "Work Sentinel Cleanup", "type": "policy"}
+{"category": "constraint", "id": "policy:worker-queue-policy", "path": ".knowledge/policy/worker-queue-policy.md", "role": "supporting", "title": "Worker Queue Policy", "type": "policy"}
+{"category": "objective", "id": "requirement:application-metadata-submit", "path": ".knowledge/requirement/application-metadata-submit.md", "role": "primary", "title": "Application Metadata Submit", "type": "requirement"}
+{"category": "objective", "id": "requirement:four-download-modes", "path": ".knowledge/requirement/four-download-modes.md", "role": "primary", "title": "Four Download Modes", "type": "requirement"}
+{"category": "objective", "id": "requirement:streaming-upload", "path": ".knowledge/requirement/streaming-upload.md", "role": "primary", "title": "Streaming Upload", "type": "requirement"}
+{"category": "constraint", "id": "rule:prefix-replay", "path": ".knowledge/rule/prefix-replay.md", "role": "supporting", "title": "Prefix Replay", "type": "rule"}
+{"category": "external", "id": "system:application-server", "path": ".knowledge/system/application-server.md", "role": "supporting", "title": "Application Server", "type": "system"}
+{"category": "external", "id": "system:backend-control-listener", "path": ".knowledge/system/backend-control-listener.md", "role": "supporting", "title": "Backend Control Listener", "type": "system"}
+{"category": "external", "id": "system:clamav", "path": ".knowledge/system/clamav.md", "role": "supporting", "title": "ClamAV", "type": "system"}
+{"category": "external", "id": "system:content-detector", "path": ".knowledge/system/content-detector.md", "role": "supporting", "title": "Content Detector", "type": "system"}
+{"category": "external", "id": "system:document-converter", "path": ".knowledge/system/document-converter.md", "role": "supporting", "title": "Document Converter", "type": "system"}
+{"category": "external", "id": "system:external-processing-delegates", "path": ".knowledge/system/external-processing-delegates.md", "role": "supporting", "title": "External Processing Delegates", "type": "system"}
+{"category": "external", "id": "system:external-tool-registry", "path": ".knowledge/system/external-tool-registry.md", "role": "supporting", "title": "External Tool Registry", "type": "system"}
+{"category": "external", "id": "system:linux-tool-worker-image", "path": ".knowledge/system/linux-tool-worker-image.md", "role": "supporting", "title": "Linux Tool Worker Image", "type": "system"}
+{"category": "external", "id": "system:local-command-processor", "path": ".knowledge/system/local-command-processor.md", "role": "supporting", "title": "Local Command Processor", "type": "system"}
+{"category": "external", "id": "system:media-converter", "path": ".knowledge/system/media-converter.md", "role": "supporting", "title": "Media Converter", "type": "system"}
+{"category": "external", "id": "system:ocr-engine", "path": ".knowledge/system/ocr-engine.md", "role": "supporting", "title": "OCR Engine", "type": "system"}
+{"category": "external", "id": "system:openai-compatible-api-processor", "path": ".knowledge/system/openai-compatible-api-processor.md", "role": "supporting", "title": "OpenAI Compatible API Processor", "type": "system"}
+{"category": "external", "id": "system:s3-storage", "path": ".knowledge/system/s3-storage.md", "role": "supporting", "title": "S3 Storage", "type": "system"}
+{"category": "external", "id": "system:server-deployment-modes", "path": ".knowledge/system/server-deployment-modes.md", "role": "supporting", "title": "Server Deployment Modes", "type": "system"}
+{"category": "external", "id": "system:svg-renderer", "path": ".knowledge/system/svg-renderer.md", "role": "supporting", "title": "SVG Renderer", "type": "system"}
+{"category": "external", "id": "system:text-extractor", "path": ".knowledge/system/text-extractor.md", "role": "supporting", "title": "Text Extractor", "type": "system"}
+{"category": "objective", "id": "vision:stream-upload-wrapper", "path": ".knowledge/vision/stream-upload-wrapper.md", "role": "primary", "title": "Stream Upload Wrapper", "type": "vision"}
