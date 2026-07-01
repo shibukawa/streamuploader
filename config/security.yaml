@@ -43,3 +43,29 @@ archive_guard:
   max_probe_bytes: 67108864
   worker_memory_bytes: 67108864
   decompress_buffer_bytes: 32768
+clamav:
+  enabled: false
+  address: clamav:3310
+  scan_timeout_ms: 30000
+  stream_chunk_bytes: 131072
+upload_deadlines:
+  enabled: true
+  marker_prefix: .uploading/
+  start_timeout: 10s
+  finish_timeout: 1m
+  cleanup_enabled: true
+  cleanup_interval: 1m
+  cleanup_mode: server_loop
+shared_key:
+  # Empty means no default expiry. Startup logs a warning when shared keys are enabled.
+  default_ttl: ""
+  max_ttl: ""
+http_cache:
+  mode: private
+  max_age: 24h
+  s_max_age: ""
+  forward_etag: true
+  forward_last_modified: true
+logging:
+  format: text
+  level: info

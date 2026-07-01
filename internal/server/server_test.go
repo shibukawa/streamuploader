@@ -32,6 +32,7 @@ type fakeStore struct {
 	mu       sync.Mutex
 	objects  map[string][]byte
 	metadata map[string]map[string]string
+	modified map[string]time.Time
 	copies   int
 }
 
@@ -46,7 +47,11 @@ func (s *fakeStore) PutObject(_ context.Context, input storage.PutInput) (storag
 	if s.metadata == nil {
 		s.metadata = map[string]map[string]string{}
 	}
+	if s.modified == nil {
+		s.modified = map[string]time.Time{}
+	}
 	s.metadata[input.Key] = input.Metadata
+	s.modified[input.Key] = time.Now().UTC()
 	return storage.PutResult{ETag: `"fake"`}, nil
 }
 
@@ -71,6 +76,7 @@ func (s *fakeStore) GetObject(_ context.Context, input storage.GetInput) (storag
 		ContentType:   "application/octet-stream",
 		ContentLength: int64(len(body)),
 		ETag:          `"fake"`,
+		LastModified:  s.modified[input.Key],
 		Metadata:      s.metadata[input.Key],
 		ContentRange:  contentRange,
 	}, nil
@@ -88,7 +94,11 @@ func (s *fakeStore) CopyObject(_ context.Context, input storage.CopyInput) (stor
 	if s.metadata == nil {
 		s.metadata = map[string]map[string]string{}
 	}
+	if s.modified == nil {
+		s.modified = map[string]time.Time{}
+	}
 	s.metadata[input.Key] = input.Metadata
+	s.modified[input.Key] = time.Now().UTC()
 	return storage.CopyResult{ETag: `"fake-copy"`}, nil
 }
 
@@ -103,6 +113,7 @@ func (s *fakeStore) HeadObject(_ context.Context, input storage.HeadInput) (stor
 		ContentType:   "application/octet-stream",
 		ContentLength: int64(len(body)),
 		ETag:          `"fake"`,
+		LastModified:  s.modified[input.Key],
 		Metadata:      s.metadata[input.Key],
 	}, nil
 }
@@ -128,6 +139,7 @@ func (s *fakeStore) DeleteObject(_ context.Context, input storage.DeleteInput) e
 	defer s.mu.Unlock()
 	delete(s.objects, input.Key)
 	delete(s.metadata, input.Key)
+	delete(s.modified, input.Key)
 	return nil
 }
 
@@ -734,6 +746,158 @@ func TestWatchUploadSnapshot(t *testing.T) {
 	}
 	if msg.Type != "snapshot" || msg.UploadKey != key.UploadKey || msg.Item.Status != "key_created" {
 		t.Fatalf("watch message = %+v", msg)
+	}
+}
+
+func TestUploadKeyStartDeadlineExpires(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		UploadDeadlines: config.UploadDeadlinePolicy{
+			Enabled:         true,
+			MarkerPrefix:    ".uploading/",
+			StartTimeout:    time.Nanosecond,
+			FinishTimeout:   time.Minute,
+			CleanupEnabled:  false,
+			CleanupInterval: time.Minute,
+			CleanupMode:     "disabled",
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"late.txt","content_type":"text/plain"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+	}
+	decode(t, keyResp, &key)
+	time.Sleep(time.Millisecond)
+
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewBufferString("late"))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusGone {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	var body map[string]string
+	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "upload_key_expired" {
+		t.Fatalf("error body = %+v", body)
+	}
+}
+
+func TestCleanupExpiredUploadMarkers(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		UploadDeadlines: config.UploadDeadlinePolicy{
+			Enabled:         true,
+			MarkerPrefix:    ".uploading/",
+			StartTimeout:    time.Nanosecond,
+			FinishTimeout:   time.Minute,
+			CleanupEnabled:  false,
+			CleanupInterval: time.Minute,
+			CleanupMode:     "disabled",
+		},
+	}
+	srv := New(cfg, store)
+	app := httptest.NewServer(srv.Handler())
+	defer app.Close()
+	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"stale.txt"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key status = %d", resp.StatusCode)
+	}
+	time.Sleep(time.Millisecond)
+	if err := srv.CleanupExpiredUploads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key := range store.objects {
+		if strings.HasPrefix(key, ".uploading/") {
+			t.Fatalf("stale marker remains: %s", key)
+		}
+	}
+}
+
+func TestSharedKeyUsesConfiguredDefaultTTL(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{"uploads/a/file.txt": []byte("hello")}}
+	cfg := config.Config{
+		PublicBaseURL:           "http://example.test",
+		Bucket:                  "bucket",
+		BackendBasePath:         "/internal",
+		EnableSharedKey:         true,
+		AllowFrontendFileAccess: true,
+		SharedKeyBits:           128,
+		SharedKeyPrefix:         ".streamuploader/shared/",
+		SharedKeyTTL:            time.Hour,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	resp := postJSON(t, app.URL+"/internal/file/shared-keys", `{"object_key":"uploads/a/file.txt"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("shared key status = %d", resp.StatusCode)
+	}
+	var body struct {
+		SharedKey string `json:"shared_key"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	decode(t, resp, &body)
+	if body.SharedKey == "" || body.ExpiresAt == "" {
+		t.Fatalf("shared key response = %+v", body)
+	}
+}
+
+func TestDownloadHeadersUseCachePolicy(t *testing.T) {
+	objectKey := "uploads/a/file.txt"
+	store := &fakeStore{
+		objects:  map[string][]byte{objectKey: []byte("hello")},
+		metadata: map[string]map[string]string{},
+		modified: map[string]time.Time{objectKey: time.Now().UTC()},
+	}
+	cfg := config.Config{
+		Bucket:                  "bucket",
+		AllowFrontendFileAccess: true,
+		HTTPCache: config.HTTPCachePolicy{
+			Mode:           "public",
+			MaxAge:         2 * time.Hour,
+			ForwardETag:    true,
+			ForwardLastMod: true,
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	resp, err := http.Get(app.URL + "/api/file/" + url.PathEscape(objectKey) + "/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("nosniff header = %q", resp.Header.Get("X-Content-Type-Options"))
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=7200, s-maxage=7200" {
+		t.Fatalf("cache-control = %q", got)
+	}
+	if resp.Header.Get("ETag") == "" || resp.Header.Get("Last-Modified") == "" {
+		t.Fatalf("missing validators: etag=%q last-modified=%q", resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"))
 	}
 }
 

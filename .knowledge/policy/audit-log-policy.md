@@ -6,6 +6,21 @@ title: Audit Log Policy
 Audit log policy records security and data access decisions for upload, processing, sharing, and download operations.
 
 ```yaml
+logger:
+  implementation: Go log/slog
+  sink: stdout
+  default_handler: slog.NewTextHandler
+  json_handler:
+    enabled_by_env:
+      - LOG_FORMAT=json
+      - SLOG_FORMAT=json
+    handler: slog.NewJSONHandler
+  level:
+    default: info
+    env:
+      - LOG_LEVEL
+  references:
+    - data:logging-config
 events:
   - upload_key_created
   - upload_started
@@ -43,7 +58,8 @@ fields:
   - request_id
   - source_ip optional
 storage:
-  - append-only log sink preferred
+  - stdout structured logs are baseline for container and cloud log collection
+  - append-only log sink preferred when deployment needs tamper-resistant audit retention
   - S3 JSONL control prefix acceptable for storage-less deployment
   - redact secrets and bearer tokens
 references:
@@ -52,4 +68,5 @@ references:
   - api:backend-control-api
   - policy:backend-control-plane-policy
   - api:share-url-api
+  - data:logging-config
 ```

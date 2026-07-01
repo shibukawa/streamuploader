@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"math"
 	stdmime "mime"
 	"net/http"
@@ -47,6 +48,17 @@ type Server struct {
 	filesBase  string
 }
 
+type uploadDeadlineMarker struct {
+	UploadKey            string `json:"upload_key"`
+	ObjectKey            string `json:"object_key"`
+	TempObjectKey        string `json:"temp_object_key,omitempty"`
+	UploadStartDeadline  string `json:"upload_start_deadline"`
+	UploadFinishDeadline string `json:"upload_finish_deadline"`
+	Status               string `json:"status"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+}
+
 func New(cfg config.Config, store storage.Store) *Server {
 	if cfg.UploadBasePath == "" {
 		cfg.UploadBasePath = "/api/upload"
@@ -69,6 +81,12 @@ func New(cfg config.Config, store storage.Store) *Server {
 	if cfg.Security.MimeMagic.PrefixBytes <= 0 {
 		cfg.Security = config.DefaultSecurityPolicy()
 	}
+	if cfg.UploadDeadlines.MarkerPrefix == "" {
+		cfg.UploadDeadlines = config.DefaultSecurityPolicy().UploadDeadlines
+	}
+	if cfg.HTTPCache.Mode == "" {
+		cfg.HTTPCache = config.DefaultSecurityPolicy().HTTPCache
+	}
 	var proxy *httputil.ReverseProxy
 	if cfg.ApplicationServerURL != "" {
 		if target, err := url.Parse(cfg.ApplicationServerURL); err == nil {
@@ -80,11 +98,14 @@ func New(cfg config.Config, store storage.Store) *Server {
 			}
 		}
 	}
+	checkOrigin := func(r *http.Request) bool {
+		return originAllowed(r.Header.Get("Origin"), cfg.AllowedOrigins)
+	}
 	return &Server{
 		cfg:        cfg,
 		store:      store,
 		proxy:      proxy,
-		upgrader:   websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+		upgrader:   websocket.Upgrader{CheckOrigin: checkOrigin},
 		uploads:    map[string]*model.UploadItem{},
 		watchers:   map[string]map[chan model.WatchServerMessage]struct{}{},
 		uploadBase: strings.TrimRight(cfg.UploadBasePath, "/"),
@@ -94,11 +115,11 @@ func New(cfg config.Config, store storage.Store) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	return http.HandlerFunc(s.route)
+	return s.withAccessLog(http.HandlerFunc(s.route))
 }
 
 func (s *Server) BackendHandler() http.Handler {
-	return http.HandlerFunc(s.backendRoute)
+	return s.withAccessLog(http.HandlerFunc(s.backendRoute))
 }
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
@@ -323,9 +344,20 @@ func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_expires_at", "expires_at must be RFC3339")
 			return
 		}
+		if s.cfg.SharedKeyMaxTTL > 0 && parsed.UTC().After(now.Add(s.cfg.SharedKeyMaxTTL)) {
+			writeError(w, http.StatusBadRequest, "ttl_too_large", "shared key expiry exceeds max ttl")
+			return
+		}
 		expiresAt = parsed.UTC().Format(time.RFC3339)
 	} else if req.TTLSeconds > 0 {
-		expiresAt = now.Add(time.Duration(req.TTLSeconds) * time.Second).Format(time.RFC3339)
+		ttl := time.Duration(req.TTLSeconds) * time.Second
+		if s.cfg.SharedKeyMaxTTL > 0 && ttl > s.cfg.SharedKeyMaxTTL {
+			writeError(w, http.StatusBadRequest, "ttl_too_large", "shared key ttl exceeds max ttl")
+			return
+		}
+		expiresAt = now.Add(ttl).Format(time.RFC3339)
+	} else if s.cfg.SharedKeyTTL > 0 {
+		expiresAt = now.Add(s.cfg.SharedKeyTTL).Format(time.RFC3339)
 	}
 	sharedKey := randomToken(int(math.Ceil(float64(s.cfg.SharedKeyBits) / 8)))
 	rec := sharedKeyRecord{
@@ -461,6 +493,10 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 	fileName := safeSegment(req.FileName)
 	prefix := storagePrefix(uploadKey, req.Prefix)
 	objectKey := path.Join(prefix, fileName)
+	expiresAt := now.Add(s.cfg.SessionTTL)
+	if s.cfg.UploadDeadlines.Enabled {
+		expiresAt = now.Add(s.cfg.UploadDeadlines.StartTimeout)
+	}
 	item := &model.UploadItem{
 		UploadKey:     uploadKey,
 		Role:          req.Role,
@@ -473,7 +509,21 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 		Status:        model.UploadKeyCreated,
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		ExpiresAt:     now.Add(s.cfg.SessionTTL),
+		ExpiresAt:     expiresAt,
+	}
+	if s.cfg.UploadDeadlines.Enabled {
+		if err := s.putUploadMarker(r.Context(), uploadDeadlineMarker{
+			UploadKey:            uploadKey,
+			ObjectKey:            objectKey,
+			UploadStartDeadline:  now.Add(s.cfg.UploadDeadlines.StartTimeout).Format(time.RFC3339Nano),
+			UploadFinishDeadline: now.Add(s.cfg.UploadDeadlines.FinishTimeout).Format(time.RFC3339Nano),
+			Status:               "key_created",
+			CreatedAt:            now.Format(time.RFC3339Nano),
+			UpdatedAt:            now.Format(time.RFC3339Nano),
+		}); err != nil {
+			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+			return
+		}
 	}
 	s.mu.Lock()
 	s.uploads[uploadKey] = item
@@ -508,6 +558,31 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	if target.status == model.UploadUploaded {
 		writeError(w, http.StatusConflict, "already_uploaded", "upload key already has content")
 		return
+	}
+	uploadCtx := r.Context()
+	var cancel context.CancelFunc
+	var marker uploadDeadlineMarker
+	if s.cfg.UploadDeadlines.Enabled {
+		var err error
+		marker, err = s.loadUploadMarker(r.Context(), uploadKey)
+		if err != nil {
+			writeError(w, http.StatusGone, "upload_key_expired", "upload key expired or missing")
+			return
+		}
+		now := time.Now().UTC()
+		startDeadline, err := time.Parse(time.RFC3339Nano, marker.UploadStartDeadline)
+		if err != nil || now.After(startDeadline) {
+			s.expireUpload(uploadKey, "upload key start deadline has passed")
+			_ = s.deleteUploadMarker(r.Context(), uploadKey)
+			writeError(w, http.StatusGone, "upload_key_expired", "upload key start deadline has passed")
+			return
+		}
+		finishDeadline, err := time.Parse(time.RFC3339Nano, marker.UploadFinishDeadline)
+		if err != nil {
+			finishDeadline = now.Add(s.cfg.UploadDeadlines.FinishTimeout)
+		}
+		uploadCtx, cancel = context.WithDeadline(r.Context(), finishDeadline)
+		defer cancel()
 	}
 	contentType := target.contentType
 	if contentType == "" {
@@ -550,6 +625,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	if securityStagedUpload {
 		objectKey = temporaryUploadObjectKey(target.objectKey, uploadKey)
 	}
+	if s.cfg.UploadDeadlines.Enabled {
+		marker.Status = "uploading"
+		marker.TempObjectKey = ""
+		if securityStagedUpload {
+			marker.TempObjectKey = objectKey
+		}
+		marker.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		_ = s.putUploadMarker(r.Context(), marker)
+	}
 	measured := &progressReader{
 		reader: body,
 		hash:   sha256.New(),
@@ -567,14 +651,14 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			})
 		},
 	}
-	result, err := s.putObjectWithSecurityScan(r.Context(), storage.PutInput{
+	result, err := s.putObjectWithSecurityScan(uploadCtx, storage.PutInput{
 		Bucket:      s.cfg.Bucket,
 		Key:         objectKey,
 		ContentType: contentType,
 	}, measured)
 	if err != nil {
 		if securityStagedUpload {
-			_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 		}
 		code := "storage_error"
 		status := http.StatusBadGateway
@@ -585,6 +669,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		} else if securityStatus, securityCode := securityErrorResponse(err); securityCode != "content_rejected" {
 			code = securityCode
 			status = securityStatus
+		} else if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) {
+			code = "upload_deadline_exceeded"
+			status = http.StatusRequestTimeout
 		}
 		s.updateUpload(uploadKey, func(item *model.UploadItem) {
 			item.Status = model.UploadFailed
@@ -596,8 +683,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		return
 	}
 	if archiveUpload {
-		if err := inspectArchiveObject(r.Context(), s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, s.cfg.Security.ArchiveGuard); err != nil {
-			_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+		if err := inspectArchiveObject(uploadCtx, s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, s.cfg.Security.ArchiveGuard); err != nil {
+			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
 			writeError(w, status, code, err.Error())
@@ -605,13 +692,13 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		}
 	}
 	if securityStagedUpload {
-		copyResult, err := s.store.CopyObject(r.Context(), storage.CopyInput{
+		copyResult, err := s.store.CopyObject(uploadCtx, storage.CopyInput{
 			Bucket:      s.cfg.Bucket,
 			SourceKey:   objectKey,
 			Key:         target.objectKey,
 			ContentType: contentType,
 		})
-		_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+		_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 		if err != nil {
 			s.failUpload(uploadKey, err.Error())
 			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
@@ -620,6 +707,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		if copyResult.ETag != "" {
 			result.ETag = copyResult.ETag
 		}
+	}
+	if s.cfg.UploadDeadlines.Enabled {
+		_ = s.deleteUploadMarker(context.Background(), uploadKey)
 	}
 	now := time.Now().UTC()
 	var uploaded *model.UploadItem
@@ -645,6 +735,15 @@ func (s *Server) failUpload(uploadKey, message string) {
 		item.UpdatedAt = time.Now().UTC()
 	})
 	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadFailed, Item: mustUpload(s.upload(uploadKey))})
+}
+
+func (s *Server) expireUpload(uploadKey, message string) {
+	s.updateUpload(uploadKey, func(item *model.UploadItem) {
+		item.Status = model.UploadExpired
+		item.Error = message
+		item.UpdatedAt = time.Now().UTC()
+	})
+	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadExpired, Item: mustUpload(s.upload(uploadKey))})
 }
 
 func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
@@ -778,14 +877,20 @@ func (s *Server) streamObject(w http.ResponseWriter, r *http.Request, objectKey,
 		fileName = path.Base(objectKey)
 	}
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	s.applyCacheHeaders(w)
 	if attachment {
 		w.Header().Set("Content-Disposition", contentDispositionAttachment(fileName))
 	}
-	if out.ETag != "" {
+	if out.ETag != "" && s.cfg.HTTPCache.ForwardETag {
 		w.Header().Set("ETag", out.ETag)
+	}
+	if !out.LastModified.IsZero() && s.cfg.HTTPCache.ForwardLastMod {
+		w.Header().Set("Last-Modified", out.LastModified.UTC().Format(http.TimeFormat))
 	}
 	if out.ContentRange != "" {
 		w.Header().Set("Content-Range", out.ContentRange)
+		w.Header().Set("Accept-Ranges", "bytes")
 	}
 	if out.ContentLength >= 0 {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", out.ContentLength))
@@ -829,6 +934,8 @@ func (s *Server) streamZipArchive(w http.ResponseWriter, r *http.Request, keys [
 		name += ".zip"
 	}
 	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	s.applyCacheHeaders(w)
 	w.Header().Set("Content-Disposition", contentDispositionAttachment(name))
 	zw := zip.NewWriter(w)
 	defer zw.Close()
@@ -965,6 +1072,108 @@ func (s *Server) deleteSharesForObject(ctx context.Context, objectKey string) er
 	return nil
 }
 
+func (s *Server) uploadMarkerObjectKey(uploadKey string) string {
+	return path.Join(s.cfg.UploadDeadlines.MarkerPrefix, uploadKey)
+}
+
+func (s *Server) putUploadMarker(ctx context.Context, marker uploadDeadlineMarker) error {
+	body, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	_, err = s.store.PutObject(ctx, storage.PutInput{
+		Bucket:      s.cfg.Bucket,
+		Key:         s.uploadMarkerObjectKey(marker.UploadKey),
+		Body:        bytes.NewReader(body),
+		ContentType: "application/json",
+		Metadata: map[string]string{
+			"upload-key":             marker.UploadKey,
+			"object-key":             marker.ObjectKey,
+			"temp-object-key":        marker.TempObjectKey,
+			"upload-start-deadline":  marker.UploadStartDeadline,
+			"upload-finish-deadline": marker.UploadFinishDeadline,
+			"status":                 marker.Status,
+		},
+	})
+	return err
+}
+
+func (s *Server) loadUploadMarker(ctx context.Context, uploadKey string) (uploadDeadlineMarker, error) {
+	out, err := s.store.GetObject(ctx, storage.GetInput{Bucket: s.cfg.Bucket, Key: s.uploadMarkerObjectKey(uploadKey)})
+	if err != nil {
+		return uploadDeadlineMarker{}, err
+	}
+	defer out.Body.Close()
+	var marker uploadDeadlineMarker
+	body, _ := io.ReadAll(io.LimitReader(out.Body, 1<<20))
+	_ = json.Unmarshal(body, &marker)
+	metadata := lowerMetadata(out.Metadata)
+	if marker.UploadKey == "" {
+		marker.UploadKey = metadata["upload-key"]
+	}
+	if marker.ObjectKey == "" {
+		marker.ObjectKey = metadata["object-key"]
+	}
+	if marker.TempObjectKey == "" {
+		marker.TempObjectKey = metadata["temp-object-key"]
+	}
+	if marker.UploadStartDeadline == "" {
+		marker.UploadStartDeadline = metadata["upload-start-deadline"]
+	}
+	if marker.UploadFinishDeadline == "" {
+		marker.UploadFinishDeadline = metadata["upload-finish-deadline"]
+	}
+	if marker.Status == "" {
+		marker.Status = metadata["status"]
+	}
+	if marker.UploadKey == "" {
+		marker.UploadKey = uploadKey
+	}
+	return marker, nil
+}
+
+func (s *Server) deleteUploadMarker(ctx context.Context, uploadKey string) error {
+	return s.store.DeleteObject(ctx, storage.DeleteInput{Bucket: s.cfg.Bucket, Key: s.uploadMarkerObjectKey(uploadKey)})
+}
+
+func (s *Server) CleanupExpiredUploads(ctx context.Context) error {
+	if !s.cfg.UploadDeadlines.Enabled {
+		return nil
+	}
+	list, err := s.store.ListObjects(ctx, storage.ListInput{Bucket: s.cfg.Bucket, Prefix: s.cfg.UploadDeadlines.MarkerPrefix})
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, key := range list.Keys {
+		uploadKey := path.Base(key)
+		marker, err := s.loadUploadMarker(ctx, uploadKey)
+		if err != nil {
+			continue
+		}
+		startExpired := deadlineExpired(marker.UploadStartDeadline, now)
+		finishExpired := deadlineExpired(marker.UploadFinishDeadline, now)
+		if !startExpired && !finishExpired {
+			continue
+		}
+		if marker.TempObjectKey != "" {
+			_ = s.store.DeleteObject(ctx, storage.DeleteInput{Bucket: s.cfg.Bucket, Key: marker.TempObjectKey})
+		}
+		_ = s.deleteUploadMarker(ctx, uploadKey)
+		s.expireUpload(uploadKey, "upload deadline expired")
+		slog.Info("cleanup_deleted", "upload_key", uploadKey, "temp_object_key", marker.TempObjectKey)
+	}
+	return nil
+}
+
+func deadlineExpired(value string, now time.Time) bool {
+	if value == "" {
+		return false
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && now.After(deadline)
+}
+
 func (s *Server) loadSharedKeyRecord(ctx context.Context, sharedKey string) (sharedKeyRecord, bool, error) {
 	return s.loadSharedRecordObject(ctx, s.sharedKeyObjectKey(sharedKey))
 }
@@ -1094,6 +1303,44 @@ func (s *Server) removeWatcherLocked(key string, ch chan model.WatchServerMessag
 	}
 }
 
+func (s *Server) withAccessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			next.ServeHTTP(w, r)
+			slog.Info("http_request",
+				"method", r.Method,
+				"route", routeTemplate(r.URL.Path, s),
+				"status", http.StatusSwitchingProtocols,
+				"duration_ms", time.Since(start).Milliseconds(),
+				"request_id", r.Header.Get("X-Request-ID"),
+				"source_ip", r.RemoteAddr,
+			)
+			return
+		}
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("http_request",
+			"method", r.Method,
+			"route", routeTemplate(r.URL.Path, s),
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"request_id", r.Header.Get("X-Request-ID"),
+			"source_ip", r.RemoteAddr,
+		)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
 func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Mode != "standalone_cross_origin" && s.cfg.Mode != "standalone" {
 		return
@@ -1110,8 +1357,59 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key,X-Request-ID,X-Upload-Key")
-	w.Header().Set("Access-Control-Expose-Headers", "Location,ETag,X-Request-ID")
+	w.Header().Set("Access-Control-Expose-Headers", "Location,ETag,Last-Modified,Content-Range,Accept-Ranges,X-Request-ID")
 	w.Header().Set("Access-Control-Max-Age", "600")
+}
+
+func (s *Server) applyCacheHeaders(w http.ResponseWriter) {
+	switch s.cfg.HTTPCache.Mode {
+	case "no-store":
+		w.Header().Set("Cache-Control", "no-store")
+	case "public":
+		sMaxAge := s.cfg.HTTPCache.SMaxAge
+		if sMaxAge <= 0 {
+			sMaxAge = s.cfg.HTTPCache.MaxAge
+		}
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, s-maxage=%d", int(s.cfg.HTTPCache.MaxAge.Seconds()), int(sMaxAge.Seconds())))
+	default:
+		w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d", int(s.cfg.HTTPCache.MaxAge.Seconds())))
+	}
+}
+
+func originAllowed(origin string, allowed []string) bool {
+	if origin == "" {
+		return true
+	}
+	return contains(allowed, "*") || contains(allowed, origin)
+}
+
+func routeTemplate(pathValue string, s *Server) string {
+	switch {
+	case pathValue == "/healthz":
+		return "/healthz"
+	case pathValue == s.uploadBase+"/keys":
+		return s.uploadBase + "/keys"
+	case strings.HasPrefix(pathValue, s.uploadBase+"/keys/") && strings.HasSuffix(pathValue, "/content"):
+		return s.uploadBase + "/keys/{upload_key}/content"
+	case strings.HasPrefix(pathValue, s.uploadBase+"/keys/"):
+		return s.uploadBase + "/keys/{upload_key}"
+	case pathValue == s.uploadBase+"/wait":
+		return s.uploadBase + "/wait"
+	case pathValue == s.uploadBase+"/watch":
+		return s.uploadBase + "/watch"
+	case strings.HasPrefix(pathValue, s.fileBase+"/shared/"):
+		return s.fileBase + "/shared/{shared_key}"
+	case strings.HasPrefix(pathValue, s.fileBase+"/"):
+		return s.fileBase + "/{key}"
+	case strings.HasPrefix(pathValue, s.filesBase+"/"):
+		return s.filesBase + "/{keys}"
+	case strings.HasPrefix(pathValue, s.cfg.BackendBasePath+"/file/shared-keys"):
+		return s.cfg.BackendBasePath + "/file/shared-keys"
+	case strings.HasPrefix(pathValue, s.cfg.BackendBasePath):
+		return s.cfg.BackendBasePath
+	default:
+		return pathValue
+	}
 }
 
 type progressReader struct {
@@ -1416,6 +1714,7 @@ func (r *progressReader) Read(p []byte) (int, error) {
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
@@ -1521,6 +1820,9 @@ func mustUpload(item *model.UploadItem, _ bool) *model.UploadItem {
 
 func Run(ctx context.Context, cfg config.Config, store storage.Store) error {
 	app := New(cfg, store)
+	if cfg.UploadDeadlines.Enabled && cfg.UploadDeadlines.CleanupEnabled && cfg.UploadDeadlines.CleanupMode == "server_loop" {
+		go app.runCleanupLoop(ctx)
+	}
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: app.Handler()}
 	servers := []*http.Server{httpServer}
 	errCh := make(chan error, 2)
@@ -1549,5 +1851,28 @@ func Run(ctx context.Context, cfg config.Config, store storage.Store) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func CleanupOnce(ctx context.Context, cfg config.Config, store storage.Store) error {
+	return New(cfg, store).CleanupExpiredUploads(ctx)
+}
+
+func (s *Server) runCleanupLoop(ctx context.Context) {
+	if s.cfg.UploadDeadlines.CleanupInterval <= 0 {
+		return
+	}
+	_ = s.CleanupExpiredUploads(ctx)
+	ticker := time.NewTicker(s.cfg.UploadDeadlines.CleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.CleanupExpiredUploads(ctx); err != nil {
+				slog.Warn("cleanup_failed", "error", err)
+			}
+		}
 	}
 }

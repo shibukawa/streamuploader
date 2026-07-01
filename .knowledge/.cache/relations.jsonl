@@ -11,6 +11,7 @@
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:http-cache-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:shared-key-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
@@ -34,6 +35,7 @@
 {"context": "body", "path": ".knowledge/api/shared-key-api.md", "source": "api:shared-key-api", "target": "data:shared-key-record", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/shared-key-api.md", "source": "api:shared-key-api", "target": "policy:backend-control-plane-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:storage-key-allocation-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:upload-key-deadline-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
@@ -107,6 +109,13 @@
 {"context": "body", "path": ".knowledge/data/file-item.md", "source": "data:file-item", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/file-item.md", "source": "data:file-item", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/data/file-item.md", "source": "data:file-item", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/http-cache-config.md", "source": "data:http-cache-config", "target": "policy:placeholder-serving-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/http-cache-config.md", "source": "data:http-cache-config", "target": "api:download-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/data/http-cache-config.md", "source": "data:http-cache-config", "target": "policy:http-cors-header-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/logging-config.md", "source": "data:logging-config", "target": "policy:shared-key-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/logging-config.md", "source": "data:logging-config", "target": "policy:http-cors-header-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/logging-config.md", "source": "data:logging-config", "target": "data:http-cache-config", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/data/logging-config.md", "source": "data:logging-config", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/metadata-payload.md", "source": "data:metadata-payload", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/metadata-payload.md", "source": "data:metadata-payload", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/metadata-payload.md", "source": "data:metadata-payload", "target": "system:application-server", "target_category": "external", "target_type": "system"}
@@ -143,6 +152,8 @@
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "flow:session-assembly", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "policy:work-sentinel-cleanup", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/upload-deadline-config.md", "source": "data:upload-deadline-config", "target": "policy:upload-key-deadline-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/upload-deadline-config.md", "source": "data:upload-deadline-config", "target": "policy:work-sentinel-cleanup", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/upload-record.md", "source": "data:upload-record", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/upload-record.md", "source": "data:upload-record", "target": "system:application-server", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/data/upload-record.md", "source": "data:upload-record", "target": "requirement:streaming-upload", "target_category": "objective", "target_type": "requirement"}
@@ -277,6 +288,7 @@
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-policy-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "data:logging-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:jwt-claim-authorization", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "api:backend-control-api", "target_category": "interface", "target_type": "api"}
@@ -313,6 +325,7 @@
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "api:backend-control-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "system:server-deployment-modes", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "system:application-server", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "data:http-cache-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "system:backend-control-listener", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "policy:reverse-proxy-routing-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/http-cors-header-policy.md", "source": "policy:http-cors-header-policy", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
@@ -384,10 +397,17 @@
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "policy:external-delegation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "policy:worker-queue-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/upload-key-deadline-policy.md", "source": "policy:upload-key-deadline-policy", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/policy/upload-key-deadline-policy.md", "source": "policy:upload-key-deadline-policy", "target": "policy:work-sentinel-cleanup", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/upload-key-deadline-policy.md", "source": "policy:upload-key-deadline-policy", "target": "data:upload-deadline-config", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/upload-key-deadline-policy.md", "source": "policy:upload-key-deadline-policy", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/policy/upload-key-deadline-policy.md", "source": "policy:upload-key-deadline-policy", "target": "flow:security-gated-upload-acceptance", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/webhook-policy.md", "source": "policy:webhook-policy", "target": "policy:worker-queue-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/webhook-policy.md", "source": "policy:webhook-policy", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/work-sentinel-cleanup.md", "source": "policy:work-sentinel-cleanup", "target": "policy:upload-key-deadline-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/work-sentinel-cleanup.md", "source": "policy:work-sentinel-cleanup", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/work-sentinel-cleanup.md", "source": "policy:work-sentinel-cleanup", "target": "data:upload-batch", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/work-sentinel-cleanup.md", "source": "policy:work-sentinel-cleanup", "target": "data:upload-deadline-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/work-sentinel-cleanup.md", "source": "policy:work-sentinel-cleanup", "target": "decision:serverless-upload-state", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/policy/worker-queue-policy.md", "source": "policy:worker-queue-policy", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/worker-queue-policy.md", "source": "policy:worker-queue-policy", "target": "system:external-tool-registry", "target_category": "external", "target_type": "system"}

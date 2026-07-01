@@ -32,6 +32,14 @@ policy:
     - if .work exists and expires_at or last_modified is older than threshold, delete prefix objects
     - skip prefixes with .ready unless retention policy says otherwise
     - tolerate eventual consistency by using grace period
+  upload_deadline_marker_cleanup:
+    marker_prefix: .uploading/
+    rule:
+      - list marker objects from policy:upload-key-deadline-policy
+      - if upload_start_deadline or upload_finish_deadline has passed, clean stale marker and temporary upload object
+      - run as in-process server loop by default every 1 minute
+      - allow disabling in-process loop for production deployments that use cloud scheduler or dedicated worker
+      - provide cleanup-once command mode that performs marker cleanup and exits
   ready_behavior:
     - remove .work or replace with .ready after upload facts are durable
     - cleanup orphaned uploaded objects when application metadata is never submitted and retention policy allows it
@@ -44,5 +52,7 @@ policy:
 references:
   - system:s3-storage
   - data:upload-batch
+  - data:upload-deadline-config
+  - policy:upload-key-deadline-policy
   - decision:serverless-upload-state
 ```

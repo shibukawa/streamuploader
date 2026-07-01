@@ -42,6 +42,7 @@ type GetResult struct {
 	ContentLength int64
 	ContentRange  string
 	ETag          string
+	LastModified  time.Time
 	Metadata      map[string]string
 }
 
@@ -54,6 +55,7 @@ type HeadResult struct {
 	ContentType   string
 	ContentLength int64
 	ETag          string
+	LastModified  time.Time
 	Metadata      map[string]string
 }
 

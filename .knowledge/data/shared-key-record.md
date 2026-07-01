@@ -33,6 +33,11 @@ fields:
     type: optional string
   expires_at:
     type: optional timestamp
+    source:
+      - backend request expires_at
+      - backend request ttl_seconds
+      - policy:shared-key-policy configured default_ttl
+      - empty when no expiry is configured or requested
   revoked:
     type: bool
 rules:

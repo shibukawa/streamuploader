@@ -132,6 +132,7 @@ func (s *S3Store) GetObject(ctx context.Context, input GetInput) (GetResult, err
 		ContentLength: aws.ToInt64(out.ContentLength),
 		ContentRange:  aws.ToString(out.ContentRange),
 		ETag:          aws.ToString(out.ETag),
+		LastModified:  aws.ToTime(out.LastModified),
 		Metadata:      out.Metadata,
 	}, nil
 }
@@ -148,6 +149,7 @@ func (s *S3Store) HeadObject(ctx context.Context, input HeadInput) (HeadResult, 
 		ContentType:   aws.ToString(out.ContentType),
 		ContentLength: aws.ToInt64(out.ContentLength),
 		ETag:          aws.ToString(out.ETag),
+		LastModified:  aws.ToTime(out.LastModified),
 		Metadata:      out.Metadata,
 	}, nil
 }

@@ -25,6 +25,9 @@ endpoints:
       expires_at: optional timestamp
     behavior:
       - generate shared_key with policy:shared-key-policy entropy rules
+      - if expires_at and ttl_seconds are omitted, apply configured shared key default TTL
+      - if configured default TTL is empty, create non-expiring key and rely on startup warning plus backend caller policy
+      - validate requested expiry against configured max TTL when present
       - write global data:shared-key-record to S3 control prefix
       - write per-object data:shared-key-record marker to target object directory .shared/{shared_key}
       - return key and URL to backend caller

@@ -157,9 +157,63 @@
           "maximum": 1048576
         }
       }
+    },
+    "clamav": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "address": { "type": "string" },
+        "scan_timeout_ms": { "type": "integer", "minimum": 1 },
+        "stream_chunk_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 }
+      }
+    },
+    "upload_deadlines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "marker_prefix": { "type": "string" },
+        "start_timeout": { "$ref": "#/$defs/duration" },
+        "finish_timeout": { "$ref": "#/$defs/duration" },
+        "cleanup_enabled": { "type": "boolean" },
+        "cleanup_interval": { "$ref": "#/$defs/duration" },
+        "cleanup_mode": { "type": "string", "enum": ["server_loop", "cleanup_once", "disabled"] }
+      }
+    },
+    "shared_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_ttl": { "$ref": "#/$defs/duration" },
+        "max_ttl": { "$ref": "#/$defs/duration" }
+      }
+    },
+    "http_cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["private", "public", "no-store"] },
+        "max_age": { "$ref": "#/$defs/duration" },
+        "s_max_age": { "$ref": "#/$defs/duration" },
+        "forward_etag": { "type": "boolean" },
+        "forward_last_modified": { "type": "boolean" }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": { "type": "string", "enum": ["text", "json"] },
+        "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
+      }
     }
   },
   "$defs": {
+    "duration": {
+      "type": "string",
+      "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$"
+    },
     "fileTypeSwitches": {
       "type": "object",
       "additionalProperties": false,

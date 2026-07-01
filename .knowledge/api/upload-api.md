@@ -22,15 +22,21 @@ endpoints:
       key_namespace: global or user_prefixed or custom_prefixed optional
     response:
       upload_key: opaque unique key
-      expires_at: timestamp
+      expires_at: timestamp for upload start validity from policy:upload-key-deadline-policy
       upload_url: service content endpoint, not client-visible S3 URL
       storage_prefix: generated folder prefix
       object_key: generated folder plus safe file name
       display_key: key returned for metadata payload
+    behavior:
+      - create S3-backed upload deadline marker before response
+      - marker stores upload_start_deadline and upload_finish_deadline
   upload_file:
     method: PUT
     path: "{base_path}/keys/{upload_key}/content"
     behavior:
+      - read upload deadline marker before accepting body
+      - reject if upload_start_deadline has passed
+      - wrap request processing in context deadline using upload_finish_deadline
       - receive bytes through service boundary
       - inspect prefix before storage commit
       - reject declared MIME and magic-header mismatch with JSON error
@@ -68,6 +74,16 @@ endpoints:
         body:
           error: prefix_read_failed
           message: uploaded content prefix could not be read
+      upload_key_expired:
+        status: 410
+        body:
+          error: upload_key_expired
+          message: upload key start deadline has passed
+      upload_deadline_exceeded:
+        status: 408
+        body:
+          error: upload_deadline_exceeded
+          message: upload did not finish before deadline
   wait_uploads:
     method: POST
     path: "{base_path}/wait"
@@ -110,6 +126,7 @@ references:
   - decision:mime-detector-library
   - policy:storage-key-allocation-policy
   - policy:file-intake-security
+  - policy:upload-key-deadline-policy
   - api:backend-control-api
   - requirement:application-metadata-submit
 ```

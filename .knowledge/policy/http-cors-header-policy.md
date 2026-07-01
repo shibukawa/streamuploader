@@ -7,6 +7,20 @@ HTTP CORS header policy controls browser access only when streamuploader is expo
 
 ```yaml
 cors:
+  config:
+    allowed_origins:
+      source: environment variable
+      env: ALLOWED_ORIGINS
+      default: "*"
+      meaning: shared allowlist for CORS response and websocket Origin validation
+      format: comma separated exact origins or wildcard for local/dev only
+      startup_warning:
+        - log warning when allowed_origins contains wildcard
+        - warning explains wildcard is convenient for local/demo use and should be replaced by explicit origins for public deployments
+      production:
+        - prefer explicit origins
+        - reject wildcard when credentials are enabled
+        - reject wildcard when deployment policy marks standalone public production
   backend_control:
     - disabled for api:backend-control-api
     - browser origins are never allowlisted for backend control listener
@@ -47,18 +61,22 @@ cors:
     - require explicit origin allowlist
 protocol_headers:
   websocket:
-    - validate Origin during upgrade
+    - validate Origin during upgrade using same allowed_origins config as CORS
+    - reject cross-origin upgrade when Origin is absent and deployment requires browser origin proof
     - preserve upgrade headers through trusted proxies
   download:
     - support Range and If-Range where policy allows
-    - return Content-Type, Content-Length, ETag, Accept-Ranges, Content-Range
+    - return Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges, Content-Range when available
+    - apply cache headers from data:http-cache-config
   placeholder:
     - Cache-Control: no-store, no-cache, max-age=0
 security_headers:
-  - X-Content-Type-Options: nosniff
-  - Referrer-Policy configurable
-  - Content-Security-Policy for API-generated HTML/SVG responses if any
-  - HSTS owned by edge or standalone server, not both
+  required:
+    - X-Content-Type-Options: nosniff
+  optional:
+    - Referrer-Policy configurable
+    - Content-Security-Policy for API-generated HTML/SVG responses if any
+    - HSTS owned by edge or standalone server, not both
 proxy:
   - trust X-Forwarded-* only from configured proxies
   - preserve request id or generate one
@@ -70,4 +88,5 @@ references:
   - api:session-progress-api
   - api:download-api
   - policy:placeholder-serving-policy
+  - data:http-cache-config
 ```

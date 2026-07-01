@@ -40,14 +40,23 @@ type Config struct {
 	EnableSharedKey         bool
 	SharedKeyBits           int
 	SharedKeyPrefix         string
+	SharedKeyTTL            time.Duration
+	SharedKeyMaxTTL         time.Duration
 	MaxArchiveFiles         int
 	MaxArchiveBytes         int64
+	UploadDeadlines         UploadDeadlinePolicy
+	HTTPCache               HTTPCachePolicy
+	Logging                 LoggingPolicy
 }
 
 type SecurityPolicy struct {
-	MimeMagic    MimeMagicPolicy    `yaml:"mime_magic"`
-	ArchiveGuard ArchiveGuardPolicy `yaml:"archive_guard"`
-	ClamAV       ClamAVPolicy       `yaml:"clamav"`
+	MimeMagic       MimeMagicPolicy      `yaml:"mime_magic"`
+	ArchiveGuard    ArchiveGuardPolicy   `yaml:"archive_guard"`
+	ClamAV          ClamAVPolicy         `yaml:"clamav"`
+	UploadDeadlines UploadDeadlinePolicy `yaml:"upload_deadlines"`
+	SharedKey       SharedKeyPolicy      `yaml:"shared_key"`
+	HTTPCache       HTTPCachePolicy      `yaml:"http_cache"`
+	Logging         LoggingPolicy        `yaml:"logging"`
 }
 
 type MimeMagicPolicy struct {
@@ -88,6 +97,129 @@ type ClamAVPolicy struct {
 	StreamChunkBytes int64  `yaml:"stream_chunk_bytes"`
 }
 
+type UploadDeadlinePolicy struct {
+	Enabled         bool          `yaml:"enabled"`
+	MarkerPrefix    string        `yaml:"marker_prefix"`
+	StartTimeout    time.Duration `yaml:"start_timeout"`
+	FinishTimeout   time.Duration `yaml:"finish_timeout"`
+	CleanupEnabled  bool          `yaml:"cleanup_enabled"`
+	CleanupInterval time.Duration `yaml:"cleanup_interval"`
+	CleanupMode     string        `yaml:"cleanup_mode"`
+}
+
+func (p *UploadDeadlinePolicy) UnmarshalYAML(value *yaml.Node) error {
+	type rawPolicy struct {
+		Enabled         bool   `yaml:"enabled"`
+		MarkerPrefix    string `yaml:"marker_prefix"`
+		StartTimeout    string `yaml:"start_timeout"`
+		FinishTimeout   string `yaml:"finish_timeout"`
+		CleanupEnabled  bool   `yaml:"cleanup_enabled"`
+		CleanupInterval string `yaml:"cleanup_interval"`
+		CleanupMode     string `yaml:"cleanup_mode"`
+	}
+	var raw rawPolicy
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	start, err := parseOptionalDuration(raw.StartTimeout)
+	if err != nil {
+		return err
+	}
+	finish, err := parseOptionalDuration(raw.FinishTimeout)
+	if err != nil {
+		return err
+	}
+	cleanup, err := parseOptionalDuration(raw.CleanupInterval)
+	if err != nil {
+		return err
+	}
+	*p = UploadDeadlinePolicy{
+		Enabled:         raw.Enabled,
+		MarkerPrefix:    raw.MarkerPrefix,
+		StartTimeout:    start,
+		FinishTimeout:   finish,
+		CleanupEnabled:  raw.CleanupEnabled,
+		CleanupInterval: cleanup,
+		CleanupMode:     raw.CleanupMode,
+	}
+	return nil
+}
+
+type SharedKeyPolicy struct {
+	DefaultTTL time.Duration `yaml:"default_ttl"`
+	MaxTTL     time.Duration `yaml:"max_ttl"`
+}
+
+func (p *SharedKeyPolicy) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		DefaultTTL string `yaml:"default_ttl"`
+		MaxTTL     string `yaml:"max_ttl"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	defaultTTL, err := parseOptionalDuration(raw.DefaultTTL)
+	if err != nil {
+		return err
+	}
+	maxTTL, err := parseOptionalDuration(raw.MaxTTL)
+	if err != nil {
+		return err
+	}
+	*p = SharedKeyPolicy{DefaultTTL: defaultTTL, MaxTTL: maxTTL}
+	return nil
+}
+
+type HTTPCachePolicy struct {
+	Mode           string        `yaml:"mode"`
+	MaxAge         time.Duration `yaml:"max_age"`
+	SMaxAge        time.Duration `yaml:"s_max_age"`
+	ForwardETag    bool          `yaml:"forward_etag"`
+	ForwardLastMod bool          `yaml:"forward_last_modified"`
+}
+
+func (p *HTTPCachePolicy) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Mode           string `yaml:"mode"`
+		MaxAge         string `yaml:"max_age"`
+		SMaxAge        string `yaml:"s_max_age"`
+		ForwardETag    bool   `yaml:"forward_etag"`
+		ForwardLastMod bool   `yaml:"forward_last_modified"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	maxAge, err := parseOptionalDuration(raw.MaxAge)
+	if err != nil {
+		return err
+	}
+	sMaxAge, err := parseOptionalDuration(raw.SMaxAge)
+	if err != nil {
+		return err
+	}
+	*p = HTTPCachePolicy{
+		Mode:           raw.Mode,
+		MaxAge:         maxAge,
+		SMaxAge:        sMaxAge,
+		ForwardETag:    raw.ForwardETag,
+		ForwardLastMod: raw.ForwardLastMod,
+	}
+	return nil
+}
+
+type LoggingPolicy struct {
+	Format string `yaml:"format"`
+	Level  string `yaml:"level"`
+}
+
+func parseOptionalDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(value)
+}
+
 func Load() Config {
 	securityConfigPath := env("SECURITY_CONFIG", "")
 	security, err := LoadSecurityPolicy(securityConfigPath)
@@ -104,6 +236,20 @@ func Load() Config {
 	security.ClamAV.Enabled = envBool("CLAMAV_ENABLED", security.ClamAV.Enabled)
 	security.ClamAV.ScanTimeoutMS = envInt64("CLAMAV_SCAN_TIMEOUT_MS", security.ClamAV.ScanTimeoutMS)
 	security.ClamAV.StreamChunkBytes = envInt64("CLAMAV_STREAM_CHUNK_BYTES", security.ClamAV.StreamChunkBytes)
+	security.UploadDeadlines.FinishTimeout = envDuration("UPLOAD_FINISH_TIMEOUT", security.UploadDeadlines.FinishTimeout)
+	security.UploadDeadlines.FinishTimeout = envDurationSeconds("UPLOAD_FINISH_TIMEOUT_SECONDS", security.UploadDeadlines.FinishTimeout)
+	security.UploadDeadlines.CleanupInterval = envDuration("UPLOAD_CLEANUP_INTERVAL", security.UploadDeadlines.CleanupInterval)
+	security.UploadDeadlines.CleanupInterval = envDurationSeconds("UPLOAD_CLEANUP_INTERVAL_SECONDS", security.UploadDeadlines.CleanupInterval)
+	security.SharedKey.DefaultTTL = envDuration("SHARED_KEY_TTL", security.SharedKey.DefaultTTL)
+	security.SharedKey.DefaultTTL = envDurationSeconds("SHARED_KEY_TTL_SECONDS", security.SharedKey.DefaultTTL)
+	security.SharedKey.MaxTTL = envDuration("SHARED_KEY_MAX_TTL", security.SharedKey.MaxTTL)
+	security.SharedKey.MaxTTL = envDurationSeconds("SHARED_KEY_MAX_TTL_SECONDS", security.SharedKey.MaxTTL)
+	security.HTTPCache.Mode = env("HTTP_CACHE_MODE", security.HTTPCache.Mode)
+	security.HTTPCache.MaxAge = envDuration("HTTP_CACHE_MAX_AGE", security.HTTPCache.MaxAge)
+	security.HTTPCache.MaxAge = envDurationSeconds("HTTP_CACHE_MAX_AGE_SECONDS", security.HTTPCache.MaxAge)
+	security.Logging.Format = env("LOG_FORMAT", env("SLOG_FORMAT", security.Logging.Format))
+	security.Logging.Level = env("LOG_LEVEL", security.Logging.Level)
+	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
 		Addr:             env("ADDR", ":8080"),
@@ -133,8 +279,13 @@ func Load() Config {
 		EnableSharedKey:         envBool("ENABLE_SHARED_KEY", false),
 		SharedKeyBits:           envInt("SHARED_KEY_BITS", 128),
 		SharedKeyPrefix:         cleanPrefix(env("SHARED_KEY_PREFIX", ".streamuploader/shared/")),
+		SharedKeyTTL:            security.SharedKey.DefaultTTL,
+		SharedKeyMaxTTL:         security.SharedKey.MaxTTL,
 		MaxArchiveFiles:         envInt("MAX_ARCHIVE_FILES", 100),
 		MaxArchiveBytes:         envInt64("MAX_ARCHIVE_BYTES", 1<<30),
+		UploadDeadlines:         security.UploadDeadlines,
+		HTTPCache:               security.HTTPCache,
+		Logging:                 security.Logging,
 	}
 }
 
@@ -182,6 +333,26 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			ScanTimeoutMS:    30000,
 			StreamChunkBytes: 128 << 10,
 		},
+		UploadDeadlines: UploadDeadlinePolicy{
+			Enabled:         true,
+			MarkerPrefix:    ".uploading/",
+			StartTimeout:    10 * time.Second,
+			FinishTimeout:   time.Minute,
+			CleanupEnabled:  true,
+			CleanupInterval: time.Minute,
+			CleanupMode:     "server_loop",
+		},
+		SharedKey: SharedKeyPolicy{},
+		HTTPCache: HTTPCachePolicy{
+			Mode:           "private",
+			MaxAge:         24 * time.Hour,
+			ForwardETag:    true,
+			ForwardLastMod: true,
+		},
+		Logging: LoggingPolicy{
+			Format: "text",
+			Level:  "info",
+		},
 	}
 }
 
@@ -228,6 +399,62 @@ func normalizeSecurityPolicy(policy *SecurityPolicy) {
 	policy.MimeMagic.ExpandedDenyMIMETypes = expandMIMETypes(policy.MimeMagic.DenyMIMETypes, policy.MimeMagic.DenyFileTypes)
 	normalizeArchiveGuardPolicy(&policy.ArchiveGuard)
 	normalizeClamAVPolicy(&policy.ClamAV)
+	normalizeExtendedPolicies(policy)
+}
+
+func normalizeExtendedPolicies(policy *SecurityPolicy) {
+	defaults := DefaultSecurityPolicy()
+	if strings.TrimSpace(policy.UploadDeadlines.MarkerPrefix) == "" {
+		policy.UploadDeadlines.MarkerPrefix = defaults.UploadDeadlines.MarkerPrefix
+	}
+	policy.UploadDeadlines.MarkerPrefix = cleanPrefix(policy.UploadDeadlines.MarkerPrefix)
+	if policy.UploadDeadlines.StartTimeout <= 0 {
+		policy.UploadDeadlines.StartTimeout = defaults.UploadDeadlines.StartTimeout
+	}
+	if policy.UploadDeadlines.FinishTimeout <= 0 {
+		policy.UploadDeadlines.FinishTimeout = defaults.UploadDeadlines.FinishTimeout
+	}
+	if policy.UploadDeadlines.CleanupInterval <= 0 {
+		policy.UploadDeadlines.CleanupInterval = defaults.UploadDeadlines.CleanupInterval
+	}
+	if policy.UploadDeadlines.CleanupMode == "" {
+		policy.UploadDeadlines.CleanupMode = defaults.UploadDeadlines.CleanupMode
+	}
+	switch policy.UploadDeadlines.CleanupMode {
+	case "server_loop", "cleanup_once", "disabled":
+	default:
+		policy.UploadDeadlines.CleanupMode = defaults.UploadDeadlines.CleanupMode
+	}
+	if policy.UploadDeadlines.CleanupMode == "disabled" {
+		policy.UploadDeadlines.CleanupEnabled = false
+	}
+	policy.HTTPCache.Mode = strings.ToLower(strings.TrimSpace(policy.HTTPCache.Mode))
+	if policy.HTTPCache.Mode == "" {
+		policy.HTTPCache.Mode = defaults.HTTPCache.Mode
+	}
+	switch policy.HTTPCache.Mode {
+	case "private", "public", "no-store":
+	default:
+		policy.HTTPCache.Mode = defaults.HTTPCache.Mode
+	}
+	if policy.HTTPCache.MaxAge <= 0 {
+		policy.HTTPCache.MaxAge = defaults.HTTPCache.MaxAge
+	}
+	if !policy.HTTPCache.ForwardETag && !policy.HTTPCache.ForwardLastMod {
+		policy.HTTPCache.ForwardETag = defaults.HTTPCache.ForwardETag
+		policy.HTTPCache.ForwardLastMod = defaults.HTTPCache.ForwardLastMod
+	}
+	policy.Logging.Format = strings.ToLower(strings.TrimSpace(policy.Logging.Format))
+	if policy.Logging.Format == "" {
+		policy.Logging.Format = defaults.Logging.Format
+	}
+	if policy.Logging.Format != "text" && policy.Logging.Format != "json" {
+		policy.Logging.Format = defaults.Logging.Format
+	}
+	policy.Logging.Level = strings.ToLower(strings.TrimSpace(policy.Logging.Level))
+	if policy.Logging.Level == "" {
+		policy.Logging.Level = defaults.Logging.Level
+	}
 }
 
 func normalizeArchiveGuardPolicy(policy *ArchiveGuardPolicy) {
@@ -547,6 +774,40 @@ func SecurityPolicyJSONSchema() string {
 					"decompress_buffer_bytes":      map[string]any{"type": "integer", "minimum": 4096, "maximum": 1048576},
 				},
 			},
+			"clamav": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"enabled":            map[string]any{"type": "boolean"},
+					"address":            map[string]any{"type": "string"},
+					"scan_timeout_ms":    map[string]any{"type": "integer", "minimum": 1},
+					"stream_chunk_bytes": map[string]any{"type": "integer", "minimum": 1024, "maximum": 1048576},
+				},
+			},
+			"upload_deadlines": policyObjectSchema(map[string]any{
+				"enabled":          map[string]any{"type": "boolean"},
+				"marker_prefix":    map[string]any{"type": "string"},
+				"start_timeout":    durationSchema(),
+				"finish_timeout":   durationSchema(),
+				"cleanup_enabled":  map[string]any{"type": "boolean"},
+				"cleanup_interval": durationSchema(),
+				"cleanup_mode":     map[string]any{"type": "string", "enum": []string{"server_loop", "cleanup_once", "disabled"}},
+			}),
+			"shared_key": policyObjectSchema(map[string]any{
+				"default_ttl": durationSchema(),
+				"max_ttl":     durationSchema(),
+			}),
+			"http_cache": policyObjectSchema(map[string]any{
+				"mode":                  map[string]any{"type": "string", "enum": []string{"private", "public", "no-store"}},
+				"max_age":               durationSchema(),
+				"s_max_age":             durationSchema(),
+				"forward_etag":          map[string]any{"type": "boolean"},
+				"forward_last_modified": map[string]any{"type": "boolean"},
+			}),
+			"logging": policyObjectSchema(map[string]any{
+				"format": map[string]any{"type": "string", "enum": []string{"text", "json"}},
+				"level":  map[string]any{"type": "string", "enum": []string{"debug", "info", "warn", "error"}},
+			}),
 		},
 	}
 	body, err := json.Marshal(schema)
@@ -554,6 +815,18 @@ func SecurityPolicyJSONSchema() string {
 		panic(err)
 	}
 	return string(body)
+}
+
+func durationSchema() map[string]any {
+	return map[string]any{"type": "string", "pattern": `^$|^[0-9]+(ns|us|µs|ms|s|m|h)$`}
+}
+
+func policyObjectSchema(properties map[string]any) map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           properties,
+	}
 }
 
 func knownScriptTypes() []string {
@@ -673,6 +946,21 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func envDurationSeconds(key string, fallback time.Duration) time.Duration {
+	value := env(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	if parsed <= 0 {
+		return 0
+	}
+	return time.Duration(parsed) * time.Second
 }
 
 func cleanPrefix(value string) string {

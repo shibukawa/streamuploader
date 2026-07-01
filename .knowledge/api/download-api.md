@@ -32,6 +32,11 @@ endpoints:
     delivery_mode: api_proxy_download
     response:
       content_disposition: absent unless source metadata requires otherwise
+      headers:
+        - X-Content-Type-Options: nosniff
+        - ETag when storage provides it
+        - Last-Modified when storage provides it
+        - Cache-Control from data:http-cache-config
     behavior:
       - reject unless policy:object-access-policy allows api_proxy_download
       - stream original object bytes through streamuploader frontend API
@@ -47,6 +52,11 @@ endpoints:
     delivery_mode: api_proxy_download
     response:
       content_disposition: attachment with file name
+      headers:
+        - X-Content-Type-Options: nosniff
+        - ETag when storage provides it
+        - Last-Modified when storage provides it
+        - Cache-Control from data:http-cache-config
     behavior:
       - same object streaming rules as get_content_proxy
       - force browser download when user navigates to endpoint
@@ -57,6 +67,11 @@ endpoints:
     delivery_mode: shared_key_proxy_download
     response:
       content_disposition: absent unless source metadata requires otherwise
+      headers:
+        - X-Content-Type-Options: nosniff
+        - ETag when storage provides it
+        - Last-Modified when storage provides it
+        - Cache-Control from data:http-cache-config
     behavior:
       - resolve api:shared-key-api
       - stream target object through streamuploader frontend API
@@ -70,6 +85,11 @@ endpoints:
     delivery_mode: shared_key_proxy_download
     response:
       content_disposition: attachment with file name
+      headers:
+        - X-Content-Type-Options: nosniff
+        - ETag when storage provides it
+        - Last-Modified when storage provides it
+        - Cache-Control from data:http-cache-config
     behavior:
       - resolve api:shared-key-api
       - stream target object through streamuploader frontend API
@@ -85,6 +105,9 @@ endpoints:
     response:
       content_type: application/zip
       content_disposition: attachment archive name
+      headers:
+        - X-Content-Type-Options: nosniff
+        - Cache-Control from data:http-cache-config
     behavior:
       - parse keys as comma-separated encoded object keys
       - authorize every key with same frontend file access policy
@@ -126,7 +149,12 @@ endpoints:
 range_support:
   - pass through byte ranges to S3
   - return 206 Partial Content
-  - preserve Content-Type, Content-Encoding, ETag, and Content-Range
+  - preserve Content-Type, Content-Encoding, ETag, Last-Modified, and Content-Range
+cache_support:
+  - default to private cache for file access responses
+  - prefer validators ETag and Last-Modified when storage returns them
+  - support public, private, and no-store response modes
+  - when public mode uses max-age, set s-maxage to same value unless explicitly configured otherwise
 archive_support:
   - range requests do not apply to generated zip archive
   - archive generation should stream from S3 objects into zip writer
@@ -149,4 +177,5 @@ references:
   - api:shared-key-api
   - api:derived-asset-serving-api
   - policy:audit-log-policy
+  - data:http-cache-config
 ```
