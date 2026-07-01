@@ -33,9 +33,41 @@ endpoints:
     behavior:
       - receive bytes through service boundary
       - inspect prefix before storage commit
+      - reject declared MIME and magic-header mismatch with JSON error
       - stream to system:s3-storage
       - run policy:file-intake-security
       - update data:file-item state
+    errors:
+      content_type_mismatch:
+        status: 415
+        body:
+          error: content_type_mismatch
+          message: declared content type does not match detected content type
+      detected_type_unknown:
+        status: 415
+        body:
+          error: detected_type_unknown
+          message: uploaded content type could not be detected
+      script_upload_rejected:
+        status: 415
+        body:
+          error: script_upload_rejected
+          message: detected script family, expected script MIME, and opt-in setting hint
+      content_type_denied:
+        status: 415
+        body:
+          error: content_type_denied
+          message: uploaded content type is denied
+      content_type_not_allowed:
+        status: 415
+        body:
+          error: content_type_not_allowed
+          message: uploaded content type is not allowed
+      prefix_read_failed:
+        status: 400
+        body:
+          error: prefix_read_failed
+          message: uploaded content prefix could not be read
   wait_uploads:
     method: POST
     path: "{base_path}/wait"
@@ -70,10 +102,14 @@ references:
   - data:file-item
   - data:upload-batch
   - data:storage-key-allocation
+  - data:security-check-result
   - flow:session-assembly
+  - flow:security-gated-upload-acceptance
   - api:session-progress-api
   - decision:upload-transport-boundary
+  - decision:mime-detector-library
   - policy:storage-key-allocation-policy
+  - policy:file-intake-security
   - api:backend-control-api
   - requirement:application-metadata-submit
 ```

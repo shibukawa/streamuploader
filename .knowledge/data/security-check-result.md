@@ -9,6 +9,8 @@ Security check result records lightweight file inspection outcomes before option
 fields:
   declared_content_type: string optional
   detected_content_type: string
+  normalized_declared_content_type: string optional
+  normalized_detected_content_type: string
   detected_extension: string optional
   detector:
     enum:
@@ -43,8 +45,19 @@ fields:
       - quarantine
   reason_codes:
     type: list
+    values:
+      - content_type_match
+      - content_type_mismatch
+      - detected_type_unknown
+      - prefix_read_failed
+      - archive_policy_pending
+  error:
+    http_status: integer optional
+    code: string optional
+    message: string optional
 references:
   - policy:file-intake-security
+  - requirement:mime-magic-consistency
+  - decision:mime-detector-library
   - policy:archive-bomb-protection
 ```
-

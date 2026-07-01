@@ -10,7 +10,7 @@ components:
   baseline:
     - Go net/http DetectContentType for first 512 bytes
   go_native:
-    - gabriel-vasile/mimetype for magic based MIME detection
+    - github.com/gabriel-vasile/mimetype for primary prefix MIME detection
     - h2non/filetype for fast magic signature detection
   optional_deeper:
     - libmagic file signatures when C dependency is acceptable
@@ -28,9 +28,17 @@ constraints:
   - read bounded prefix on request path
   - never consume stream bytes without rule:prefix-replay
   - use deeper probes only under bounded worker limits
+implementation:
+  selected_library: decision:mime-detector-library
+  upload_path:
+    - inspect []byte prefix
+    - normalize detected MIME
+    - compare against declared content type
+    - return data:security-check-result
 references:
   - policy:file-intake-security
+  - requirement:mime-magic-consistency
+  - decision:mime-detector-library
   - rule:prefix-replay
   - policy:archive-bomb-protection
 ```
-

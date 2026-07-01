@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StreamUploader security policy",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mime_magic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "prefix_bytes": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 1048576
+        },
+        "reject_script_uploads": {
+          "type": "boolean"
+        },
+        "allowed_script_types": {
+          "$ref": "#/$defs/scriptTypeSwitches"
+        },
+        "allowed_script_extensions": {
+          "$ref": "#/$defs/scriptExtensionSwitches"
+        },
+        "allow_file_types": {
+          "$ref": "#/$defs/fileTypeSwitches"
+        },
+        "deny_file_types": {
+          "$ref": "#/$defs/fileTypeSwitches"
+        },
+        "allow_mime_types": {
+          "$ref": "#/$defs/mimeTypeSwitches"
+        },
+        "deny_mime_types": {
+          "$ref": "#/$defs/mimeTypeSwitches"
+        },
+        "equivalent_mime_types": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "string",
+              "enum": [
+                "application/gzip",
+                "application/json",
+                "application/msword",
+                "application/pdf",
+                "application/rtf",
+                "application/vnd.ms-excel",
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/x-7z-compressed",
+                "application/x-bzip2",
+                "application/x-dosexec",
+                "application/x-executable",
+                "application/x-gzip",
+                "application/x-httpd-php",
+                "application/x-msdownload",
+                "application/x-sharedlib",
+                "application/x-tar",
+                "application/x-xz",
+                "application/xml",
+                "application/zip",
+                "audio/aac",
+                "audio/flac",
+                "audio/mp4",
+                "audio/mpeg",
+                "audio/ogg",
+                "audio/wav",
+                "audio/webm",
+                "image/avif",
+                "image/bmp",
+                "image/gif",
+                "image/jpeg",
+                "image/pjpeg",
+                "image/png",
+                "image/svg+xml",
+                "image/tiff",
+                "image/webp",
+                "text/csv",
+                "text/javascript",
+                "text/markdown",
+                "text/plain",
+                "text/x-perl",
+                "text/x-python",
+                "text/x-ruby",
+                "text/x-shellscript",
+                "text/xml",
+                "video/mp4",
+                "video/mpeg",
+                "video/quicktime",
+                "video/webm",
+                "video/x-matroska",
+                "video/x-msvideo"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "fileTypeSwitches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "archive": { "type": "boolean" },
+        "archives": { "type": "boolean" },
+        "audio": { "type": "boolean" },
+        "avif": { "type": "boolean" },
+        "bmp": { "type": "boolean" },
+        "csv": { "type": "boolean" },
+        "dll": { "type": "boolean" },
+        "document": { "type": "boolean" },
+        "documents": { "type": "boolean" },
+        "elf": { "type": "boolean" },
+        "exe": { "type": "boolean" },
+        "executable": { "type": "boolean" },
+        "gif": { "type": "boolean" },
+        "gz": { "type": "boolean" },
+        "gzip": { "type": "boolean" },
+        "image": { "type": "boolean" },
+        "images": { "type": "boolean" },
+        "jpeg": { "type": "boolean" },
+        "jpg": { "type": "boolean" },
+        "json": { "type": "boolean" },
+        "pdf": { "type": "boolean" },
+        "plain": { "type": "boolean" },
+        "png": { "type": "boolean" },
+        "svg": { "type": "boolean" },
+        "text": { "type": "boolean" },
+        "tif": { "type": "boolean" },
+        "tiff": { "type": "boolean" },
+        "txt": { "type": "boolean" },
+        "video": { "type": "boolean" },
+        "videos": { "type": "boolean" },
+        "webp": { "type": "boolean" },
+        "xml": { "type": "boolean" },
+        "zip": { "type": "boolean" }
+      }
+    },
+    "mimeTypeSwitches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "application/gzip": { "type": "boolean" },
+        "application/json": { "type": "boolean" },
+        "application/msword": { "type": "boolean" },
+        "application/pdf": { "type": "boolean" },
+        "application/rtf": { "type": "boolean" },
+        "application/vnd.ms-excel": { "type": "boolean" },
+        "application/vnd.ms-powerpoint": { "type": "boolean" },
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": { "type": "boolean" },
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { "type": "boolean" },
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": { "type": "boolean" },
+        "application/x-7z-compressed": { "type": "boolean" },
+        "application/x-bzip2": { "type": "boolean" },
+        "application/x-dosexec": { "type": "boolean" },
+        "application/x-executable": { "type": "boolean" },
+        "application/x-gzip": { "type": "boolean" },
+        "application/x-httpd-php": { "type": "boolean" },
+        "application/x-msdownload": { "type": "boolean" },
+        "application/x-sharedlib": { "type": "boolean" },
+        "application/x-tar": { "type": "boolean" },
+        "application/x-xz": { "type": "boolean" },
+        "application/xml": { "type": "boolean" },
+        "application/zip": { "type": "boolean" },
+        "audio/aac": { "type": "boolean" },
+        "audio/flac": { "type": "boolean" },
+        "audio/mp4": { "type": "boolean" },
+        "audio/mpeg": { "type": "boolean" },
+        "audio/ogg": { "type": "boolean" },
+        "audio/wav": { "type": "boolean" },
+        "audio/webm": { "type": "boolean" },
+        "image/avif": { "type": "boolean" },
+        "image/bmp": { "type": "boolean" },
+        "image/gif": { "type": "boolean" },
+        "image/jpeg": { "type": "boolean" },
+        "image/pjpeg": { "type": "boolean" },
+        "image/png": { "type": "boolean" },
+        "image/svg+xml": { "type": "boolean" },
+        "image/tiff": { "type": "boolean" },
+        "image/webp": { "type": "boolean" },
+        "text/csv": { "type": "boolean" },
+        "text/javascript": { "type": "boolean" },
+        "text/markdown": { "type": "boolean" },
+        "text/plain": { "type": "boolean" },
+        "text/x-perl": { "type": "boolean" },
+        "text/x-python": { "type": "boolean" },
+        "text/x-ruby": { "type": "boolean" },
+        "text/x-shellscript": { "type": "boolean" },
+        "text/xml": { "type": "boolean" },
+        "video/mp4": { "type": "boolean" },
+        "video/mpeg": { "type": "boolean" },
+        "video/quicktime": { "type": "boolean" },
+        "video/webm": { "type": "boolean" },
+        "video/x-matroska": { "type": "boolean" },
+        "video/x-msvideo": { "type": "boolean" }
+      }
+    },
+    "scriptTypeSwitches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shell": { "type": "boolean" },
+        "python": { "type": "boolean" },
+        "node": { "type": "boolean" },
+        "ruby": { "type": "boolean" },
+        "perl": { "type": "boolean" },
+        "php": { "type": "boolean" }
+      }
+    },
+    "scriptExtensionSwitches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sh": { "type": "boolean" },
+        "bash": { "type": "boolean" },
+        "zsh": { "type": "boolean" },
+        "ksh": { "type": "boolean" },
+        "py": { "type": "boolean" },
+        "js": { "type": "boolean" },
+        "mjs": { "type": "boolean" },
+        "cjs": { "type": "boolean" },
+        "rb": { "type": "boolean" },
+        "pl": { "type": "boolean" },
+        "php": { "type": "boolean" }
+      }
+    }
+  }
+}

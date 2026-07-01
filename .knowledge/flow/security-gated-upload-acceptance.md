@@ -12,7 +12,9 @@ flow:
     - name: inspect_upload
       actions:
         - verify upload_key exists
-        - inspect bounded prefix
+        - read bounded prefix from request body
+        - run requirement:mime-magic-consistency before storage upload
+        - build replay reader using rule:prefix-replay
         - stream accepted bytes to system:s3-storage
     - name: run_security_gate
       mode: sequential
@@ -32,6 +34,8 @@ flow:
         - expose generated previews through status APIs when enabled
 references:
   - policy:file-intake-security
+  - requirement:mime-magic-consistency
+  - rule:prefix-replay
   - system:clamav
   - flow:image-thumbnail-generation
   - flow:document-preview-generation

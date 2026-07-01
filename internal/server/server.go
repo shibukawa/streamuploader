@@ -14,6 +14,7 @@ import (
 	"hash"
 	"io"
 	"math"
+	stdmime "mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/gorilla/websocket"
 
 	"streamuploader/internal/config"
@@ -63,6 +65,9 @@ func New(cfg config.Config, store storage.Store) *Server {
 	}
 	if cfg.MaxArchiveBytes <= 0 {
 		cfg.MaxArchiveBytes = 1 << 30
+	}
+	if cfg.Security.MimeMagic.PrefixBytes <= 0 {
+		cfg.Security = config.DefaultSecurityPolicy()
 	}
 	var proxy *httputil.ReverseProxy
 	if cfg.ApplicationServerURL != "" {
@@ -515,8 +520,26 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	})
 
 	limited := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
+	body := io.Reader(limited)
+	if s.cfg.Security.MimeMagic.Enabled {
+		inspection, err := inspectUploadPrefix(limited, contentType, target.originalName, s.cfg.Security.MimeMagic)
+		if err != nil {
+			s.failUpload(uploadKey, err.Error())
+			status, code := securityErrorResponse(err)
+			writeError(w, status, code, err.Error())
+			return
+		}
+		body = io.MultiReader(bytes.NewReader(inspection.prefix), limited)
+		if inspection.detectedContentType != "" && contentType == "" {
+			contentType = inspection.detectedContentType
+			s.updateUpload(uploadKey, func(item *model.UploadItem) {
+				item.ContentType = contentType
+				item.UpdatedAt = time.Now().UTC()
+			})
+		}
+	}
 	measured := &progressReader{
-		reader: limited,
+		reader: body,
 		hash:   sha256.New(),
 		notify: func(n int64) {
 			s.updateUpload(uploadKey, func(item *model.UploadItem) {
@@ -570,6 +593,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	w.Header().Set("ETag", result.ETag)
 	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadUploaded, Item: uploaded})
 	writeJSON(w, http.StatusOK, uploaded)
+}
+
+func (s *Server) failUpload(uploadKey, message string) {
+	s.updateUpload(uploadKey, func(item *model.UploadItem) {
+		item.Status = model.UploadFailed
+		item.Error = message
+		item.UpdatedAt = time.Now().UTC()
+	})
+	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadFailed, Item: mustUpload(s.upload(uploadKey))})
 }
 
 func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
@@ -937,10 +969,11 @@ func (s *Server) upload(key string) (*model.UploadItem, bool) {
 }
 
 type uploadTarget struct {
-	objectKey   string
-	contentType string
-	sizeBytes   int64
-	status      model.UploadStatus
+	objectKey    string
+	originalName string
+	contentType  string
+	sizeBytes    int64
+	status       model.UploadStatus
 }
 
 func (s *Server) uploadTarget(uploadKey string) (uploadTarget, bool) {
@@ -951,10 +984,11 @@ func (s *Server) uploadTarget(uploadKey string) (uploadTarget, bool) {
 		return uploadTarget{}, false
 	}
 	return uploadTarget{
-		objectKey:   item.ObjectKey,
-		contentType: item.ContentType,
-		sizeBytes:   item.SizeBytes,
-		status:      item.Status,
+		objectKey:    item.ObjectKey,
+		originalName: item.OriginalName,
+		contentType:  item.ContentType,
+		sizeBytes:    item.SizeBytes,
+		status:       item.Status,
 	}, true
 }
 
@@ -1042,6 +1076,283 @@ type progressReader struct {
 	hash   hash.Hash
 	n      int64
 	notify func(int64)
+}
+
+type uploadInspection struct {
+	prefix              []byte
+	detectedContentType string
+}
+
+type securityUploadError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e securityUploadError) Error() string {
+	return e.message
+}
+
+func inspectUploadPrefix(reader io.Reader, declared, originalName string, policy config.MimeMagicPolicy) (uploadInspection, error) {
+	if policy.PrefixBytes <= 0 {
+		policy.PrefixBytes = 3072
+	}
+	limit := policy.PrefixBytes
+	if limit < 512 {
+		limit = 512
+	}
+	if limit > 1<<20 {
+		limit = 1 << 20
+	}
+	prefix := make([]byte, limit)
+	n, err := io.ReadFull(reader, prefix)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return uploadInspection{}, securityUploadError{
+			status:  http.StatusBadRequest,
+			code:    "prefix_read_failed",
+			message: "uploaded content prefix could not be read",
+		}
+	}
+	prefix = prefix[:n]
+	detected := detectContentType(prefix)
+	declared = normalizeContentType(declared)
+
+	script := detectScript(prefix, originalName)
+	allowedScript := script.detected && scriptAllowed(script, policy)
+	if policy.RejectScriptUploads && script.detected && !allowedScript {
+		return uploadInspection{}, securityUploadError{
+			status:  http.StatusUnsupportedMediaType,
+			code:    "script_upload_rejected",
+			message: scriptRejectionMessage(script),
+		}
+	}
+	if declared != "" && detected != "" && !allowedScript && !mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) {
+		return uploadInspection{}, securityUploadError{
+			status:  http.StatusUnsupportedMediaType,
+			code:    "content_type_mismatch",
+			message: fmt.Sprintf("declared content type %s does not match detected content type %s", declared, detected),
+		}
+	}
+	denyMIMETypes := policy.ExpandedDenyMIMETypes
+	if denyMIMETypes == nil {
+		denyMIMETypes = enabledMIMETypes(policy.DenyMIMETypes)
+	}
+	if mimeMatchesAny(detected, denyMIMETypes, policy.EquivalentMIMETypes) || mimeMatchesAny(declared, denyMIMETypes, policy.EquivalentMIMETypes) {
+		return uploadInspection{}, securityUploadError{
+			status:  http.StatusUnsupportedMediaType,
+			code:    "content_type_denied",
+			message: "uploaded content type is denied",
+		}
+	}
+	allowMIMETypes := policy.ExpandedAllowMIMETypes
+	if allowMIMETypes == nil {
+		allowMIMETypes = enabledMIMETypes(policy.AllowMIMETypes)
+	}
+	if len(allowMIMETypes) > 0 && !mimeMatchesAny(detected, allowMIMETypes, policy.EquivalentMIMETypes) && !mimeMatchesAny(declared, allowMIMETypes, policy.EquivalentMIMETypes) {
+		return uploadInspection{}, securityUploadError{
+			status:  http.StatusUnsupportedMediaType,
+			code:    "content_type_not_allowed",
+			message: "uploaded content type is not allowed",
+		}
+	}
+	return uploadInspection{prefix: prefix, detectedContentType: detected}, nil
+}
+
+func detectContentType(prefix []byte) string {
+	if len(prefix) == 0 {
+		return ""
+	}
+	detected := normalizeContentType(mimetype.Detect(prefix).String())
+	if detected == "" || detected == "application/octet-stream" {
+		fallback := normalizeContentType(http.DetectContentType(prefix))
+		if fallback != "" {
+			detected = fallback
+		}
+	}
+	return detected
+}
+
+func normalizeContentType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if parsed, _, err := stdmime.ParseMediaType(value); err == nil {
+		return strings.ToLower(strings.TrimSpace(parsed))
+	}
+	if i := strings.IndexByte(value, ';'); i >= 0 {
+		value = value[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+type scriptDetection struct {
+	detected     bool
+	scriptType   string
+	extension    string
+	expectedMIME string
+}
+
+func detectScript(prefix []byte, originalName string) scriptDetection {
+	out := scriptDetection{extension: strings.TrimPrefix(strings.ToLower(path.Ext(originalName)), ".")}
+	if mimeType := scriptMIMEForExtension(out.extension); mimeType != "" {
+		out.detected = true
+		out.scriptType = scriptTypeForExtension(out.extension)
+		out.expectedMIME = mimeType
+	}
+	if !bytes.HasPrefix(prefix, []byte("#!")) {
+		return out
+	}
+	line := prefix
+	if i := bytes.IndexByte(prefix, '\n'); i >= 0 {
+		line = prefix[:i]
+	}
+	lower := strings.ToLower(string(line))
+	for _, candidate := range []string{"bash", "zsh", "dash", "ksh", "sh", "python3", "python", "nodejs", "node", "ruby", "perl", "php"} {
+		if strings.Contains(lower, "/"+candidate) || strings.Contains(lower, "env "+candidate) {
+			out.detected = true
+			out.scriptType = normalizeScriptType(candidate)
+			out.expectedMIME = scriptMIMEForType(out.scriptType)
+			return out
+		}
+	}
+	out.detected = true
+	if out.scriptType == "" {
+		out.scriptType = "shell"
+		out.expectedMIME = scriptMIMEForType(out.scriptType)
+	}
+	return out
+}
+
+func scriptAllowed(script scriptDetection, policy config.MimeMagicPolicy) bool {
+	if script.scriptType != "" && policy.AllowedScriptTypes[script.scriptType] {
+		return true
+	}
+	if script.extension != "" && policy.AllowedScriptExtensions[script.extension] {
+		return true
+	}
+	return false
+}
+
+func scriptRejectionMessage(script scriptDetection) string {
+	scriptType := script.scriptType
+	if scriptType == "" {
+		scriptType = "unknown"
+	}
+	expected := script.expectedMIME
+	if expected == "" {
+		expected = "a script-specific MIME type"
+	}
+	return fmt.Sprintf("detected %s script; expected MIME %s; enable mime_magic.allowed_script_types.%s or an allowed script extension to accept it", scriptType, expected, scriptType)
+}
+
+func normalizeScriptType(value string) string {
+	switch value {
+	case "bash", "zsh", "dash", "ksh", "sh":
+		return "shell"
+	case "python3":
+		return "python"
+	case "nodejs":
+		return "node"
+	default:
+		return value
+	}
+}
+
+func scriptTypeForExtension(ext string) string {
+	switch ext {
+	case "sh", "bash", "zsh", "ksh":
+		return "shell"
+	case "py":
+		return "python"
+	case "js", "mjs", "cjs":
+		return "node"
+	case "rb":
+		return "ruby"
+	case "pl":
+		return "perl"
+	case "php":
+		return "php"
+	default:
+		return ""
+	}
+}
+
+func scriptMIMEForExtension(ext string) string {
+	return scriptMIMEForType(scriptTypeForExtension(ext))
+}
+
+func scriptMIMEForType(scriptType string) string {
+	switch scriptType {
+	case "shell":
+		return "text/x-shellscript"
+	case "python":
+		return "text/x-python"
+	case "node":
+		return "text/javascript"
+	case "ruby":
+		return "text/x-ruby"
+	case "perl":
+		return "text/x-perl"
+	case "php":
+		return "application/x-httpd-php"
+	default:
+		return ""
+	}
+}
+
+func mimeMatchesAny(value string, candidates []string, equivalents [][]string) bool {
+	if value == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if mimeEquivalent(value, candidate, equivalents) {
+			return true
+		}
+	}
+	return false
+}
+
+func enabledMIMETypes(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value, enabled := range values {
+		if enabled {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func mimeEquivalent(a, b string, equivalents [][]string) bool {
+	a = normalizeContentType(a)
+	b = normalizeContentType(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	for _, group := range equivalents {
+		hasA := false
+		hasB := false
+		for _, value := range group {
+			normalized := normalizeContentType(value)
+			hasA = hasA || normalized == a
+			hasB = hasB || normalized == b
+		}
+		if hasA && hasB {
+			return true
+		}
+	}
+	return false
+}
+
+func securityErrorResponse(err error) (int, string) {
+	var uploadErr securityUploadError
+	if errors.As(err, &uploadErr) {
+		return uploadErr.status, uploadErr.code
+	}
+	return http.StatusUnsupportedMediaType, "content_rejected"
 }
 
 func (r *progressReader) Read(p []byte) (int, error) {

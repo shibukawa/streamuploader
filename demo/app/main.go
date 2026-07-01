@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type appConfig struct {
 	PresignTTL              time.Duration
 	DeleteObjectsOnDelete   bool
 	StreamUploaderPublicURL string
+	StreamUploaderProxyURL  string
 	BackendControlURL       string
 	BackendAuthToken        string
 }
@@ -93,6 +95,8 @@ func main() {
 	mux.HandleFunc("/demo/api/files", a.filesAPI)
 	mux.HandleFunc("/demo/api/files/", a.fileAPI)
 	mux.HandleFunc("/api/config", a.configAPI)
+	mux.HandleFunc("/api/upload", a.uploadProxy)
+	mux.HandleFunc("/api/upload/", a.uploadProxy)
 	mux.HandleFunc("/api/files", a.filesAPI)
 	mux.HandleFunc("/api/files/", a.fileAPI)
 	log.Printf("demo app listening on %s", cfg.Addr)
@@ -110,6 +114,24 @@ func (a *app) configAPI(w http.ResponseWriter, _ *http.Request) {
 		"download_mode":             a.cfg.DownloadMode,
 		"streamuploader_public_url": a.cfg.StreamUploaderPublicURL,
 	})
+}
+
+func (a *app) uploadProxy(w http.ResponseWriter, r *http.Request) {
+	target, err := url.Parse(strings.TrimRight(a.cfg.StreamUploaderProxyURL, "/"))
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		writeError(w, http.StatusBadGateway, "upload_proxy_not_configured", "streamuploader proxy URL is invalid")
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = r.URL.Path
+		req.URL.RawPath = r.URL.RawPath
+		req.URL.RawQuery = r.URL.RawQuery
+		req.Host = target.Host
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (a *app) filesAPI(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +292,7 @@ func (a *app) downloadURL(ctx context.Context, rec fileRecord, mode string) (str
 
 func (a *app) postBackendJSON(ctx context.Context, path string, body any, out any) error {
 	if strings.TrimSpace(a.cfg.BackendControlURL) == "" {
-		return errors.New("BACKEND_CONTROL_URL is required")
+		return errors.New("SU_BACKEND_CONTROL_URL is required")
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -321,7 +343,7 @@ func newStore(path string) (*store, error) {
 
 func (a *app) deleteObjectFromStreamUploader(ctx context.Context, objectKey string) error {
 	if strings.TrimSpace(a.cfg.BackendControlURL) == "" {
-		return errors.New("BACKEND_CONTROL_URL is required when DELETE_OBJECTS_ON_DELETE is true")
+		return errors.New("SU_BACKEND_CONTROL_URL is required when SU_DELETE_OBJECTS_ON_DELETE is true")
 	}
 	endpoint := strings.TrimRight(a.cfg.BackendControlURL, "/") + "/internal/objects/" + url.PathEscape(objectKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
@@ -428,6 +450,7 @@ func loadConfig() appConfig {
 		PresignTTL:              envDuration("PRESIGN_TTL", 15*time.Minute),
 		DeleteObjectsOnDelete:   envBool("DELETE_OBJECTS_ON_DELETE", false),
 		StreamUploaderPublicURL: env("STREAMUPLOADER_PUBLIC_URL", "http://localhost:8080"),
+		StreamUploaderProxyURL:  env("STREAMUPLOADER_PROXY_URL", env("STREAMUPLOADER_PUBLIC_URL", "http://localhost:8080")),
 		BackendControlURL:       env("BACKEND_CONTROL_URL", ""),
 		BackendAuthToken:        env("BACKEND_AUTH_TOKEN", ""),
 	}
@@ -475,6 +498,9 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func env(key, fallback string) string {
+	if value := os.Getenv("SU_" + key); value != "" {
+		return value
+	}
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
@@ -482,7 +508,7 @@ func env(key, fallback string) string {
 }
 
 func envBool(key string, fallback bool) bool {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}
@@ -497,7 +523,7 @@ func envBool(key string, fallback bool) bool {
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}
@@ -552,6 +578,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     button.secondary { background: #fff; color: #1f2937; border-color: #b8bfcc; }
     button.danger { background: #b42318; border-color: #b42318; }
     button:disabled { opacity: .55; cursor: not-allowed; }
+    .tabs { display: flex; gap: 8px; margin: 0 0 18px; flex-wrap: wrap; }
+    .tab-button { background: #fff; color: #1f2937; border-color: #b8bfcc; }
+    .tab-button.active { background: #1f5eff; color: #fff; border-color: #1f5eff; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { border-bottom: 1px solid #e3e7ee; padding: 9px 7px; text-align: left; vertical-align: top; }
     th { color: #475467; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
@@ -564,35 +595,51 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .bar > span { display: block; height: 100%; background: #16a34a; width: 0%; transition: width .15s ease; }
     .topline { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
     .status { font-size: 12px; color: #475467; }
+    .invalid-results { display: grid; gap: 10px; margin-top: 14px; }
+    .invalid-result { border: 1px solid #e3e7ee; background: #fafbfc; border-radius: 6px; padding: 10px; }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12px; background: #111827; color: #f9fafb; border-radius: 6px; padding: 10px; }
   </style>
 </head>
 <body>
 <main>
   <h1>Stream Uploader Demo</h1>
-  <section>
-    <h2>Upload Files</h2>
-    <label for="title">Title</label>
-    <input id="title" type="text" placeholder="Release assets">
-    <label for="note">Note</label>
-    <textarea id="note" placeholder="Optional description"></textarea>
-    <label for="files">Files</label>
-    <input id="files" type="file" multiple>
-    <div class="uploads" id="uploads"></div>
-    <p class="muted">Files upload through streamuploader. The file list demonstrates direct, presigned, proxy, shared-key, and zip downloads.</p>
-    <button id="save" disabled>Save File List</button>
-  </section>
-  <section>
-    <div class="topline">
-      <h2>Files</h2>
-      <div class="toolbar">
-        <button class="secondary" id="zipSelected" disabled>Download ZIP</button>
-        <button class="secondary" id="refresh">Refresh</button>
+  <nav class="tabs" aria-label="Demo pages">
+    <button class="tab-button active" data-tab-target="upload">Upload Files</button>
+    <button class="tab-button" data-tab-target="invalid">Upload Invalid Files</button>
+  </nav>
+  <div class="tab-panel active" id="tab-upload">
+    <section>
+      <h2>Upload Files</h2>
+      <label for="title">Title</label>
+      <input id="title" type="text" placeholder="Release assets">
+      <label for="note">Note</label>
+      <textarea id="note" placeholder="Optional description"></textarea>
+      <label for="files">Files</label>
+      <input id="files" type="file" multiple>
+      <div class="uploads" id="uploads"></div>
+      <p class="muted">Files upload through streamuploader. The file list demonstrates direct, presigned, proxy, shared-key, and zip downloads.</p>
+      <button id="save" disabled>Save File List</button>
+    </section>
+    <section>
+      <div class="topline">
+        <h2>Files</h2>
+        <div class="toolbar">
+          <button class="secondary" id="zipSelected" disabled>Download ZIP</button>
+          <button class="secondary" id="refresh">Refresh</button>
+        </div>
       </div>
+      <table>
+        <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Select all files"></th><th>Title</th><th>File</th><th>Size</th><th>Object Key</th><th>Actions</th></tr></thead>
+        <tbody id="fileRows"></tbody>
+      </table>
+    </section>
+  </div>
+  <section class="tab-panel" id="tab-invalid">
+    <div class="topline">
+      <h2>Upload Invalid Files</h2>
+      <button id="runInvalidUploads">Run Invalid Uploads</button>
     </div>
-    <table>
-      <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Select all files"></th><th>Title</th><th>File</th><th>Size</th><th>Object Key</th><th>Actions</th></tr></thead>
-      <tbody id="fileRows"></tbody>
-    </table>
+    <div class="invalid-results" id="invalidResults"></div>
   </section>
 </main>
 <script>
@@ -604,9 +651,18 @@ const refreshButton = document.querySelector("#refresh");
 const zipSelectedButton = document.querySelector("#zipSelected");
 const selectAll = document.querySelector("#selectAll");
 const rows = document.querySelector("#fileRows");
+const invalidButton = document.querySelector("#runInvalidUploads");
+const invalidResults = document.querySelector("#invalidResults");
 const pending = new Map();
 const selected = new Set();
 let ws;
+
+document.querySelectorAll(".tab-button").forEach(button => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".tab-button").forEach(item => item.classList.toggle("active", item === button));
+    document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === "tab-" + button.dataset.tabTarget));
+  });
+});
 
 function connectWatch() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -641,7 +697,7 @@ fileInput.addEventListener("change", async () => {
 });
 
 async function startUpload(file) {
-  const keyResp = await fetch(uploadBase + "/keys", {
+  const keyResp = await fetch(uploadEndpoint("/keys"), {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({file_name: file.name, content_type: file.type, size_bytes: file.size})
@@ -651,7 +707,7 @@ async function startUpload(file) {
   pending.set(key.upload_key, {name: file.name, size: file.size, status: "key_created", uploadedBytes: 0, fact: key});
   renderUploads();
   watchKey(key.upload_key);
-  const putResp = await fetch(key.upload_url.replace(location.origin, ""), {
+  const putResp = await fetch(uploadContentEndpoint(key), {
     method: "PUT",
     headers: {"Content-Type": file.type || "application/octet-stream"},
     body: file
@@ -705,6 +761,101 @@ saveButton.addEventListener("click", async () => {
   updateSaveState();
   await loadFiles();
 });
+
+invalidButton.addEventListener("click", async () => {
+  invalidButton.disabled = true;
+  invalidResults.innerHTML = "";
+  const cases = [
+    {
+      label: "JPEG declaration with ELF bytes",
+      fileName: "fake.jpg",
+      contentType: "image/jpeg",
+      body: new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
+    },
+    {
+      label: "Plain text declaration with bash script",
+      fileName: "note.txt",
+      contentType: "text/plain",
+      body: new TextEncoder().encode("#!/bin/bash\necho denied\n")
+    }
+  ];
+  for (const item of cases) {
+    await runInvalidUpload(item);
+  }
+  invalidButton.disabled = false;
+});
+
+async function runInvalidUpload(item) {
+  const result = document.createElement("div");
+  result.className = "invalid-result";
+  result.innerHTML = "<strong></strong><div class='status'></div><pre></pre>";
+  result.querySelector("strong").textContent = item.label;
+  result.querySelector(".status").textContent = "uploading";
+  invalidResults.appendChild(result);
+  try {
+    const keyResp = await fetch(uploadEndpoint("/keys"), {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({file_name: item.fileName, content_type: item.contentType, size_bytes: item.body.byteLength})
+    });
+    const keyBody = await readJSONOrText(keyResp);
+    if (!keyResp.ok) {
+      result.querySelector(".status").textContent = "key failed " + keyResp.status;
+      result.querySelector("pre").textContent = JSON.stringify(keyBody, null, 2);
+      return;
+    }
+    if (!keyBody || typeof keyBody.upload_url !== "string") {
+      result.querySelector(".status").textContent = "key response missing upload_url";
+      result.querySelector("pre").textContent = typeof keyBody === "string" ? keyBody : JSON.stringify(keyBody, null, 2);
+      return;
+    }
+    const putURL = uploadContentEndpoint(keyBody);
+    const putResp = await fetch(putURL, {
+      method: "PUT",
+      headers: {"Content-Type": item.contentType},
+      body: item.body
+    });
+    const putBody = await readJSONOrText(putResp);
+    result.querySelector(".status").textContent = putResp.status + " " + putResp.statusText;
+    result.querySelector("pre").textContent = typeof putBody === "string" ? putBody : JSON.stringify(putBody, null, 2);
+  } catch (err) {
+    result.querySelector(".status").textContent = "request failed";
+    result.querySelector("pre").textContent = String(err);
+  }
+}
+
+function uploadEndpoint(path) {
+  return uploadBase + path;
+}
+
+function uploadContentEndpoint(key) {
+  if (key && typeof key.upload_key === "string") {
+    return uploadEndpoint("/keys/" + encodeURIComponent(key.upload_key) + "/content");
+  }
+  if (key && typeof key.upload_url === "string") {
+    return sameOriginPath(key.upload_url);
+  }
+  return "";
+}
+
+function sameOriginPath(value) {
+  try {
+    const url = new URL(value, location.href);
+    if (url.origin === location.origin) return url.pathname + url.search + url.hash;
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+
+async function readJSONOrText(resp) {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
 
 refreshButton.addEventListener("click", loadFiles);
 zipSelectedButton.addEventListener("click", () => {

@@ -1,10 +1,16 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -27,6 +33,8 @@ type Config struct {
 	S3PublicRead            bool
 	SessionTTL              time.Duration
 	MaxUploadBytes          int64
+	SecurityConfigPath      string
+	Security                SecurityPolicy
 	PresignTTL              time.Duration
 	AllowFrontendFileAccess bool
 	EnableSharedKey         bool
@@ -36,7 +44,33 @@ type Config struct {
 	MaxArchiveBytes         int64
 }
 
+type SecurityPolicy struct {
+	MimeMagic MimeMagicPolicy `yaml:"mime_magic"`
+}
+
+type MimeMagicPolicy struct {
+	Enabled                 bool            `yaml:"enabled"`
+	PrefixBytes             int64           `yaml:"prefix_bytes"`
+	RejectScriptUploads     bool            `yaml:"reject_script_uploads"`
+	AllowFileTypes          map[string]bool `yaml:"allow_file_types"`
+	DenyFileTypes           map[string]bool `yaml:"deny_file_types"`
+	AllowMIMETypes          map[string]bool `yaml:"allow_mime_types"`
+	DenyMIMETypes           map[string]bool `yaml:"deny_mime_types"`
+	AllowedScriptTypes      map[string]bool `yaml:"allowed_script_types"`
+	AllowedScriptExtensions map[string]bool `yaml:"allowed_script_extensions"`
+	EquivalentMIMETypes     [][]string      `yaml:"equivalent_mime_types"`
+	ExpandedAllowMIMETypes  []string        `yaml:"-"`
+	ExpandedDenyMIMETypes   []string        `yaml:"-"`
+}
+
 func Load() Config {
+	securityConfigPath := env("SECURITY_CONFIG", "")
+	security, err := LoadSecurityPolicy(securityConfigPath)
+	if err != nil {
+		log.Fatalf("load security config: %v", err)
+	}
+	security.MimeMagic.Enabled = envBool("MIME_MIGAIC_CHECK", security.MimeMagic.Enabled)
+	security.MimeMagic.Enabled = envBool("MIME_MAGIC_CHECK", security.MimeMagic.Enabled)
 	return Config{
 		Addr:             env("ADDR", ":8080"),
 		BackendAddr:      env("BACKEND_ADDR", ""),
@@ -58,6 +92,8 @@ func Load() Config {
 		S3PublicRead:            envBool("S3_PUBLIC_READ", false),
 		SessionTTL:              envDuration("SESSION_TTL", 24*time.Hour),
 		MaxUploadBytes:          envInt64("MAX_UPLOAD_BYTES", 1<<30),
+		SecurityConfigPath:      securityConfigPath,
+		Security:                security,
 		PresignTTL:              envDuration("PRESIGN_TTL", 15*time.Minute),
 		AllowFrontendFileAccess: envBool("ALLOW_FRONTEND_FILE_ACCESS", false),
 		EnableSharedKey:         envBool("ENABLE_SHARED_KEY", false),
@@ -68,7 +104,369 @@ func Load() Config {
 	}
 }
 
+func DefaultSecurityPolicy() SecurityPolicy {
+	return SecurityPolicy{
+		MimeMagic: MimeMagicPolicy{
+			Enabled:             true,
+			PrefixBytes:         3072,
+			RejectScriptUploads: true,
+			EquivalentMIMETypes: [][]string{
+				{"application/xml", "text/xml"},
+				{"image/jpeg", "image/pjpeg"},
+				{"application/gzip", "application/x-gzip"},
+			},
+			AllowFileTypes:          map[string]bool{},
+			DenyFileTypes:           map[string]bool{},
+			AllowMIMETypes:          map[string]bool{},
+			AllowedScriptTypes:      map[string]bool{},
+			AllowedScriptExtensions: map[string]bool{},
+			DenyMIMETypes: map[string]bool{
+				"application/x-dosexec":    true,
+				"application/x-executable": true,
+				"application/x-sharedlib":  true,
+				"application/x-msdownload": true,
+			},
+		},
+	}
+}
+
+func LoadSecurityPolicy(path string) (SecurityPolicy, error) {
+	policy := DefaultSecurityPolicy()
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return policy, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return SecurityPolicy{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := ValidateSecurityPolicyYAML(body); err != nil {
+		return SecurityPolicy{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := yaml.Unmarshal(body, &policy); err != nil {
+		return SecurityPolicy{}, fmt.Errorf("%s: %w", path, err)
+	}
+	normalizeSecurityPolicy(&policy)
+	return policy, nil
+}
+
+func normalizeSecurityPolicy(policy *SecurityPolicy) {
+	if policy.MimeMagic.PrefixBytes <= 0 {
+		policy.MimeMagic.PrefixBytes = 3072
+	}
+	if policy.MimeMagic.PrefixBytes < 512 {
+		policy.MimeMagic.PrefixBytes = 512
+	}
+	if policy.MimeMagic.PrefixBytes > 1<<20 {
+		policy.MimeMagic.PrefixBytes = 1 << 20
+	}
+	policy.MimeMagic.AllowFileTypes = normalizeFileTypeSwitches(policy.MimeMagic.AllowFileTypes)
+	policy.MimeMagic.DenyFileTypes = normalizeFileTypeSwitches(policy.MimeMagic.DenyFileTypes)
+	policy.MimeMagic.AllowMIMETypes = normalizeMIMESwitches(policy.MimeMagic.AllowMIMETypes)
+	policy.MimeMagic.DenyMIMETypes = normalizeMIMESwitches(policy.MimeMagic.DenyMIMETypes)
+	policy.MimeMagic.AllowedScriptTypes = normalizeScriptSwitches(policy.MimeMagic.AllowedScriptTypes)
+	policy.MimeMagic.AllowedScriptExtensions = normalizeExtensionSwitches(policy.MimeMagic.AllowedScriptExtensions)
+	for i, group := range policy.MimeMagic.EquivalentMIMETypes {
+		policy.MimeMagic.EquivalentMIMETypes[i] = normalizeMIMETypes(group)
+	}
+	policy.MimeMagic.ExpandedAllowMIMETypes = expandMIMETypes(policy.MimeMagic.AllowMIMETypes, policy.MimeMagic.AllowFileTypes)
+	policy.MimeMagic.ExpandedDenyMIMETypes = expandMIMETypes(policy.MimeMagic.DenyMIMETypes, policy.MimeMagic.DenyFileTypes)
+}
+
+func normalizeScriptSwitches(values map[string]bool) map[string]bool {
+	if values == nil {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for key, enabled := range values {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized != "" {
+			out[normalized] = enabled
+		}
+	}
+	return out
+}
+
+func normalizeExtensionSwitches(values map[string]bool) map[string]bool {
+	if values == nil {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for key, enabled := range values {
+		normalized := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(key), "."))
+		if normalized != "" {
+			out[normalized] = enabled
+		}
+	}
+	return out
+}
+
+func normalizeFileTypeSwitches(values map[string]bool) map[string]bool {
+	if values == nil {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for key, enabled := range values {
+		normalized := normalizeFileType(key)
+		if normalized != "" {
+			out[normalized] = enabled
+		}
+	}
+	return out
+}
+
+func normalizeMIMESwitches(values map[string]bool) map[string]bool {
+	if values == nil {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for key, enabled := range values {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized != "" {
+			out[normalized] = enabled
+		}
+	}
+	return out
+}
+
+func normalizeMIMETypes(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func expandMIMETypes(mimeTypes, fileTypes map[string]bool) []string {
+	out := make([]string, 0, len(mimeTypes))
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			return
+		}
+		if _, ok := seen[normalized]; ok {
+			return
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	for value, enabled := range mimeTypes {
+		if enabled {
+			add(value)
+		}
+	}
+	for value, enabled := range fileTypes {
+		if !enabled {
+			continue
+		}
+		for _, mimeType := range MIMEFileType(value) {
+			add(mimeType)
+		}
+	}
+	return out
+}
+
+func MIMEFileType(value string) []string {
+	mimeTypes := mimeFileTypes[normalizeFileType(value)]
+	return append([]string(nil), mimeTypes...)
+}
+
+func normalizeFileType(value string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "."))
+}
+
+var mimeFileTypes = map[string][]string{
+	"images":     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"},
+	"image":      {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"},
+	"documents":  {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"document":   {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"archives":   {"application/zip", "application/gzip", "application/x-gzip", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"archive":    {"application/zip", "application/gzip", "application/x-gzip", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"audio":      {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/flac", "audio/aac"},
+	"videos":     {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
+	"video":      {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
+	"text":       {"text/plain", "text/csv", "text/markdown", "application/json", "application/xml", "text/xml"},
+	"png":        {"image/png"},
+	"jpeg":       {"image/jpeg", "image/pjpeg"},
+	"jpg":        {"image/jpeg", "image/pjpeg"},
+	"gif":        {"image/gif"},
+	"webp":       {"image/webp"},
+	"avif":       {"image/avif"},
+	"tiff":       {"image/tiff"},
+	"tif":        {"image/tiff"},
+	"bmp":        {"image/bmp"},
+	"svg":        {"image/svg+xml"},
+	"pdf":        {"application/pdf"},
+	"txt":        {"text/plain"},
+	"plain":      {"text/plain"},
+	"csv":        {"text/csv"},
+	"json":       {"application/json"},
+	"xml":        {"application/xml", "text/xml"},
+	"zip":        {"application/zip"},
+	"gzip":       {"application/gzip", "application/x-gzip"},
+	"gz":         {"application/gzip", "application/x-gzip"},
+	"exe":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
+	"dll":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
+	"elf":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
+	"executable": {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
+}
+
+func ValidateSecurityPolicyYAML(body []byte) error {
+	var raw any
+	if err := yaml.Unmarshal(body, &raw); err != nil {
+		return err
+	}
+	jsonBody, err := json.Marshal(yamlToJSONValue(raw))
+	if err != nil {
+		return err
+	}
+	var value any
+	if err := json.Unmarshal(jsonBody, &value); err != nil {
+		return err
+	}
+	var schemaDoc any
+	if err := json.Unmarshal([]byte(SecurityPolicyJSONSchema()), &schemaDoc); err != nil {
+		return err
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("streamuploader-security.schema.json", schemaDoc); err != nil {
+		return err
+	}
+	schema, err := compiler.Compile("streamuploader-security.schema.json")
+	if err != nil {
+		return err
+	}
+	return schema.Validate(value)
+}
+
+func yamlToJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for key, value := range typed {
+			out[key] = yamlToJSONValue(value)
+		}
+		return out
+	case map[any]any:
+		out := map[string]any{}
+		for key, value := range typed {
+			out[fmt.Sprint(key)] = yamlToJSONValue(value)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, value := range typed {
+			out[i] = yamlToJSONValue(value)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func SecurityPolicyJSONSchema() string {
+	schema := map[string]any{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"title":                "StreamUploader security policy",
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"mime_magic": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"enabled":                   map[string]any{"type": "boolean"},
+					"prefix_bytes":              map[string]any{"type": "integer", "minimum": 512, "maximum": 1048576},
+					"reject_script_uploads":     map[string]any{"type": "boolean"},
+					"allow_file_types":          boolSwitchSchema(knownFileTypeNames()),
+					"deny_file_types":           boolSwitchSchema(knownFileTypeNames()),
+					"allow_mime_types":          boolSwitchSchema(knownMIMETypes()),
+					"deny_mime_types":           boolSwitchSchema(knownMIMETypes()),
+					"allowed_script_types":      boolSwitchSchema(knownScriptTypes()),
+					"allowed_script_extensions": boolSwitchSchema(knownScriptExtensions()),
+					"equivalent_mime_types": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type":     "array",
+							"minItems": 2,
+							"items":    map[string]any{"type": "string", "enum": knownMIMETypes()},
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(schema)
+	if err != nil {
+		panic(err)
+	}
+	return string(body)
+}
+
+func knownScriptTypes() []string {
+	return []string{"shell", "python", "node", "ruby", "perl", "php"}
+}
+
+func knownScriptExtensions() []string {
+	return []string{"sh", "bash", "zsh", "ksh", "py", "js", "mjs", "cjs", "rb", "pl", "php"}
+}
+
+func boolSwitchSchema(keys []string) map[string]any {
+	properties := map[string]any{}
+	for _, key := range keys {
+		properties[key] = map[string]any{"type": "boolean"}
+	}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           properties,
+	}
+}
+
+func knownFileTypeNames() []string {
+	out := make([]string, 0, len(mimeFileTypes))
+	for key := range mimeFileTypes {
+		out = append(out, key)
+	}
+	return out
+}
+
+func knownMIMETypes() []string {
+	seen := map[string]struct{}{}
+	for _, values := range mimeFileTypes {
+		for _, value := range values {
+			seen[value] = struct{}{}
+		}
+	}
+	for _, group := range DefaultSecurityPolicy().MimeMagic.EquivalentMIMETypes {
+		for _, value := range group {
+			seen[value] = struct{}{}
+		}
+	}
+	for _, value := range []string{"text/x-shellscript", "text/x-python", "text/javascript", "text/x-ruby", "text/x-perl", "application/x-httpd-php"} {
+		seen[value] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for value := range seen {
+		out = append(out, value)
+	}
+	return out
+}
+
 func env(key, fallback string) string {
+	if value := os.Getenv("SU_" + key); value != "" {
+		return value
+	}
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
@@ -87,7 +485,7 @@ func split(value string) []string {
 }
 
 func envBool(key string, fallback bool) bool {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}
@@ -99,7 +497,7 @@ func envBool(key string, fallback bool) bool {
 }
 
 func envInt64(key string, fallback int64) int64 {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}
@@ -111,7 +509,7 @@ func envInt64(key string, fallback int64) int64 {
 }
 
 func envInt(key string, fallback int) int {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}
@@ -123,7 +521,7 @@ func envInt(key string, fallback int) int {
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {
-	value := os.Getenv(key)
+	value := env(key, "")
 	if value == "" {
 		return fallback
 	}

@@ -14,6 +14,7 @@
 {"category": "structure", "id": "data:openai-compatible-processor-config", "path": ".knowledge/data/openai-compatible-processor-config.md", "role": "supporting", "title": "OpenAI Compatible Processor Config", "type": "data"}
 {"category": "structure", "id": "data:processor-result", "path": ".knowledge/data/processor-result.md", "role": "supporting", "title": "Processor Result", "type": "data"}
 {"category": "structure", "id": "data:security-check-result", "path": ".knowledge/data/security-check-result.md", "role": "supporting", "title": "Security Check Result", "type": "data"}
+{"category": "structure", "id": "data:security-policy-config", "path": ".knowledge/data/security-policy-config.md", "role": "supporting", "title": "Security Policy Config", "type": "data"}
 {"category": "structure", "id": "data:shared-key-record", "path": ".knowledge/data/shared-key-record.md", "role": "supporting", "title": "Shared Key Record", "type": "data"}
 {"category": "structure", "id": "data:storage-key-allocation", "path": ".knowledge/data/storage-key-allocation.md", "role": "supporting", "title": "Storage Key Allocation", "type": "data"}
 {"category": "structure", "id": "data:upload-batch", "path": ".knowledge/data/upload-batch.md", "role": "supporting", "title": "Upload Batch", "type": "data"}
@@ -21,6 +22,7 @@
 {"category": "constraint", "id": "decision:consistency-model", "path": ".knowledge/decision/consistency-model.md", "role": "supporting", "title": "Consistency Model", "type": "decision"}
 {"category": "constraint", "id": "decision:derived-asset-readiness-policy", "path": ".knowledge/decision/derived-asset-readiness-policy.md", "role": "supporting", "title": "Derived Asset Readiness Policy", "type": "decision"}
 {"category": "constraint", "id": "decision:metadata-submit-trigger", "path": ".knowledge/decision/metadata-submit-trigger.md", "role": "supporting", "title": "Metadata Submit Trigger", "type": "decision"}
+{"category": "constraint", "id": "decision:mime-detector-library", "path": ".knowledge/decision/mime-detector-library.md", "role": "supporting", "title": "MIME Detector Library", "type": "decision"}
 {"category": "constraint", "id": "decision:serverless-upload-state", "path": ".knowledge/decision/serverless-upload-state.md", "role": "supporting", "title": "Serverless Upload State", "type": "decision"}
 {"category": "constraint", "id": "decision:upload-transport-boundary", "path": ".knowledge/decision/upload-transport-boundary.md", "role": "supporting", "title": "Upload Transport Boundary", "type": "decision"}
 {"category": "behavior", "id": "flow:demo-download-modes", "path": ".knowledge/flow/demo-download-modes.md", "role": "primary", "title": "Demo Download Modes", "type": "flow"}
@@ -62,6 +64,7 @@
 {"category": "constraint", "id": "policy:worker-queue-policy", "path": ".knowledge/policy/worker-queue-policy.md", "role": "supporting", "title": "Worker Queue Policy", "type": "policy"}
 {"category": "objective", "id": "requirement:application-metadata-submit", "path": ".knowledge/requirement/application-metadata-submit.md", "role": "primary", "title": "Application Metadata Submit", "type": "requirement"}
 {"category": "objective", "id": "requirement:four-download-modes", "path": ".knowledge/requirement/four-download-modes.md", "role": "primary", "title": "Four Download Modes", "type": "requirement"}
+{"category": "objective", "id": "requirement:mime-magic-consistency", "path": ".knowledge/requirement/mime-magic-consistency.md", "role": "primary", "title": "MIME Magic Consistency", "type": "requirement"}
 {"category": "objective", "id": "requirement:streaming-upload", "path": ".knowledge/requirement/streaming-upload.md", "role": "primary", "title": "Streaming Upload", "type": "requirement"}
 {"category": "constraint", "id": "rule:prefix-replay", "path": ".knowledge/rule/prefix-replay.md", "role": "supporting", "title": "Prefix Replay", "type": "rule"}
 {"category": "external", "id": "system:application-server", "path": ".knowledge/system/application-server.md", "role": "supporting", "title": "Application Server", "type": "system"}

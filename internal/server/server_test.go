@@ -152,6 +152,285 @@ func TestUploadKeyFlow(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsMimeMagicMismatchBeforeStorage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       config.DefaultSecurityPolicy(),
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"fake.jpg","content_type":"image/jpeg"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	elf := append([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0}, bytes.Repeat([]byte{0}, 128)...)
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(elf))
+	uploadReq.Header.Set("Content-Type", "image/jpeg")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusUnsupportedMediaType {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	var body map[string]string
+	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "content_type_mismatch" {
+		t.Fatalf("error body = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected object was stored")
+	}
+	statusResp, err := http.Get(app.URL + "/api/upload/keys/" + key.UploadKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	decode(t, statusResp, &status)
+	if status.Status != "failed" || !strings.Contains(status.Error, "declared content type") {
+		t.Fatalf("upload status = %+v", status)
+	}
+}
+
+func TestUploadRejectsScriptDeclaredAsText(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       config.DefaultSecurityPolicy(),
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"note.txt","content_type":"text/plain"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", strings.NewReader("#!/bin/bash\necho denied\n"))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusUnsupportedMediaType {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	var body map[string]string
+	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "script_upload_rejected" {
+		t.Fatalf("error body = %+v", body)
+	}
+	if !strings.Contains(body["message"], "text/x-shellscript") {
+		t.Fatalf("error message = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected script was stored")
+	}
+}
+
+func TestUploadAllowsConfiguredScriptType(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.AllowedScriptTypes = map[string]bool{"shell": true}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       security,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"run.sh","content_type":"text/plain"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	body := []byte("#!/bin/bash\necho allowed\n")
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(body))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatalf("stored object = %q", string(got))
+	}
+}
+
+func TestUploadMimeMagicCheckCanOptOut(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       security,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"fake.jpg","content_type":"image/jpeg"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	elf := append([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0}, bytes.Repeat([]byte{0}, 128)...)
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(elf))
+	uploadReq.Header.Set("Content-Type", "image/jpeg")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, elf) {
+		t.Fatalf("stored object = %x", got)
+	}
+}
+
+func TestUploadAllowFileTypeCategory(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.AllowFileTypes = map[string]bool{"images": true}
+	security = normalizeTestSecurityPolicy(security)
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       security,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"pixel.png","content_type":"image/png"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(png))
+	uploadReq.Header.Set("Content-Type", "image/png")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, png) {
+		t.Fatalf("stored object = %x", got)
+	}
+}
+
+func TestUploadAllowFileTypeCategoryRejectsOutsideType(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.AllowFileTypes = map[string]bool{"images": true}
+	security = normalizeTestSecurityPolicy(security)
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		Security:       security,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"doc.pdf","content_type":"application/pdf"}`)
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	pdf := []byte("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n")
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(pdf))
+	uploadReq.Header.Set("Content-Type", "application/pdf")
+	uploadResp := do(t, uploadReq)
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusUnsupportedMediaType {
+		body, _ := io.ReadAll(uploadResp.Body)
+		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
+	}
+	var body map[string]string
+	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "content_type_not_allowed" {
+		t.Fatalf("error body = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected object was stored")
+	}
+}
+
 func TestReverseProxyNonUploadPaths(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/demo" {
@@ -539,4 +818,30 @@ func decode(t *testing.T, resp *http.Response, value any) {
 	if err := json.NewDecoder(resp.Body).Decode(value); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func normalizeTestSecurityPolicy(policy config.SecurityPolicy) config.SecurityPolicy {
+	policy.MimeMagic.ExpandedAllowMIMETypes = nil
+	for value, enabled := range policy.MimeMagic.AllowMIMETypes {
+		if enabled {
+			policy.MimeMagic.ExpandedAllowMIMETypes = append(policy.MimeMagic.ExpandedAllowMIMETypes, value)
+		}
+	}
+	for value, enabled := range policy.MimeMagic.AllowFileTypes {
+		if enabled {
+			policy.MimeMagic.ExpandedAllowMIMETypes = append(policy.MimeMagic.ExpandedAllowMIMETypes, config.MIMEFileType(value)...)
+		}
+	}
+	policy.MimeMagic.ExpandedDenyMIMETypes = nil
+	for value, enabled := range policy.MimeMagic.DenyMIMETypes {
+		if enabled {
+			policy.MimeMagic.ExpandedDenyMIMETypes = append(policy.MimeMagic.ExpandedDenyMIMETypes, value)
+		}
+	}
+	for value, enabled := range policy.MimeMagic.DenyFileTypes {
+		if enabled {
+			policy.MimeMagic.ExpandedDenyMIMETypes = append(policy.MimeMagic.ExpandedDenyMIMETypes, config.MIMEFileType(value)...)
+		}
+	}
+	return policy
 }

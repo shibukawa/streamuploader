@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=./security.schema.json
+mime_magic:
+  enabled: true
+  prefix_bytes: 3072
+  reject_script_uploads: true
+  allowed_script_types: {}
+  # allowed_script_types:
+  #   shell: true
+  #   python: true
+  allowed_script_extensions: {}
+  # allowed_script_extensions:
+  #   sh: true
+  #   py: true
+  allow_file_types: {}
+  # allow_file_types:
+  #   images: true
+  #   pdf: true
+  deny_file_types:
+    exe: true
+  allow_mime_types: {}
+  # allow_mime_types:
+  #   application/pdf: true
+  deny_mime_types:
+    application/x-dosexec: true
+    application/x-executable: true
+    application/x-sharedlib: true
+    application/x-msdownload: true
+  equivalent_mime_types:
+    - [application/xml, text/xml]
+    - [image/jpeg, image/pjpeg]
+    - [application/gzip, application/x-gzip]
