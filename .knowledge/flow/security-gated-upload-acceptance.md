@@ -14,15 +14,17 @@ flow:
         - verify upload_key exists
         - read bounded prefix from request body
         - run requirement:mime-magic-consistency before storage upload
-        - when prefix indicates archive or container, run policy:archive-bomb-protection before storage upload
         - build replay reader using rule:prefix-replay
-        - stream accepted bytes to system:s3-storage
+        - choose final key only when no post-stream security gate is enabled
+        - choose sibling .tmp key when system:clamav is enabled or archive guard is needed
     - name: run_security_gate
-      mode: sequential
+      mode: mixed_parallel_and_sequential
       actions:
-        - verify policy:file-intake-security result
-        - run system:clamav scan when enabled
-        - reject or quarantine failed files
+        - stream accepted bytes to system:s3-storage
+        - when system:clamav enabled, send same bytes to clamd TCP INSTREAM through io.MultiWriter
+        - when prefix indicates archive or container, run policy:archive-bomb-protection against .tmp object after S3 upload completes
+        - delete .tmp object and reject failed files
+        - copy .tmp object to final key only after all enabled security gates allow
     - name: start_async_derived_work
       mode: parallel_after_security_gate
       actions:

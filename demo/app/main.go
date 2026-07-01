@@ -777,6 +777,12 @@ invalidButton.addEventListener("click", async () => {
       fileName: "note.txt",
       contentType: "text/plain",
       body: new TextEncoder().encode("#!/bin/bash\necho denied\n")
+    },
+    {
+      label: "EICAR antivirus test file",
+      fileName: "eicar.txt",
+      contentType: "text/plain",
+      body: eicarTestFileBody()
     }
   ];
   for (const item of cases) {
@@ -784,6 +790,15 @@ invalidButton.addEventListener("click", async () => {
   }
   invalidButton.disabled = false;
 });
+
+function eicarTestFileBody() {
+  const pieces = [
+    "X5O", "!P%", "@AP", "[4\\", "PZX", "54(", "P^)", "7CC",
+    ")7}", "$EI", "CAR", "-ST", "AND", "ARD", "-AN", "TIV",
+    "IRU", "S-T", "EST", "-FI", "LE!", "$H+", "H*"
+  ];
+  return new TextEncoder().encode(pieces.join(""));
+}
 
 async function runInvalidUpload(item) {
   const result = document.createElement("div");

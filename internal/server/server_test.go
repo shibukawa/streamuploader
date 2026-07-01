@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -598,6 +600,67 @@ func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
 	assertNoTmpObjects(t, store)
 }
 
+func TestUploadWithClamAVScansTmpThenPublishes(t *testing.T) {
+	clamAddr, scannedBody, closeClam := startFakeClamAV(t, "stream: OK\x00")
+	defer closeClam()
+
+	security := config.DefaultSecurityPolicy()
+	security.ClamAV.Enabled = true
+	security.ClamAV.Address = clamAddr
+	cfg := testUploadConfig(security)
+	store := &fakeStore{objects: map[string][]byte{}}
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "note.txt", "text/plain", []byte("hello from clamav"))
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(body))
+	}
+	_ = resp.Body.Close()
+	if got := string(<-scannedBody); got != "hello from clamav" {
+		t.Fatalf("scanned body = %q", got)
+	}
+	if string(store.objects[key.ObjectKey]) != "hello from clamav" {
+		t.Fatalf("published body = %q", string(store.objects[key.ObjectKey]))
+	}
+	if store.copies != 1 {
+		t.Fatalf("copies = %d", store.copies)
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadWithClamAVRejectsDetectionAndDeletesTmp(t *testing.T) {
+	clamAddr, scannedBody, closeClam := startFakeClamAV(t, "stream: Eicar-Test-Signature FOUND\x00")
+	defer closeClam()
+
+	security := config.DefaultSecurityPolicy()
+	security.ClamAV.Enabled = true
+	security.ClamAV.Address = clamAddr
+	cfg := testUploadConfig(security)
+	store := &fakeStore{objects: map[string][]byte{}}
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "note.txt", "text/plain", []byte("bad content"))
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(body))
+	}
+	var body map[string]string
+	decode(t, resp, &body)
+	if body["error"] != "malware_detected" {
+		t.Fatalf("error = %q", body["error"])
+	}
+	if got := string(<-scannedBody); got != "bad content" {
+		t.Fatalf("scanned body = %q", got)
+	}
+	if _, ok := store.objects[key.ObjectKey]; ok {
+		t.Fatalf("infected object was published at %s", key.ObjectKey)
+	}
+	assertNoTmpObjects(t, store)
+}
+
 func TestReverseProxyNonUploadPaths(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/demo" {
@@ -1103,6 +1166,51 @@ func makeBrotli(t *testing.T, body []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func startFakeClamAV(t *testing.T, response string) (string, <-chan []byte, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := make(chan []byte, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		command := make([]byte, len("zINSTREAM\x00"))
+		if _, err := io.ReadFull(conn, command); err != nil {
+			return
+		}
+		var body bytes.Buffer
+		var sizePrefix [4]byte
+		for {
+			if _, err := io.ReadFull(conn, sizePrefix[:]); err != nil {
+				return
+			}
+			n := binary.BigEndian.Uint32(sizePrefix[:])
+			if n == 0 {
+				break
+			}
+			chunk := make([]byte, n)
+			if _, err := io.ReadFull(conn, chunk); err != nil {
+				return
+			}
+			_, _ = body.Write(chunk)
+		}
+		scanned <- body.Bytes()
+		_, _ = conn.Write([]byte(response))
+	}()
+	closeFn := func() {
+		_ = ln.Close()
+		<-done
+	}
+	return ln.Addr().String(), scanned, closeFn
 }
 
 func assertNoTmpObjects(t *testing.T, store *fakeStore) {

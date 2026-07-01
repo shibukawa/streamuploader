@@ -47,6 +47,7 @@ type Config struct {
 type SecurityPolicy struct {
 	MimeMagic    MimeMagicPolicy    `yaml:"mime_magic"`
 	ArchiveGuard ArchiveGuardPolicy `yaml:"archive_guard"`
+	ClamAV       ClamAVPolicy       `yaml:"clamav"`
 }
 
 type MimeMagicPolicy struct {
@@ -80,6 +81,13 @@ type ArchiveGuardPolicy struct {
 	DecompressBufferBytes     int64   `yaml:"decompress_buffer_bytes"`
 }
 
+type ClamAVPolicy struct {
+	Enabled          bool   `yaml:"enabled"`
+	Address          string `yaml:"address"`
+	ScanTimeoutMS    int64  `yaml:"scan_timeout_ms"`
+	StreamChunkBytes int64  `yaml:"stream_chunk_bytes"`
+}
+
 func Load() Config {
 	securityConfigPath := env("SECURITY_CONFIG", "")
 	security, err := LoadSecurityPolicy(securityConfigPath)
@@ -88,6 +96,15 @@ func Load() Config {
 	}
 	security.MimeMagic.Enabled = envBool("MIME_MIGAIC_CHECK", security.MimeMagic.Enabled)
 	security.MimeMagic.Enabled = envBool("MIME_MAGIC_CHECK", security.MimeMagic.Enabled)
+	clamAVHost := env("CLAMAV_HOST", env("CLAMAV_ADDR", ""))
+	if clamAVHost != "" {
+		security.ClamAV.Enabled = true
+		security.ClamAV.Address = clamAVHost
+	}
+	security.ClamAV.Enabled = envBool("CLAMAV_ENABLED", security.ClamAV.Enabled)
+	security.ClamAV.ScanTimeoutMS = envInt64("CLAMAV_SCAN_TIMEOUT_MS", security.ClamAV.ScanTimeoutMS)
+	security.ClamAV.StreamChunkBytes = envInt64("CLAMAV_STREAM_CHUNK_BYTES", security.ClamAV.StreamChunkBytes)
+	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
 		Addr:             env("ADDR", ":8080"),
 		BackendAddr:      env("BACKEND_ADDR", ""),
@@ -159,6 +176,12 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			WorkerMemoryBytes:         64 << 20,
 			DecompressBufferBytes:     32 << 10,
 		},
+		ClamAV: ClamAVPolicy{
+			Enabled:          false,
+			Address:          "clamav:3310",
+			ScanTimeoutMS:    30000,
+			StreamChunkBytes: 128 << 10,
+		},
 	}
 }
 
@@ -204,6 +227,7 @@ func normalizeSecurityPolicy(policy *SecurityPolicy) {
 	policy.MimeMagic.ExpandedAllowMIMETypes = expandMIMETypes(policy.MimeMagic.AllowMIMETypes, policy.MimeMagic.AllowFileTypes)
 	policy.MimeMagic.ExpandedDenyMIMETypes = expandMIMETypes(policy.MimeMagic.DenyMIMETypes, policy.MimeMagic.DenyFileTypes)
 	normalizeArchiveGuardPolicy(&policy.ArchiveGuard)
+	normalizeClamAVPolicy(&policy.ClamAV)
 }
 
 func normalizeArchiveGuardPolicy(policy *ArchiveGuardPolicy) {
@@ -243,6 +267,25 @@ func normalizeArchiveGuardPolicy(policy *ArchiveGuardPolicy) {
 	}
 	if policy.DecompressBufferBytes > 1<<20 {
 		policy.DecompressBufferBytes = 1 << 20
+	}
+}
+
+func normalizeClamAVPolicy(policy *ClamAVPolicy) {
+	defaults := DefaultSecurityPolicy().ClamAV
+	if strings.TrimSpace(policy.Address) == "" {
+		policy.Address = defaults.Address
+	}
+	if policy.ScanTimeoutMS <= 0 {
+		policy.ScanTimeoutMS = defaults.ScanTimeoutMS
+	}
+	if policy.StreamChunkBytes <= 0 {
+		policy.StreamChunkBytes = defaults.StreamChunkBytes
+	}
+	if policy.StreamChunkBytes < 1024 {
+		policy.StreamChunkBytes = 1024
+	}
+	if policy.StreamChunkBytes > 1<<20 {
+		policy.StreamChunkBytes = 1 << 20
 	}
 }
 

@@ -17,6 +17,15 @@ source:
     method: built-in JSON Schema before unmarshalling policy
     unknown_keys: fail startup
     wrong_types: fail startup
+  env_only_security:
+    clamav:
+      enabled_by: SU_CLAMAV_HOST or CLAMAV_HOST set to host:port
+      disabled_by_default: true
+      reason: scanner location is deployment environment specific
+      optional_env:
+        - SU_CLAMAV_ENABLED
+        - SU_CLAMAV_SCAN_TIMEOUT_MS
+        - SU_CLAMAV_STREAM_CHUNK_BYTES
 schema:
   mime_magic:
     enabled:
@@ -183,6 +192,7 @@ example:
     decompress_buffer_bytes: 32768
 references:
   - policy:file-intake-security
+  - system:clamav
   - requirement:mime-magic-consistency
   - decision:mime-detector-library
   - policy:archive-bomb-protection

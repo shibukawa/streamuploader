@@ -129,6 +129,7 @@
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "system:clamav", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/data/shared-key-record.md", "source": "data:shared-key-record", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
@@ -214,14 +215,14 @@
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
-{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "rule:prefix-replay", "target_category": "constraint", "target_type": "rule"}
-{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
-{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "system:clamav", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:preview-generation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "flow:download-variant-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "flow:image-thumbnail-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "flow:document-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "flow:svg-preview-generation", "target_category": "behavior", "target_type": "flow"}
@@ -426,7 +427,10 @@
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "system:clamav", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "flow:session-assembly", "target_category": "behavior", "target_type": "flow"}
+{"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "flow:security-gated-upload-acceptance", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "data:upload-record", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/requirement/streaming-upload.md", "source": "requirement:streaming-upload", "target": "decision:upload-transport-boundary", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/rule/prefix-replay.md", "source": "rule:prefix-replay", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
@@ -440,7 +444,10 @@
 {"context": "body", "path": ".knowledge/system/backend-control-listener.md", "source": "system:backend-control-listener", "target": "system:server-deployment-modes", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "policy:tool-backend-selection-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "data:upload-record", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "requirement:streaming-upload", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/system/clamav.md", "source": "system:clamav", "target": "system:external-tool-registry", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/content-detector.md", "source": "system:content-detector", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/system/content-detector.md", "source": "system:content-detector", "target": "rule:prefix-replay", "target_category": "constraint", "target_type": "rule"}

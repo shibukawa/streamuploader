@@ -47,6 +47,7 @@ services:
     depends_on:
       - rustfs
       - demo-app
+      - clamav
     restart: on-failure
     environment:
       SU_ADDR: :8080
@@ -70,12 +71,25 @@ services:
       SU_MAX_ARCHIVE_FILES: "100"
       SU_MAX_ARCHIVE_BYTES: "1073741824"
       SU_SECURITY_CONFIG: /etc/streamuploader/security.yaml
+      SU_CLAMAV_HOST: clamav:3310
     ports:
       - "8080:8080"
       - "8082:8082"
     volumes:
       - ./config/security.yaml:/etc/streamuploader/security.yaml:ro
 
+  clamav:
+    image: clamav/clamav:stable_base-debian
+    container_name: clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    environment:
+      FRESHCLAM_CHECKS: "24"
+    volumes:
+      - clamav-db:/var/lib/clamav
+
 volumes:
   rustfs-data:
   demo-data:
+  clamav-db:

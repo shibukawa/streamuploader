@@ -225,6 +225,23 @@ func TestEnvPrefersSUPrefix(t *testing.T) {
 	}
 }
 
+func TestLoadEnablesClamAVFromEnvironment(t *testing.T) {
+	t.Setenv("SU_CLAMAV_HOST", "clamd.local:3310")
+	t.Setenv("SU_CLAMAV_SCAN_TIMEOUT_MS", "12000")
+	t.Setenv("SU_CLAMAV_STREAM_CHUNK_BYTES", "65536")
+
+	cfg := Load()
+	if !cfg.Security.ClamAV.Enabled {
+		t.Fatal("clamav should be enabled when SU_CLAMAV_HOST is set")
+	}
+	if cfg.Security.ClamAV.Address != "clamd.local:3310" {
+		t.Fatalf("clamav address = %q", cfg.Security.ClamAV.Address)
+	}
+	if cfg.Security.ClamAV.ScanTimeoutMS != 12000 || cfg.Security.ClamAV.StreamChunkBytes != 65536 {
+		t.Fatalf("clamav limits = %+v", cfg.Security.ClamAV)
+	}
+}
+
 func loadSecuritySchemaFile(t *testing.T) *jsonschema.Schema {
 	t.Helper()
 	body, err := os.ReadFile("../../config/security.schema.json")

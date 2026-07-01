@@ -545,8 +545,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		}
 	}
 	archiveUpload := s.cfg.Security.ArchiveGuard.Enabled && archiveKind != archiveUnknown
+	securityStagedUpload := archiveUpload || s.cfg.Security.ClamAV.Enabled
 	objectKey := target.objectKey
-	if archiveUpload {
+	if securityStagedUpload {
 		objectKey = temporaryUploadObjectKey(target.objectKey, uploadKey)
 	}
 	measured := &progressReader{
@@ -566,19 +567,24 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			})
 		},
 	}
-	result, err := s.store.PutObject(r.Context(), storage.PutInput{
+	result, err := s.putObjectWithSecurityScan(r.Context(), storage.PutInput{
 		Bucket:      s.cfg.Bucket,
 		Key:         objectKey,
-		Body:        measured,
 		ContentType: contentType,
-	})
+	}, measured)
 	if err != nil {
+		if securityStagedUpload {
+			_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+		}
 		code := "storage_error"
 		status := http.StatusBadGateway
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			code = "upload_too_large"
 			status = http.StatusRequestEntityTooLarge
+		} else if securityStatus, securityCode := securityErrorResponse(err); securityCode != "content_rejected" {
+			code = securityCode
+			status = securityStatus
 		}
 		s.updateUpload(uploadKey, func(item *model.UploadItem) {
 			item.Status = model.UploadFailed
@@ -597,6 +603,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			writeError(w, status, code, err.Error())
 			return
 		}
+	}
+	if securityStagedUpload {
 		copyResult, err := s.store.CopyObject(r.Context(), storage.CopyInput{
 			Bucket:      s.cfg.Bucket,
 			SourceKey:   objectKey,

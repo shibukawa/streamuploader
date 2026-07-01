@@ -20,10 +20,10 @@ Implemented scope:
 - backend control `DELETE /internal/objects/{object_key}` on the backend listener
 - reverse proxy from non-upload paths to the demo app
 - demo app download site with JSON-backed file list, direct/presigned/proxy/shared-key download buttons, and selected-file zip download
-- built-in file intake security for MIME/magic-header consistency, script rejection, and YAML-managed allow/deny lists
+- built-in file intake security for MIME/magic-header consistency, script rejection, YAML-managed allow/deny lists, archive bomb protection, and optional ClamAV scanning
 - local Kubernetes manifest with streamuploader, demo app, and RustFS
 
-Out of scope for this first implementation: thumbnails, preview generation, virus scanning, resumable upload state, and cleanup worker.
+Out of scope for this first implementation: thumbnails, preview generation, resumable upload state, and cleanup worker.
 
 Download modes:
 
@@ -42,6 +42,7 @@ Security configuration:
 - Use `mime_magic.allow_file_types` as bool switches such as `images: true`, `png: true`, `jpeg: true`, and `pdf: true`; use `allow_mime_types` with exact MIME keys such as `application/pdf: true`.
 - Browsers and operating systems do not reliably set script MIME types for selected files, so script-like uploads are detected from shebangs and known script extensions. Use `allowed_script_types` or `allowed_script_extensions` to opt in.
 - The YAML security config is validated against the built-in JSON Schema at startup, so unknown file type or MIME keys fail fast. The editor-facing schema is `config/security.schema.json`.
+- ClamAV scanning is optional and enabled by setting `SU_CLAMAV_HOST` to a clamd TCP address such as `clamav:3310`; when enabled, uploads are streamed to ClamAV and S3 in parallel and only published after the scan passes.
 - If the demo app is opened directly instead of through streamuploader, it proxies `/api/upload/*` to `SU_STREAMUPLOADER_PROXY_URL`.
 - The demo includes an `Upload Invalid Files` tab that sends known-bad uploads and shows the JSON rejection response.
 
