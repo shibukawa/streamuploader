@@ -33,6 +33,20 @@ mime_magic:
     application/x-executable: true
   equivalent_mime_types:
     - [image/jpeg, image/pjpeg]
+archive_guard:
+  enabled: true
+  strict: true
+  allow_encrypted: false
+  max_total_uncompressed_bytes: 2048
+  max_single_entry_bytes: 1024
+  max_compression_ratio: 10
+  max_entries: 12
+  max_depth: 2
+  max_filename_bytes: 128
+  max_inspection_time_ms: 1000
+  max_probe_bytes: 4096
+  worker_memory_bytes: 1048576
+  decompress_buffer_bytes: 4096
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
@@ -64,6 +78,20 @@ mime_magic:
     application/x-executable: true
   equivalent_mime_types:
     - [image/jpeg, image/pjpeg]
+archive_guard:
+  enabled: true
+  strict: true
+  allow_encrypted: false
+  max_total_uncompressed_bytes: 2048
+  max_single_entry_bytes: 1024
+  max_compression_ratio: 10
+  max_entries: 12
+  max_depth: 2
+  max_filename_bytes: 128
+  max_inspection_time_ms: 1000
+  max_probe_bytes: 4096
+  worker_memory_bytes: 1048576
+  decompress_buffer_bytes: 4096
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
@@ -108,6 +136,15 @@ mime_magic:
 	}
 	if len(policy.MimeMagic.EquivalentMIMETypes) != 1 || policy.MimeMagic.EquivalentMIMETypes[0][1] != "image/pjpeg" {
 		t.Fatalf("equivalent groups = %+v", policy.MimeMagic.EquivalentMIMETypes)
+	}
+	if !policy.ArchiveGuard.Enabled || !policy.ArchiveGuard.Strict {
+		t.Fatalf("archive guard flags = %+v", policy.ArchiveGuard)
+	}
+	if policy.ArchiveGuard.MaxTotalUncompressedBytes != 2048 || policy.ArchiveGuard.MaxSingleEntryBytes != 1024 {
+		t.Fatalf("archive size limits = %+v", policy.ArchiveGuard)
+	}
+	if policy.ArchiveGuard.DecompressBufferBytes != 4096 {
+		t.Fatalf("archive decompress buffer = %d", policy.ArchiveGuard.DecompressBufferBytes)
 	}
 }
 

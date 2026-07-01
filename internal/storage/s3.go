@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S3Config struct {
@@ -91,6 +93,25 @@ func (s *S3Store) PutObject(ctx context.Context, input PutInput) (PutResult, err
 		return PutResult{}, err
 	}
 	return PutResult{ETag: aws.ToString(out.ETag)}, nil
+}
+
+func (s *S3Store) CopyObject(ctx context.Context, input CopyInput) (CopyResult, error) {
+	out, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:            aws.String(input.Bucket),
+		Key:               aws.String(input.Key),
+		CopySource:        aws.String(url.PathEscape(input.Bucket + "/" + input.SourceKey)),
+		ContentType:       aws.String(input.ContentType),
+		Metadata:          input.Metadata,
+		MetadataDirective: types.MetadataDirectiveReplace,
+	})
+	if err != nil {
+		return CopyResult{}, err
+	}
+	etag := ""
+	if out.CopyObjectResult != nil {
+		etag = aws.ToString(out.CopyObjectResult.ETag)
+	}
+	return CopyResult{ETag: etag}, nil
 }
 
 func (s *S3Store) GetObject(ctx context.Context, input GetInput) (GetResult, error) {

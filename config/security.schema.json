@@ -50,11 +50,13 @@
                 "application/msword",
                 "application/pdf",
                 "application/rtf",
+                "application/br",
                 "application/vnd.ms-excel",
                 "application/vnd.ms-powerpoint",
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/x-brotli",
                 "application/x-7z-compressed",
                 "application/x-bzip2",
                 "application/x-dosexec",
@@ -66,6 +68,8 @@
                 "application/x-tar",
                 "application/x-xz",
                 "application/xml",
+                "application/zstd",
+                "application/x-zstd",
                 "application/zip",
                 "audio/aac",
                 "audio/flac",
@@ -103,6 +107,56 @@
           }
         }
       }
+    },
+    "archive_guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "strict": { "type": "boolean" },
+        "allow_encrypted": { "type": "boolean" },
+        "max_total_uncompressed_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_single_entry_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_compression_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_entries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_filename_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_inspection_time_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_probe_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "worker_memory_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decompress_buffer_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 1048576
+        }
+      }
     }
   },
   "$defs": {
@@ -115,7 +169,12 @@
         "audio": { "type": "boolean" },
         "avif": { "type": "boolean" },
         "bmp": { "type": "boolean" },
+        "br": { "type": "boolean" },
+        "brotli": { "type": "boolean" },
+        "bz2": { "type": "boolean" },
+        "bzip2": { "type": "boolean" },
         "csv": { "type": "boolean" },
+        "7z": { "type": "boolean" },
         "dll": { "type": "boolean" },
         "document": { "type": "boolean" },
         "documents": { "type": "boolean" },
@@ -142,7 +201,10 @@
         "videos": { "type": "boolean" },
         "webp": { "type": "boolean" },
         "xml": { "type": "boolean" },
-        "zip": { "type": "boolean" }
+        "xz": { "type": "boolean" },
+        "zip": { "type": "boolean" },
+        "zst": { "type": "boolean" },
+        "zstd": { "type": "boolean" }
       }
     },
     "mimeTypeSwitches": {
@@ -154,11 +216,13 @@
         "application/msword": { "type": "boolean" },
         "application/pdf": { "type": "boolean" },
         "application/rtf": { "type": "boolean" },
+        "application/br": { "type": "boolean" },
         "application/vnd.ms-excel": { "type": "boolean" },
         "application/vnd.ms-powerpoint": { "type": "boolean" },
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": { "type": "boolean" },
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { "type": "boolean" },
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": { "type": "boolean" },
+        "application/x-brotli": { "type": "boolean" },
         "application/x-7z-compressed": { "type": "boolean" },
         "application/x-bzip2": { "type": "boolean" },
         "application/x-dosexec": { "type": "boolean" },
@@ -170,6 +234,8 @@
         "application/x-tar": { "type": "boolean" },
         "application/x-xz": { "type": "boolean" },
         "application/xml": { "type": "boolean" },
+        "application/zstd": { "type": "boolean" },
+        "application/x-zstd": { "type": "boolean" },
         "application/zip": { "type": "boolean" },
         "audio/aac": { "type": "boolean" },
         "audio/flac": { "type": "boolean" },

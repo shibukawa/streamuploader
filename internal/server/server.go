@@ -521,6 +521,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 
 	limited := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
 	body := io.Reader(limited)
+	var inspectedPrefix []byte
+	archiveKind := archiveKindFor(contentType, target.originalName)
 	if s.cfg.Security.MimeMagic.Enabled {
 		inspection, err := inspectUploadPrefix(limited, contentType, target.originalName, s.cfg.Security.MimeMagic)
 		if err != nil {
@@ -528,6 +530,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			status, code := securityErrorResponse(err)
 			writeError(w, status, code, err.Error())
 			return
+		}
+		inspectedPrefix = inspection.prefix
+		if archiveKind == archiveUnknown {
+			archiveKind = archiveKindFromMagic(inspectedPrefix)
 		}
 		body = io.MultiReader(bytes.NewReader(inspection.prefix), limited)
 		if inspection.detectedContentType != "" && contentType == "" {
@@ -537,6 +543,11 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 				item.UpdatedAt = time.Now().UTC()
 			})
 		}
+	}
+	archiveUpload := s.cfg.Security.ArchiveGuard.Enabled && archiveKind != archiveUnknown
+	objectKey := target.objectKey
+	if archiveUpload {
+		objectKey = temporaryUploadObjectKey(target.objectKey, uploadKey)
 	}
 	measured := &progressReader{
 		reader: body,
@@ -557,7 +568,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	}
 	result, err := s.store.PutObject(r.Context(), storage.PutInput{
 		Bucket:      s.cfg.Bucket,
-		Key:         target.objectKey,
+		Key:         objectKey,
 		Body:        measured,
 		ContentType: contentType,
 	})
@@ -577,6 +588,30 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadFailed, Item: mustUpload(s.upload(uploadKey))})
 		writeError(w, status, code, err.Error())
 		return
+	}
+	if archiveUpload {
+		if err := inspectArchiveObject(r.Context(), s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, s.cfg.Security.ArchiveGuard); err != nil {
+			_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+			s.failUpload(uploadKey, err.Error())
+			status, code := securityErrorResponse(err)
+			writeError(w, status, code, err.Error())
+			return
+		}
+		copyResult, err := s.store.CopyObject(r.Context(), storage.CopyInput{
+			Bucket:      s.cfg.Bucket,
+			SourceKey:   objectKey,
+			Key:         target.objectKey,
+			ContentType: contentType,
+		})
+		_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+		if err != nil {
+			s.failUpload(uploadKey, err.Error())
+			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+			return
+		}
+		if copyResult.ETag != "" {
+			result.ETag = copyResult.ETag
+		}
 	}
 	now := time.Now().UTC()
 	var uploaded *model.UploadItem
@@ -1352,6 +1387,10 @@ func securityErrorResponse(err error) (int, string) {
 	if errors.As(err, &uploadErr) {
 		return uploadErr.status, uploadErr.code
 	}
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return http.StatusRequestEntityTooLarge, "upload_too_large"
+	}
 	return http.StatusUnsupportedMediaType, "content_rejected"
 }
 
@@ -1437,6 +1476,10 @@ func storagePrefix(uploadKey, requested string) string {
 		return path.Join("uploads", safeSegment(requested), uploadKey)
 	}
 	return path.Join("uploads", uploadKey)
+}
+
+func temporaryUploadObjectKey(objectKey, uploadKey string) string {
+	return path.Join(path.Dir(objectKey), ".tmp", uploadKey+"-"+path.Base(objectKey))
 }
 
 func contains(values []string, needle string) bool {

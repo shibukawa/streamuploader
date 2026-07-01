@@ -3,19 +3,24 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gorilla/websocket"
+	"github.com/klauspost/compress/zstd"
 
 	"streamuploader/internal/config"
 	"streamuploader/internal/storage"
@@ -25,6 +30,7 @@ type fakeStore struct {
 	mu       sync.Mutex
 	objects  map[string][]byte
 	metadata map[string]map[string]string
+	copies   int
 }
 
 func (s *fakeStore) PutObject(_ context.Context, input storage.PutInput) (storage.PutResult, error) {
@@ -49,13 +55,39 @@ func (s *fakeStore) GetObject(_ context.Context, input storage.GetInput) (storag
 	if !ok {
 		return storage.GetResult{}, errFakeNotFound
 	}
+	contentRange := ""
+	if input.Range != "" {
+		start, end, ok := parseTestRange(input.Range, int64(len(body)))
+		if !ok {
+			return storage.GetResult{}, errFakeNotFound
+		}
+		contentRange = fmt.Sprintf("bytes %d-%d/%d", start, end, len(body))
+		body = body[start : end+1]
+	}
 	return storage.GetResult{
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentType:   "application/octet-stream",
 		ContentLength: int64(len(body)),
 		ETag:          `"fake"`,
 		Metadata:      s.metadata[input.Key],
+		ContentRange:  contentRange,
 	}, nil
+}
+
+func (s *fakeStore) CopyObject(_ context.Context, input storage.CopyInput) (storage.CopyResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	body, ok := s.objects[input.SourceKey]
+	if !ok {
+		return storage.CopyResult{}, errFakeNotFound
+	}
+	s.copies++
+	s.objects[input.Key] = append([]byte(nil), body...)
+	if s.metadata == nil {
+		s.metadata = map[string]map[string]string{}
+	}
+	s.metadata[input.Key] = input.Metadata
+	return storage.CopyResult{ETag: `"fake-copy"`}, nil
 }
 
 func (s *fakeStore) HeadObject(_ context.Context, input storage.HeadInput) (storage.HeadResult, error) {
@@ -99,6 +131,31 @@ func (s *fakeStore) DeleteObject(_ context.Context, input storage.DeleteInput) e
 
 var errFakeNotFound = errors.New("not found")
 
+func parseTestRange(value string, size int64) (int64, int64, bool) {
+	if !strings.HasPrefix(value, "bytes=") {
+		return 0, 0, false
+	}
+	parts := strings.Split(strings.TrimPrefix(value, "bytes="), "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	end, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	if start < 0 || end < start || start >= size {
+		return 0, 0, false
+	}
+	if end >= size {
+		end = size - 1
+	}
+	return start, end, true
+}
+
 func TestUploadKeyFlow(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := config.Config{
@@ -135,6 +192,10 @@ func TestUploadKeyFlow(t *testing.T) {
 	if got := string(store.objects[key.ObjectKey]); got != "hello" {
 		t.Fatalf("stored object = %q", got)
 	}
+	if store.copies != 0 {
+		t.Fatalf("non-archive upload used copy promotion: copies=%d", store.copies)
+	}
+	assertNoTmpObjects(t, store)
 
 	waitResp := postJSON(t, app.URL+"/api/upload/wait", `{"upload_keys":["`+key.UploadKey+`"],"timeout_seconds":1}`)
 	if waitResp.StatusCode != http.StatusOK {
@@ -429,6 +490,112 @@ func TestUploadAllowFileTypeCategoryRejectsOutsideType(t *testing.T) {
 	if stored {
 		t.Fatal("rejected object was stored")
 	}
+}
+
+func TestUploadRejectsZipArchiveBombBeforeStorage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
+	security.ArchiveGuard.MaxSingleEntryBytes = 512
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
+	resp, key := uploadTestObject(t, app.URL, "huge.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected zip was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsGzipArchiveBombBeforeStorage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
+	security.ArchiveGuard.MaxSingleEntryBytes = 512
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeGzip(t, bytes.Repeat([]byte("a"), 1024))
+	resp, key := uploadTestObject(t, app.URL, "huge.gz", "application/gzip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected gzip was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 2048
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	zstdBody := makeZstd(t, []byte("small zstd payload"))
+	zstdResp, zstdKey := uploadTestObject(t, app.URL, "small.zst", "application/zstd", zstdBody)
+	defer zstdResp.Body.Close()
+	if zstdResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(zstdResp.Body)
+		t.Fatalf("zstd upload status = %d body=%q", zstdResp.StatusCode, string(respBody))
+	}
+	brotliBody := makeBrotli(t, []byte("small brotli payload"))
+	brotliResp, brotliKey := uploadTestObject(t, app.URL, "small.br", "application/x-brotli", brotliBody)
+	defer brotliResp.Body.Close()
+	if brotliResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(brotliResp.Body)
+		t.Fatalf("brotli upload status = %d body=%q", brotliResp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	gotZstd := store.objects[zstdKey.ObjectKey]
+	gotBrotli := store.objects[brotliKey.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(gotZstd, zstdBody) {
+		t.Fatal("stored zstd body changed")
+	}
+	if !bytes.Equal(gotBrotli, brotliBody) {
+		t.Fatal("stored brotli body changed")
+	}
+	assertNoTmpObjects(t, store)
 }
 
 func TestReverseProxyNonUploadPaths(t *testing.T) {
@@ -844,4 +1011,107 @@ func normalizeTestSecurityPolicy(policy config.SecurityPolicy) config.SecurityPo
 		}
 	}
 	return policy
+}
+
+type uploadKeyResponse struct {
+	UploadKey string `json:"upload_key"`
+	ObjectKey string `json:"object_key"`
+}
+
+func testUploadConfig(security config.SecurityPolicy) config.Config {
+	return config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1 << 20,
+		Security:       security,
+	}
+}
+
+func uploadTestObject(t *testing.T, baseURL, fileName, contentType string, body []byte) (*http.Response, uploadKeyResponse) {
+	t.Helper()
+	keyResp := postJSON(t, baseURL+"/api/upload/keys", fmt.Sprintf(`{"file_name":%q,"content_type":%q}`, fileName, contentType))
+	if keyResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(keyResp.Body)
+		_ = keyResp.Body.Close()
+		t.Fatalf("create key status = %d body=%q", keyResp.StatusCode, string(respBody))
+	}
+	var key uploadKeyResponse
+	decode(t, keyResp, &key)
+	uploadReq, _ := http.NewRequest(http.MethodPut, baseURL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(body))
+	uploadReq.Header.Set("Content-Type", contentType)
+	return do(t, uploadReq), key
+}
+
+func makeZip(t *testing.T, name string, body []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeGzip(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeZstd(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := zw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeBrotli(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	bw := brotli.NewWriter(&buf)
+	if _, err := bw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := bw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func assertNoTmpObjects(t *testing.T, store *fakeStore) {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key := range store.objects {
+		if strings.Contains(key, "/.tmp/") {
+			t.Fatalf("temporary object was not deleted: %s", key)
+		}
+	}
 }

@@ -18,6 +18,18 @@ type PutResult struct {
 	ETag string
 }
 
+type CopyInput struct {
+	Bucket      string
+	SourceKey   string
+	Key         string
+	ContentType string
+	Metadata    map[string]string
+}
+
+type CopyResult struct {
+	ETag string
+}
+
 type GetInput struct {
 	Bucket string
 	Key    string
@@ -73,6 +85,7 @@ type DeleteInput struct {
 
 type Store interface {
 	PutObject(ctx context.Context, input PutInput) (PutResult, error)
+	CopyObject(ctx context.Context, input CopyInput) (CopyResult, error)
 	GetObject(ctx context.Context, input GetInput) (GetResult, error)
 	HeadObject(ctx context.Context, input HeadInput) (HeadResult, error)
 	ListObjects(ctx context.Context, input ListInput) (ListResult, error)

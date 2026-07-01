@@ -91,6 +91,57 @@ schema:
         - [application/xml, text/xml]
         - [image/jpeg, image/pjpeg]
         - [application/gzip, application/x-gzip]
+  archive_guard:
+    enabled:
+      type: bool
+      default: true
+      meaning: enable policy:archive-bomb-protection for detected archive/container uploads
+    strict:
+      type: bool
+      default: true
+      meaning: reject when archive inspection is incomplete, ambiguous, encrypted, or unsupported
+    allow_encrypted:
+      type: bool
+      default: false
+    max_total_uncompressed_bytes:
+      type: integer
+      default: 536870912
+      meaning: aggregate expanded bytes across all entries, default 512 MiB
+    max_single_entry_bytes:
+      type: integer
+      default: 268435456
+      meaning: expanded bytes for one entry, default 256 MiB
+    max_compression_ratio:
+      type: number
+      default: 100
+      meaning: reject when estimated or counted uncompressed bytes divided by compressed bytes exceeds limit
+    max_entries:
+      type: integer
+      default: 10000
+    max_depth:
+      type: integer
+      default: 3
+    max_filename_bytes:
+      type: integer
+      default: 512
+    max_inspection_time_ms:
+      type: integer
+      default: 5000
+    max_probe_bytes:
+      type: integer
+      default: 67108864
+      meaning: maximum compressed bytes a worker may read while trying to prove allow, default 64 MiB
+    worker_memory_bytes:
+      type: integer
+      default: 67108864
+      meaning: memory budget for archive inspection worker, default 64 MiB
+    decompress_buffer_bytes:
+      type: integer
+      default: 32768
+      constraints:
+        min: 4096
+        max: 1048576
+      meaning: fixed scratch buffer for streaming decompression, not derived from claimed uncompressed size
 example:
   mime_magic:
     enabled: true
@@ -116,8 +167,23 @@ example:
     equivalent_mime_types:
       - [image/jpeg, image/pjpeg]
       - [application/gzip, application/x-gzip]
+  archive_guard:
+    enabled: true
+    strict: true
+    allow_encrypted: false
+    max_total_uncompressed_bytes: 536870912
+    max_single_entry_bytes: 268435456
+    max_compression_ratio: 100
+    max_entries: 10000
+    max_depth: 3
+    max_filename_bytes: 512
+    max_inspection_time_ms: 5000
+    max_probe_bytes: 67108864
+    worker_memory_bytes: 67108864
+    decompress_buffer_bytes: 32768
 references:
   - policy:file-intake-security
   - requirement:mime-magic-consistency
   - decision:mime-detector-library
+  - policy:archive-bomb-protection
 ```

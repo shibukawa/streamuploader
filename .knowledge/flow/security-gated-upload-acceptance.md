@@ -14,6 +14,7 @@ flow:
         - verify upload_key exists
         - read bounded prefix from request body
         - run requirement:mime-magic-consistency before storage upload
+        - when prefix indicates archive or container, run policy:archive-bomb-protection before storage upload
         - build replay reader using rule:prefix-replay
         - stream accepted bytes to system:s3-storage
     - name: run_security_gate

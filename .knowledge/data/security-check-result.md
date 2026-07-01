@@ -35,8 +35,14 @@ fields:
     is_archive: boolean
     nested: boolean optional
     estimated_uncompressed_bytes: integer optional
+    counted_uncompressed_bytes: integer optional
+    compression_ratio: number optional
     entry_count: integer optional
     max_depth: integer optional
+    encrypted: boolean optional
+    unsafe_path: boolean optional
+    inspection_complete: boolean optional
+    inspection_time_ms: integer optional
   decision:
     enum:
       - allow
@@ -51,6 +57,14 @@ fields:
       - detected_type_unknown
       - prefix_read_failed
       - archive_policy_pending
+      - archive_bomb_detected
+      - archive_too_large
+      - archive_ratio_exceeded
+      - archive_too_many_entries
+      - archive_too_deep
+      - archive_path_unsafe
+      - archive_inspection_timeout
+      - archive_unsupported_method
   error:
     http_status: integer optional
     code: string optional

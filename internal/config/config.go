@@ -45,7 +45,8 @@ type Config struct {
 }
 
 type SecurityPolicy struct {
-	MimeMagic MimeMagicPolicy `yaml:"mime_magic"`
+	MimeMagic    MimeMagicPolicy    `yaml:"mime_magic"`
+	ArchiveGuard ArchiveGuardPolicy `yaml:"archive_guard"`
 }
 
 type MimeMagicPolicy struct {
@@ -61,6 +62,22 @@ type MimeMagicPolicy struct {
 	EquivalentMIMETypes     [][]string      `yaml:"equivalent_mime_types"`
 	ExpandedAllowMIMETypes  []string        `yaml:"-"`
 	ExpandedDenyMIMETypes   []string        `yaml:"-"`
+}
+
+type ArchiveGuardPolicy struct {
+	Enabled                   bool    `yaml:"enabled"`
+	Strict                    bool    `yaml:"strict"`
+	AllowEncrypted            bool    `yaml:"allow_encrypted"`
+	MaxTotalUncompressedBytes int64   `yaml:"max_total_uncompressed_bytes"`
+	MaxSingleEntryBytes       int64   `yaml:"max_single_entry_bytes"`
+	MaxCompressionRatio       float64 `yaml:"max_compression_ratio"`
+	MaxEntries                int64   `yaml:"max_entries"`
+	MaxDepth                  int64   `yaml:"max_depth"`
+	MaxFilenameBytes          int64   `yaml:"max_filename_bytes"`
+	MaxInspectionTimeMS       int64   `yaml:"max_inspection_time_ms"`
+	MaxProbeBytes             int64   `yaml:"max_probe_bytes"`
+	WorkerMemoryBytes         int64   `yaml:"worker_memory_bytes"`
+	DecompressBufferBytes     int64   `yaml:"decompress_buffer_bytes"`
 }
 
 func Load() Config {
@@ -127,6 +144,21 @@ func DefaultSecurityPolicy() SecurityPolicy {
 				"application/x-msdownload": true,
 			},
 		},
+		ArchiveGuard: ArchiveGuardPolicy{
+			Enabled:                   true,
+			Strict:                    true,
+			AllowEncrypted:            false,
+			MaxTotalUncompressedBytes: 512 << 20,
+			MaxSingleEntryBytes:       256 << 20,
+			MaxCompressionRatio:       100,
+			MaxEntries:                10000,
+			MaxDepth:                  3,
+			MaxFilenameBytes:          512,
+			MaxInspectionTimeMS:       5000,
+			MaxProbeBytes:             64 << 20,
+			WorkerMemoryBytes:         64 << 20,
+			DecompressBufferBytes:     32 << 10,
+		},
 	}
 }
 
@@ -171,6 +203,47 @@ func normalizeSecurityPolicy(policy *SecurityPolicy) {
 	}
 	policy.MimeMagic.ExpandedAllowMIMETypes = expandMIMETypes(policy.MimeMagic.AllowMIMETypes, policy.MimeMagic.AllowFileTypes)
 	policy.MimeMagic.ExpandedDenyMIMETypes = expandMIMETypes(policy.MimeMagic.DenyMIMETypes, policy.MimeMagic.DenyFileTypes)
+	normalizeArchiveGuardPolicy(&policy.ArchiveGuard)
+}
+
+func normalizeArchiveGuardPolicy(policy *ArchiveGuardPolicy) {
+	defaults := DefaultSecurityPolicy().ArchiveGuard
+	if policy.MaxTotalUncompressedBytes <= 0 {
+		policy.MaxTotalUncompressedBytes = defaults.MaxTotalUncompressedBytes
+	}
+	if policy.MaxSingleEntryBytes <= 0 {
+		policy.MaxSingleEntryBytes = defaults.MaxSingleEntryBytes
+	}
+	if policy.MaxCompressionRatio <= 0 {
+		policy.MaxCompressionRatio = defaults.MaxCompressionRatio
+	}
+	if policy.MaxEntries <= 0 {
+		policy.MaxEntries = defaults.MaxEntries
+	}
+	if policy.MaxDepth <= 0 {
+		policy.MaxDepth = defaults.MaxDepth
+	}
+	if policy.MaxFilenameBytes <= 0 {
+		policy.MaxFilenameBytes = defaults.MaxFilenameBytes
+	}
+	if policy.MaxInspectionTimeMS <= 0 {
+		policy.MaxInspectionTimeMS = defaults.MaxInspectionTimeMS
+	}
+	if policy.MaxProbeBytes <= 0 {
+		policy.MaxProbeBytes = defaults.MaxProbeBytes
+	}
+	if policy.WorkerMemoryBytes <= 0 {
+		policy.WorkerMemoryBytes = defaults.WorkerMemoryBytes
+	}
+	if policy.DecompressBufferBytes <= 0 {
+		policy.DecompressBufferBytes = defaults.DecompressBufferBytes
+	}
+	if policy.DecompressBufferBytes < 4096 {
+		policy.DecompressBufferBytes = 4096
+	}
+	if policy.DecompressBufferBytes > 1<<20 {
+		policy.DecompressBufferBytes = 1 << 20
+	}
 }
 
 func normalizeScriptSwitches(values map[string]bool) map[string]bool {
@@ -290,8 +363,8 @@ var mimeFileTypes = map[string][]string{
 	"image":      {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"},
 	"documents":  {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
 	"document":   {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-	"archives":   {"application/zip", "application/gzip", "application/x-gzip", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
-	"archive":    {"application/zip", "application/gzip", "application/x-gzip", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"archives":   {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"archive":    {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
 	"audio":      {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/flac", "audio/aac"},
 	"videos":     {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
 	"video":      {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
@@ -315,6 +388,14 @@ var mimeFileTypes = map[string][]string{
 	"zip":        {"application/zip"},
 	"gzip":       {"application/gzip", "application/x-gzip"},
 	"gz":         {"application/gzip", "application/x-gzip"},
+	"zstd":       {"application/zstd", "application/x-zstd"},
+	"zst":        {"application/zstd", "application/x-zstd"},
+	"brotli":     {"application/x-brotli", "application/br"},
+	"br":         {"application/x-brotli", "application/br"},
+	"bzip2":      {"application/x-bzip2"},
+	"bz2":        {"application/x-bzip2"},
+	"xz":         {"application/x-xz"},
+	"7z":         {"application/x-7z-compressed"},
 	"exe":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
 	"dll":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
 	"elf":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
@@ -402,6 +483,25 @@ func SecurityPolicyJSONSchema() string {
 							"items":    map[string]any{"type": "string", "enum": knownMIMETypes()},
 						},
 					},
+				},
+			},
+			"archive_guard": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"enabled":                      map[string]any{"type": "boolean"},
+					"strict":                       map[string]any{"type": "boolean"},
+					"allow_encrypted":              map[string]any{"type": "boolean"},
+					"max_total_uncompressed_bytes": map[string]any{"type": "integer", "minimum": 1},
+					"max_single_entry_bytes":       map[string]any{"type": "integer", "minimum": 1},
+					"max_compression_ratio":        map[string]any{"type": "number", "exclusiveMinimum": 0},
+					"max_entries":                  map[string]any{"type": "integer", "minimum": 1},
+					"max_depth":                    map[string]any{"type": "integer", "minimum": 1},
+					"max_filename_bytes":           map[string]any{"type": "integer", "minimum": 1},
+					"max_inspection_time_ms":       map[string]any{"type": "integer", "minimum": 1},
+					"max_probe_bytes":              map[string]any{"type": "integer", "minimum": 1},
+					"worker_memory_bytes":          map[string]any{"type": "integer", "minimum": 1},
+					"decompress_buffer_bytes":      map[string]any{"type": "integer", "minimum": 4096, "maximum": 1048576},
 				},
 			},
 		},

@@ -29,3 +29,17 @@ mime_magic:
     - [application/xml, text/xml]
     - [image/jpeg, image/pjpeg]
     - [application/gzip, application/x-gzip]
+archive_guard:
+  enabled: true
+  strict: true
+  allow_encrypted: false
+  max_total_uncompressed_bytes: 536870912
+  max_single_entry_bytes: 268435456
+  max_compression_ratio: 100
+  max_entries: 10000
+  max_depth: 3
+  max_filename_bytes: 512
+  max_inspection_time_ms: 5000
+  max_probe_bytes: 67108864
+  worker_memory_bytes: 67108864
+  decompress_buffer_bytes: 32768

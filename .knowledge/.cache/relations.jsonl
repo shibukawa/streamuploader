@@ -127,6 +127,7 @@
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
@@ -213,6 +214,7 @@
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
+{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "rule:prefix-replay", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
@@ -269,8 +271,11 @@
 {"context": "body", "path": ".knowledge/flow/video-preview-generation.md", "source": "flow:video-preview-generation", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/flow/video-preview-generation.md", "source": "flow:video-preview-generation", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/video-preview-generation.md", "source": "flow:video-preview-generation", "target": "system:media-converter", "target_category": "external", "target_type": "system"}
-{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "system:content-detector", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-policy-config", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:jwt-claim-authorization", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "api:backend-control-api", "target_category": "interface", "target_type": "api"}
