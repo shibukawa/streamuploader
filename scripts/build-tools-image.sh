@@ -32,7 +32,7 @@ echo "==> building streamuploader for linux/$ARCH"
   -w /src \
   --entrypoint /usr/bin/go \
   "$GO_IMAGE" \
-  build -o /src/.cache/tools-image/streamuploader ./cmd/streamuploader
+  build -trimpath -ldflags="-s -w" -o /src/.cache/tools-image/streamuploader ./cmd/streamuploader
 
 echo "==> building resvg"
 "$DOCKER" run --rm \

@@ -1,0 +1,11 @@
+.cache/
+.git/
+.knowledge/
+experiments/
+streamuploader
+sbom-*.spdx.json
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.log
