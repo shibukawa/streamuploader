@@ -18,13 +18,17 @@ features:
     missing_behavior: disable HLS
   office_preview:
     preferred: libreoffice plus pdf_renderer
-    fallback: none
+    fallback:
+      - qlmanage on macOS for simple thumbnail fallback after validation when configured
+      - sips on macOS for first-page PDF thumbnail fallback after validation when configured and probed
     missing_behavior: skip document preview
   svg_preview:
-    preferred: rsvg-convert
+    preferred: resvg
     fallback:
+      - rsvg-convert
       - resvg
       - inkscape for high fidelity
+      - sips on macOS for simple fallback after sanitization when configured and probed
       - qlmanage on macOS for environment-dependent fallback
     missing_behavior: skip SVG preview
   image_thumbnail:
@@ -34,6 +38,7 @@ features:
       - chai2010/webp for WebP when CGO is enabled and selected
     fallback:
       - sips on macOS for AVIF-capable simple transforms
+      - sips on macOS for probed SVG, JPEG XL, JPEG 2000, HEIC, HEIF, TIFF, PDF thumbnail fallback, PSD, and TGA support
       - vips for fast resize and AVIF/WebP output
       - ffmpeg for broad decode fallback
       - eringen/gowebper for pure-Go lossless/simple WebP when CGO is disabled

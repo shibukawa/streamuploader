@@ -139,3 +139,4 @@ thumbnails:
   object_key_suffix: /thumbnail
   external_webhook_url: ""
   external_timeout: 30s
+  video_candidate_keyframes: 10

@@ -22,6 +22,13 @@ flow:
         - run conversion in isolated worker
         - enforce CPU, memory, file size, page count, and timeout limits
         - use temporary working directory
+    - name: try_embedded_thumbnail
+      actions:
+        - extract package thumbnail from Office Open XML documents when available
+        - extract legacy Office summary thumbnail when supported by configured tools
+        - validate extracted thumbnail under same image safety limits
+        - re-encode through policy:preview-format-policy
+        - skip LibreOffice conversion when embedded thumbnail satisfies requested preview
     - name: normalize_to_pdf
       actions:
         - pass PDFs through validation when input is PDF
@@ -29,7 +36,8 @@ flow:
         - reject macros or unsafe active content by policy
     - name: render_preview
       actions:
-        - render configured pages, usually first page
+        - render configured pages, usually first page, with Poppler or MuPDF through system:document-converter
+        - on macOS optionally use qlmanage or sips as simple thumbnail fallback after PDF validation when configured
         - generate thumbnail image variants
         - strip document metadata from generated images
     - name: store_assets
@@ -46,6 +54,9 @@ flow:
       - return status with conversion or render error
 references:
   - policy:preview-generation-policy
+  - policy:preview-format-policy
+  - data:thumbnail-generation-config
+  - requirement:expanded-thumbnail-source-support
   - data:derived-asset
   - system:document-converter
   - system:s3-storage

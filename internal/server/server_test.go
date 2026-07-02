@@ -231,6 +231,121 @@ func TestUploadKeyFlow(t *testing.T) {
 	}
 }
 
+func TestCancelUploadKeyRequiresOwnerCookie(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"http://app.test"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		UploadDeadlines: config.UploadDeadlinePolicy{
+			Enabled:       true,
+			MarkerPrefix:  ".uploading/",
+			StartTimeout:  time.Minute,
+			FinishTimeout: time.Minute,
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"hello.txt"}`)
+	if keyResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key status = %d", keyResp.StatusCode)
+	}
+	cookies := keyResp.Cookies()
+	var key struct {
+		UploadKey string `json:"upload_key"`
+	}
+	decode(t, keyResp, &key)
+
+	noCookieReq, _ := http.NewRequest(http.MethodDelete, app.URL+"/api/upload/keys/"+key.UploadKey, nil)
+	noCookieResp := do(t, noCookieReq)
+	if noCookieResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cancel without cookie status = %d", noCookieResp.StatusCode)
+	}
+	_ = noCookieResp.Body.Close()
+
+	cancelReq, _ := http.NewRequest(http.MethodDelete, app.URL+"/api/upload/keys/"+key.UploadKey, nil)
+	for _, cookie := range cookies {
+		cancelReq.AddCookie(cookie)
+	}
+	cancelResp := do(t, cancelReq)
+	if cancelResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("cancel status = %d", cancelResp.StatusCode)
+	}
+	_ = cancelResp.Body.Close()
+
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewBufferString("hello"))
+	for _, cookie := range cookies {
+		uploadReq.AddCookie(cookie)
+	}
+	uploadResp := do(t, uploadReq)
+	if uploadResp.StatusCode != http.StatusGone {
+		t.Fatalf("upload after cancel status = %d", uploadResp.StatusCode)
+	}
+	_ = uploadResp.Body.Close()
+}
+
+func TestBackendWaitAsyncTasks(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:            "standalone_cross_origin",
+		PublicBaseURL:   "http://example.test",
+		BackendBasePath: "/internal",
+		AllowedOrigins:  []string{"*"},
+		Bucket:          "bucket",
+		SessionTTL:      time.Hour,
+	}
+	srv := New(cfg, store)
+	app := httptest.NewServer(srv.Handler())
+	defer app.Close()
+
+	objectKey := "uploads/key/image.png"
+	if err := srv.putAsyncTaskMarker(context.Background(), asyncTaskMarker{
+		ObjectKey: objectKey,
+		Kind:      "image_thumbnail",
+		Status:    "running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q],"timeout_seconds":1,"poll_millis":50}`, objectKey))
+	if waitResp.StatusCode != http.StatusOK {
+		t.Fatalf("wait status = %d", waitResp.StatusCode)
+	}
+	var timedOut struct {
+		Ready   bool `json:"ready"`
+		Timeout bool `json:"timeout"`
+		Tasks   []struct {
+			Pending bool `json:"pending"`
+		} `json:"tasks"`
+	}
+	decode(t, waitResp, &timedOut)
+	if timedOut.Ready || !timedOut.Timeout || len(timedOut.Tasks) != 1 || !timedOut.Tasks[0].Pending {
+		t.Fatalf("wait timeout response = %+v", timedOut)
+	}
+
+	srv.deleteAsyncTaskMarker(context.Background(), objectKey, "image_thumbnail")
+	doneResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q],"timeout_seconds":1}`, objectKey))
+	if doneResp.StatusCode != http.StatusOK {
+		t.Fatalf("done wait status = %d", doneResp.StatusCode)
+	}
+	var done struct {
+		Ready   bool `json:"ready"`
+		Timeout bool `json:"timeout"`
+		Tasks   []struct {
+			Pending bool `json:"pending"`
+		} `json:"tasks"`
+	}
+	decode(t, doneResp, &done)
+	if !done.Ready || done.Timeout || len(done.Tasks) != 1 || done.Tasks[0].Pending {
+		t.Fatalf("wait done response = %+v", done)
+	}
+}
+
 func TestUploadImageGeneratesThumbnail(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := config.Config{

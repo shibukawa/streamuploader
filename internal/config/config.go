@@ -274,32 +274,34 @@ type LoggingPolicy struct {
 }
 
 type ThumbnailPolicy struct {
-	Enabled            bool          `yaml:"enabled"`
-	ExecutionMode      string        `yaml:"execution_mode"`
-	Width              int           `yaml:"width"`
-	Height             int           `yaml:"height"`
-	Fit                string        `yaml:"fit"`
-	Upscale            bool          `yaml:"upscale"`
-	LosslessPolicy     string        `yaml:"lossless_policy"`
-	PreferredFormat    string        `yaml:"preferred_format"`
-	ObjectKeySuffix    string        `yaml:"object_key_suffix"`
-	ExternalWebhookURL string        `yaml:"external_webhook_url"`
-	ExternalTimeout    time.Duration `yaml:"external_timeout"`
+	Enabled                 bool          `yaml:"enabled"`
+	ExecutionMode           string        `yaml:"execution_mode"`
+	Width                   int           `yaml:"width"`
+	Height                  int           `yaml:"height"`
+	Fit                     string        `yaml:"fit"`
+	Upscale                 bool          `yaml:"upscale"`
+	LosslessPolicy          string        `yaml:"lossless_policy"`
+	PreferredFormat         string        `yaml:"preferred_format"`
+	ObjectKeySuffix         string        `yaml:"object_key_suffix"`
+	ExternalWebhookURL      string        `yaml:"external_webhook_url"`
+	ExternalTimeout         time.Duration `yaml:"external_timeout"`
+	VideoCandidateKeyframes int           `yaml:"video_candidate_keyframes"`
 }
 
 func (p *ThumbnailPolicy) UnmarshalYAML(value *yaml.Node) error {
 	type rawPolicy struct {
-		Enabled            bool   `yaml:"enabled"`
-		ExecutionMode      string `yaml:"execution_mode"`
-		Width              int    `yaml:"width"`
-		Height             int    `yaml:"height"`
-		Fit                string `yaml:"fit"`
-		Upscale            bool   `yaml:"upscale"`
-		LosslessPolicy     string `yaml:"lossless_policy"`
-		PreferredFormat    string `yaml:"preferred_format"`
-		ObjectKeySuffix    string `yaml:"object_key_suffix"`
-		ExternalWebhookURL string `yaml:"external_webhook_url"`
-		ExternalTimeout    string `yaml:"external_timeout"`
+		Enabled                 bool   `yaml:"enabled"`
+		ExecutionMode           string `yaml:"execution_mode"`
+		Width                   int    `yaml:"width"`
+		Height                  int    `yaml:"height"`
+		Fit                     string `yaml:"fit"`
+		Upscale                 bool   `yaml:"upscale"`
+		LosslessPolicy          string `yaml:"lossless_policy"`
+		PreferredFormat         string `yaml:"preferred_format"`
+		ObjectKeySuffix         string `yaml:"object_key_suffix"`
+		ExternalWebhookURL      string `yaml:"external_webhook_url"`
+		ExternalTimeout         string `yaml:"external_timeout"`
+		VideoCandidateKeyframes int    `yaml:"video_candidate_keyframes"`
 	}
 	var raw rawPolicy
 	if err := value.Decode(&raw); err != nil {
@@ -310,17 +312,18 @@ func (p *ThumbnailPolicy) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*p = ThumbnailPolicy{
-		Enabled:            raw.Enabled,
-		ExecutionMode:      raw.ExecutionMode,
-		Width:              raw.Width,
-		Height:             raw.Height,
-		Fit:                raw.Fit,
-		Upscale:            raw.Upscale,
-		LosslessPolicy:     raw.LosslessPolicy,
-		PreferredFormat:    raw.PreferredFormat,
-		ObjectKeySuffix:    raw.ObjectKeySuffix,
-		ExternalWebhookURL: raw.ExternalWebhookURL,
-		ExternalTimeout:    timeout,
+		Enabled:                 raw.Enabled,
+		ExecutionMode:           raw.ExecutionMode,
+		Width:                   raw.Width,
+		Height:                  raw.Height,
+		Fit:                     raw.Fit,
+		Upscale:                 raw.Upscale,
+		LosslessPolicy:          raw.LosslessPolicy,
+		PreferredFormat:         raw.PreferredFormat,
+		ObjectKeySuffix:         raw.ObjectKeySuffix,
+		ExternalWebhookURL:      raw.ExternalWebhookURL,
+		ExternalTimeout:         timeout,
+		VideoCandidateKeyframes: raw.VideoCandidateKeyframes,
 	}
 	return nil
 }
@@ -373,6 +376,7 @@ func Load() Config {
 	security.Thumbnails.ObjectKeySuffix = env("THUMBNAILS_OBJECT_KEY_SUFFIX", security.Thumbnails.ObjectKeySuffix)
 	security.Thumbnails.ExternalWebhookURL = env("THUMBNAIL_WEBHOOK_URL", env("THUMBNAILS_EXTERNAL_WEBHOOK_URL", security.Thumbnails.ExternalWebhookURL))
 	security.Thumbnails.ExternalTimeout = envDuration("THUMBNAILS_EXTERNAL_TIMEOUT", security.Thumbnails.ExternalTimeout)
+	security.Thumbnails.VideoCandidateKeyframes = envInt("THUMBNAILS_VIDEO_CANDIDATE_KEYFRAMES", security.Thumbnails.VideoCandidateKeyframes)
 	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
@@ -520,16 +524,17 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			Level:  "info",
 		},
 		Thumbnails: ThumbnailPolicy{
-			Enabled:         false,
-			ExecutionMode:   "async",
-			Width:           400,
-			Height:          400,
-			Fit:             "contain",
-			Upscale:         false,
-			LosslessPolicy:  "force_avif_reduction",
-			PreferredFormat: "avif",
-			ObjectKeySuffix: "/thumbnail",
-			ExternalTimeout: 30 * time.Second,
+			Enabled:                 false,
+			ExecutionMode:           "async",
+			Width:                   400,
+			Height:                  400,
+			Fit:                     "contain",
+			Upscale:                 false,
+			LosslessPolicy:          "force_avif_reduction",
+			PreferredFormat:         "avif",
+			ObjectKeySuffix:         "/thumbnail",
+			ExternalTimeout:         30 * time.Second,
+			VideoCandidateKeyframes: 10,
 		},
 	}
 }
@@ -698,6 +703,15 @@ func normalizeThumbnailPolicy(policy *ThumbnailPolicy) {
 	}
 	if policy.ExternalTimeout <= 0 {
 		policy.ExternalTimeout = defaults.ExternalTimeout
+	}
+	if policy.VideoCandidateKeyframes <= 0 {
+		policy.VideoCandidateKeyframes = defaults.VideoCandidateKeyframes
+	}
+	if policy.VideoCandidateKeyframes < 1 {
+		policy.VideoCandidateKeyframes = 1
+	}
+	if policy.VideoCandidateKeyframes > 60 {
+		policy.VideoCandidateKeyframes = 60
 	}
 }
 
@@ -979,8 +993,8 @@ func normalizeFileType(value string) string {
 }
 
 var mimeFileTypes = map[string][]string{
-	"images":     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"},
-	"image":      {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"},
+	"images":     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
+	"image":      {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
 	"documents":  {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
 	"document":   {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
 	"archives":   {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
@@ -995,10 +1009,22 @@ var mimeFileTypes = map[string][]string{
 	"gif":        {"image/gif"},
 	"webp":       {"image/webp"},
 	"avif":       {"image/avif"},
-	"tiff":       {"image/tiff"},
-	"tif":        {"image/tiff"},
+	"tiff":       {"image/tiff", "image/x-tiff"},
+	"tif":        {"image/tiff", "image/x-tiff"},
 	"bmp":        {"image/bmp"},
 	"svg":        {"image/svg+xml"},
+	"heif":       {"image/heif", "image/heif-sequence"},
+	"heic":       {"image/heic", "image/heic-sequence"},
+	"jxl":        {"image/jxl"},
+	"jpegxl":     {"image/jxl"},
+	"jp2":        {"image/jp2"},
+	"jpx":        {"image/jpx"},
+	"jpm":        {"image/jpm"},
+	"jpf":        {"image/jpf"},
+	"jpeg2000":   {"image/jp2", "image/jpx"},
+	"psd":        {"image/vnd.adobe.photoshop", "image/x-photoshop"},
+	"photoshop":  {"image/vnd.adobe.photoshop", "image/x-photoshop"},
+	"tga":        {"image/x-tga", "image/tga"},
 	"pdf":        {"application/pdf"},
 	"txt":        {"text/plain"},
 	"plain":      {"text/plain"},
@@ -1219,6 +1245,11 @@ func SecurityPolicyJSONSchema() string {
 				"object_key_suffix":    map[string]any{"type": "string"},
 				"external_webhook_url": map[string]any{"type": "string"},
 				"external_timeout":     durationSchema(),
+				"video_candidate_keyframes": map[string]any{
+					"type":    "integer",
+					"minimum": 1,
+					"maximum": 60,
+				},
 			}),
 		},
 	}

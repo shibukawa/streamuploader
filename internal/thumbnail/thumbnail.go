@@ -1,15 +1,19 @@
 package thumbnail
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
 	"image"
+	"image/color"
+	stddraw "image/draw"
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/image/draw"
+	xdraw "golang.org/x/image/draw"
 
 	"streamuploader/internal/config"
 	"streamuploader/internal/storage"
@@ -139,12 +143,16 @@ func currentPlan(policy config.ThumbnailPolicy) Plan {
 }
 
 func Generate(ctx context.Context, store storage.Store, bucket, sourceKey string, policy config.ThumbnailPolicy) (Result, error) {
+	return GenerateWithContentType(ctx, store, bucket, sourceKey, "", policy)
+}
+
+func GenerateWithContentType(ctx context.Context, store storage.Store, bucket, sourceKey, sourceContentType string, policy config.ThumbnailPolicy) (Result, error) {
 	obj, err := store.GetObject(ctx, storage.GetInput{Bucket: bucket, Key: sourceKey})
 	if err != nil {
 		return Result{ObjectKey: sourceKey + policy.ObjectKeySuffix}, err
 	}
 	defer obj.Body.Close()
-	converted, err := ConvertFromReader(ctx, obj.Body, sourceKey, policy)
+	converted, err := ConvertFromReaderWithContentType(ctx, obj.Body, sourceKey, sourceContentType, policy)
 	if err != nil {
 		return converted.Result, err
 	}
@@ -155,14 +163,18 @@ func Generate(ctx context.Context, store storage.Store, bucket, sourceKey string
 }
 
 func ConvertFromReader(ctx context.Context, r io.Reader, sourceKey string, policy config.ThumbnailPolicy) (Conversion, error) {
+	return ConvertFromReaderWithContentType(ctx, r, sourceKey, "", policy)
+}
+
+func ConvertFromReaderWithContentType(ctx context.Context, r io.Reader, sourceKey, sourceContentType string, policy config.ThumbnailPolicy) (Conversion, error) {
 	out := Conversion{Result: Result{ObjectKey: sourceKey + policy.ObjectKeySuffix}}
 	if !policy.Enabled {
 		return out, fmt.Errorf("thumbnail generation is disabled")
 	}
 	if policy.ExternalWebhookURL != "" {
-		return ConvertWithWebhook(ctx, r, sourceKey, policy)
+		return ConvertWithWebhook(ctx, r, sourceKey, sourceContentType, policy)
 	}
-	body, contentType, backend, width, height, err := ConvertWithPlan(r, policy, currentPlan(policy))
+	body, contentType, backend, width, height, err := ConvertWithPlanForContentType(r, sourceContentType, policy, currentPlan(policy))
 	if err != nil {
 		return out, err
 	}
@@ -192,7 +204,7 @@ func StoreConversion(ctx context.Context, store storage.Store, bucket string, co
 	return nil
 }
 
-func ConvertWithWebhook(ctx context.Context, r io.Reader, sourceKey string, policy config.ThumbnailPolicy) (Conversion, error) {
+func ConvertWithWebhook(ctx context.Context, r io.Reader, sourceKey, sourceContentType string, policy config.ThumbnailPolicy) (Conversion, error) {
 	timeout := policy.ExternalTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -207,6 +219,7 @@ func ConvertWithWebhook(ctx context.Context, r io.Reader, sourceKey string, poli
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Accept", "image/avif, image/webp, image/jpeg")
 	req.Header.Set("X-Source-Object-Key", sourceKey)
+	req.Header.Set("X-Source-Content-Type", normalizeContentType(sourceContentType))
 	req.Header.Set("X-Thumbnail-Width", strconv.Itoa(policy.Width))
 	req.Header.Set("X-Thumbnail-Height", strconv.Itoa(policy.Height))
 	req.Header.Set("X-Thumbnail-Fit", policy.Fit)
@@ -256,33 +269,76 @@ func Convert(r io.Reader, policy config.ThumbnailPolicy) ([]byte, string, string
 }
 
 func ConvertWithPlan(r io.Reader, policy config.ThumbnailPolicy, plan Plan) ([]byte, string, string, int, int, error) {
+	return ConvertWithPlanForContentType(r, "", policy, plan)
+}
+
+func ConvertWithPlanForContentType(r io.Reader, sourceContentType string, policy config.ThumbnailPolicy, plan Plan) ([]byte, string, string, int, int, error) {
 	input, err := io.ReadAll(io.LimitReader(r, 256<<20))
 	if err != nil {
 		return nil, "", "", 0, 0, err
 	}
+	sourceContentType = normalizeContentType(sourceContentType)
+	if isOOXMLContentType(sourceContentType) {
+		if thumb, thumbType, err := extractOOXMLThumbnail(input); err == nil {
+			return convertImageBytes(thumb, thumbType, policy, plan, "embedded")
+		}
+		if pdf, err := convertOfficeToPDF(input, sourceContentType, policy); err == nil {
+			if body, contentType, backend, width, height, err := convertWithTools(pdf, "application/pdf", policy, plan); err == nil {
+				return body, contentType, "libreoffice:" + backend, width, height, nil
+			}
+		}
+	}
+	if strings.HasPrefix(sourceContentType, "video/") {
+		if body, contentType, backend, width, height, err := convertVideoStill(input, policy, plan); err == nil {
+			return body, contentType, backend, width, height, nil
+		}
+	}
 	img, _, err := image.Decode(bytes.NewReader(input))
 	if err != nil {
-		if body, contentType, backend, width, height, toolErr := convertWithTools(input, policy, plan); toolErr == nil {
+		if body, contentType, backend, width, height, toolErr := convertWithTools(input, sourceContentType, policy, plan); toolErr == nil {
 			return body, contentType, backend, width, height, nil
 		}
 		return nil, "", "", 0, 0, fmt.Errorf("decode image: %w", err)
 	}
+	return convertDecodedImage(img, policy, plan, "")
+}
+
+func convertImageBytes(input []byte, sourceContentType string, policy config.ThumbnailPolicy, plan Plan, backendPrefix string) ([]byte, string, string, int, int, error) {
+	img, _, err := image.Decode(bytes.NewReader(input))
+	if err != nil {
+		return convertWithTools(input, normalizeContentType(sourceContentType), policy, plan)
+	}
+	return convertDecodedImage(img, policy, plan, backendPrefix)
+}
+
+func convertDecodedImage(img image.Image, policy config.ThumbnailPolicy, plan Plan, backendPrefix string) ([]byte, string, string, int, int, error) {
 	thumb := resize(img, policy.Width, policy.Height, policy.Fit, policy.Upscale)
 	var lastErr error
 	for _, candidate := range plan.GoCandidates {
 		body, contentType, backend, err := candidate.encode(thumb, candidate.lossless)
 		if err == nil {
+			if backendPrefix != "" {
+				backend = backendPrefix + ":" + backend
+			}
 			return body, contentType, backend, thumb.Bounds().Dx(), thumb.Bounds().Dy(), nil
 		}
 		lastErr = err
 	}
+	body, contentType, backend, err := encodeJPEG(thumb)
+	if err == nil {
+		if backendPrefix != "" {
+			backend = backendPrefix + ":" + backend
+		}
+		return body, contentType, backend, thumb.Bounds().Dx(), thumb.Bounds().Dy(), nil
+	}
+	lastErr = err
 	if lastErr != nil {
 		return nil, "", "", 0, 0, lastErr
 	}
 	return nil, "", "", 0, 0, fmt.Errorf("thumbnail encoder is unavailable")
 }
 
-func convertWithTools(input []byte, policy config.ThumbnailPolicy, plan Plan) ([]byte, string, string, int, int, error) {
+func convertWithTools(input []byte, sourceContentType string, policy config.ThumbnailPolicy, plan Plan) ([]byte, string, string, int, int, error) {
 	timeout := policy.ExternalTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -308,7 +364,7 @@ func convertWithTools(input []byte, policy config.ThumbnailPolicy, plan Plan) ([
 			width, height := decodedSize(body)
 			return body, candidate.contentType, candidate.backend, width, height, nil
 		case "sips":
-			body, err := runSipsThumbnail(ctx, plan.SipsPath, input, policy, candidate.sipsFormat)
+			body, err := runSipsThumbnail(ctx, plan.SipsPath, input, policy, candidate.sipsFormat, sourceContentType)
 			if err != nil {
 				lastErr = err
 				continue
@@ -489,13 +545,181 @@ func runFFmpegThumbnail(ctx context.Context, ffmpegPath string, input []byte, fi
 	return stdout.Bytes(), nil
 }
 
-func runSipsThumbnail(ctx context.Context, sipsPath string, input []byte, policy config.ThumbnailPolicy, format string) ([]byte, error) {
+func convertVideoStill(input []byte, policy config.ThumbnailPolicy, plan Plan) ([]byte, string, string, int, int, error) {
+	if plan.FFmpegPath == "" {
+		return nil, "", "", 0, 0, fmt.Errorf("ffmpeg unavailable")
+	}
+	timeout := policy.ExternalTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if attached, err := extractVideoAttachedPicture(ctx, plan.FFmpegPath, input); err == nil && len(attached) > 0 {
+		if body, contentType, backend, width, height, err := convertVideoStillImage(attached, policy, plan, "video-attached-picture"); err == nil {
+			return body, contentType, backend, width, height, nil
+		}
+	}
+	frames, err := extractVideoKeyframes(ctx, plan.FFmpegPath, input, policy)
+	if err != nil {
+		return nil, "", "", 0, 0, err
+	}
+	best := frames[0]
+	for _, frame := range frames[1:] {
+		if len(frame) > len(best) {
+			best = frame
+		}
+	}
+	return convertVideoStillImage(best, policy, plan, "video-keyframe")
+}
+
+func convertVideoStillImage(input []byte, policy config.ThumbnailPolicy, plan Plan, backendPrefix string) ([]byte, string, string, int, int, error) {
+	img, _, err := image.Decode(bytes.NewReader(input))
+	if err != nil {
+		return nil, "", "", 0, 0, err
+	}
+	thumb := addPlayOverlay(img)
+	body, contentType, backend, width, height, err := convertDecodedImage(thumb, policy, plan, backendPrefix)
+	if err != nil {
+		return nil, "", "", 0, 0, err
+	}
+	return body, contentType, backend, width, height, nil
+}
+
+func extractVideoAttachedPicture(ctx context.Context, ffmpegPath string, input []byte) ([]byte, error) {
+	args := []string{
+		"-v", "error",
+		"-i", "pipe:0",
+		"-map", "0:v",
+		"-map", "-0:V",
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "mjpeg",
+		"pipe:1",
+	}
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd.Stdin = bytes.NewReader(input)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("ffmpeg:attached-picture: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	if stdout.Len() == 0 {
+		return nil, fmt.Errorf("ffmpeg:attached-picture: empty output")
+	}
+	return stdout.Bytes(), nil
+}
+
+func extractVideoKeyframes(ctx context.Context, ffmpegPath string, input []byte, policy config.ThumbnailPolicy) ([][]byte, error) {
+	limit := policy.VideoCandidateKeyframes
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 60 {
+		limit = 60
+	}
+	frames, err := runFFmpegFrameExtract(ctx, ffmpegPath, input, policy, true, limit)
+	if err == nil && len(frames) > 0 {
+		return frames, nil
+	}
+	return runFFmpegFrameExtract(ctx, ffmpegPath, input, policy, false, limit)
+}
+
+func runFFmpegFrameExtract(ctx context.Context, ffmpegPath string, input []byte, policy config.ThumbnailPolicy, keyframesOnly bool, limit int) ([][]byte, error) {
+	dir, err := os.MkdirTemp("", "streamuploader-video-thumb-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	pattern := filepath.Join(dir, "frame-%03d.jpg")
+	scale := fmt.Sprintf("scale=w='min(%d\\,iw)':h='min(%d\\,ih)':force_original_aspect_ratio=decrease", max(1, policy.Width), max(1, policy.Height))
+	args := []string{"-v", "error"}
+	if keyframesOnly {
+		args = append(args, "-skip_frame", "nokey")
+	}
+	args = append(args,
+		"-i", "pipe:0",
+		"-vf", scale,
+		"-frames:v", strconv.Itoa(max(1, limit)),
+		"-vsync", "0",
+		"-q:v", "3",
+		pattern,
+	)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd.Stdin = bytes.NewReader(input)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("ffmpeg:keyframes: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var frames [][]byte
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jpg") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err == nil && len(body) > 0 {
+			frames = append(frames, body)
+		}
+	}
+	if len(frames) == 0 {
+		return nil, fmt.Errorf("ffmpeg:keyframes: empty output")
+	}
+	return frames, nil
+}
+
+func addPlayOverlay(src image.Image) image.Image {
+	b := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	stddraw.Draw(dst, dst.Bounds(), src, b.Min, stddraw.Src)
+	w, h := dst.Bounds().Dx(), dst.Bounds().Dy()
+	if w <= 0 || h <= 0 {
+		return dst
+	}
+	size := int(math.Round(float64(min(w, h)) * 0.36))
+	if size < 12 {
+		size = min(w, h)
+	}
+	cx, cy := w/2, h/2
+	left := cx - size/3
+	top := cy - size/2
+	bottom := cy + size/2
+	right := cx + size/2
+	overlay := color.RGBA{255, 255, 255, 210}
+	for y := top; y <= bottom; y++ {
+		if y < 0 || y >= h {
+			continue
+		}
+		t := float64(y-top) / float64(max(1, bottom-top))
+		edge := left + int(math.Abs(t-0.5)*2*float64(size/3))
+		for x := edge; x <= right; x++ {
+			if x >= 0 && x < w {
+				dst.Set(x, y, overlay)
+			}
+		}
+	}
+	return dst
+}
+
+func runSipsThumbnail(ctx context.Context, sipsPath string, input []byte, policy config.ThumbnailPolicy, format, sourceContentType string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "streamuploader-thumbnail-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
-	src := filepath.Join(dir, "source")
+	src := filepath.Join(dir, "source"+extensionForContentType(sourceContentType))
 	dst := filepath.Join(dir, "thumb")
 	if err := os.WriteFile(src, input, 0600); err != nil {
 		return nil, err
@@ -516,6 +740,148 @@ func runSipsThumbnail(ctx context.Context, sipsPath string, input []byte, policy
 		return nil, err
 	}
 	return os.ReadFile(dst)
+}
+
+func extractOOXMLThumbnail(input []byte) ([]byte, string, error) {
+	reader, err := zip.NewReader(bytes.NewReader(input), int64(len(input)))
+	if err != nil {
+		return nil, "", err
+	}
+	for _, file := range reader.File {
+		name := strings.ToLower(file.Name)
+		var contentType string
+		switch name {
+		case "docprops/thumbnail.jpeg", "docprops/thumbnail.jpg":
+			contentType = "image/jpeg"
+		case "docprops/thumbnail.png":
+			contentType = "image/png"
+		case "docprops/thumbnail.emf", "docprops/thumbnail.wmf":
+			continue
+		default:
+			continue
+		}
+		if file.UncompressedSize64 > 32<<20 {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(rc, 32<<20))
+		_ = rc.Close()
+		if readErr == nil && len(body) > 0 {
+			return body, contentType, nil
+		}
+	}
+	return nil, "", fmt.Errorf("ooxml thumbnail not found")
+}
+
+func convertOfficeToPDF(input []byte, sourceContentType string, policy config.ThumbnailPolicy) ([]byte, error) {
+	tool, err := officeConverterPath()
+	if err != nil {
+		return nil, err
+	}
+	timeout := policy.ExternalTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	dir, err := os.MkdirTemp("", "streamuploader-office-thumb-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	src := filepath.Join(dir, "source"+officeExtensionForContentType(sourceContentType))
+	if err := os.WriteFile(src, input, 0600); err != nil {
+		return nil, err
+	}
+	userInstall := "file://" + filepath.Join(dir, "libreoffice-profile")
+	cmd := exec.CommandContext(ctx, tool, "-env:UserInstallation="+userInstall, "--headless", "--convert-to", "pdf", "--outdir", dir, src)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("libreoffice: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	pdfPath := filepath.Join(dir, "source.pdf")
+	body, err := os.ReadFile(pdfPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("libreoffice: empty PDF output")
+	}
+	return body, nil
+}
+
+func officeConverterPath() (string, error) {
+	for _, name := range []string{"soffice", "libreoffice"} {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("libreoffice unavailable")
+}
+
+func normalizeContentType(contentType string) string {
+	return strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+}
+
+func isOOXMLContentType(contentType string) bool {
+	switch normalizeContentType(contentType) {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return true
+	default:
+		return false
+	}
+}
+
+func officeExtensionForContentType(contentType string) string {
+	switch normalizeContentType(contentType) {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return ".pptx"
+	default:
+		return ".docx"
+	}
+}
+
+func extensionForContentType(contentType string) string {
+	switch normalizeContentType(contentType) {
+	case "application/pdf":
+		return ".pdf"
+	case "image/svg+xml":
+		return ".svg"
+	case "image/tiff", "image/x-tiff":
+		return ".tiff"
+	case "image/heif", "image/heif-sequence":
+		return ".heif"
+	case "image/heic", "image/heic-sequence":
+		return ".heic"
+	case "image/jxl":
+		return ".jxl"
+	case "image/jp2":
+		return ".jp2"
+	case "image/jpx":
+		return ".jpx"
+	case "image/vnd.adobe.photoshop", "image/x-photoshop":
+		return ".psd"
+	case "image/x-tga", "image/tga":
+		return ".tga"
+	case "image/bmp":
+		return ".bmp"
+	default:
+		return ""
+	}
 }
 
 func decodedSize(body []byte) (int, int) {
@@ -556,11 +922,11 @@ func resize(src image.Image, maxW, maxH int, fit string, upscale bool) image.Ima
 	dstW := max(1, int(float64(srcW)*scale+0.5))
 	dstH := max(1, int(float64(srcH)*scale+0.5))
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
 	if cover && dstW >= maxW && dstH >= maxH {
 		cropped := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
 		srcRect := image.Rect((dstW-maxW)/2, (dstH-maxH)/2, (dstW-maxW)/2+maxW, (dstH-maxH)/2+maxH)
-		draw.Draw(cropped, cropped.Bounds(), dst, srcRect.Min, draw.Src)
+		stddraw.Draw(cropped, cropped.Bounds(), dst, srcRect.Min, stddraw.Src)
 		return cropped
 	}
 	return dst

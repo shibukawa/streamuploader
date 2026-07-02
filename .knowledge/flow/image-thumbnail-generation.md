@@ -13,11 +13,35 @@ flow:
     - file item is clean or scan is not required before derivative work
     - image dimensions and pixel count are within configured limits
     - data:thumbnail-generation-config size and output policy are valid
+    - source format is thumbnail eligible or delegated to a safe extractor
+  source_formats:
+    currently_eligible:
+      - image/jpeg
+      - image/pjpeg
+      - image/png
+      - image/gif
+      - image/webp
+      - image/avif
+    target_eligible:
+      - image/tiff
+      - image/bmp
+      - image/heif
+      - image/heic
+      - image/jp2
+      - image/jpx
+      - image/jxl
   steps:
     - name: create_pending_asset
       actions:
         - allocate image_thumbnail data:derived-asset with object_key source object key plus /thumbnail
         - expose pending status for async mode
+    - name: try_embedded_thumbnail
+      actions:
+        - inspect EXIF or container thumbnail without trusting metadata
+        - decode extracted thumbnail bytes under same byte, pixel, and timeout limits
+        - reject embedded thumbnail when too small, corrupt, wrong aspect, or unsupported
+        - re-encode accepted embedded thumbnail through policy:preview-format-policy
+        - skip full-image decode when embedded thumbnail satisfies configured size and quality threshold
     - name: decode_image
       actions:
         - read from system:s3-storage object or streaming tee through io.MultiWriter when practical
@@ -54,6 +78,7 @@ references:
   - data:file-item
   - data:metadata-payload
   - data:thumbnail-generation-config
+  - requirement:expanded-thumbnail-source-support
   - policy:preview-generation-policy
   - policy:preview-format-policy
   - system:thumbnail-converter

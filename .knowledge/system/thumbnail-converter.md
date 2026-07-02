@@ -25,6 +25,7 @@ roles:
       - sips on macOS only when startup probe detects the binary and requested output format support
       - vips for fast resize and AVIF/WebP output
       - ffmpeg for broad decode fallback only with encoders detected by startup probe
+      - exiftool or equivalent metadata extractor for embedded image thumbnails when available
       - image/jpeg final fallback when modern output is unavailable
   external_webhook:
     use_when:
@@ -60,10 +61,42 @@ backend_selection:
   go_not_decodable:
     - skip Go decode path
     - try configured external webhook first when enabled
+    - try embedded thumbnail extraction before full-source rasterization when source type supports it
     - try sips candidates from startup plan on macOS when applicable
     - try ffmpeg candidates from startup plan, preferring AVIF or WebP encoders before JPEG
-    - future local tool expansion may add sips or vips before final fallback
+    - use sips, vips, or ffmpeg for TIFF, HEIF/HEIC, JPEG 2000, JPEG XL, BMP, PSD, and TGA when startup probe confirms decode support
     - fallback to image/jpeg only after successful decode and resize
+format_support:
+  current_server_thumbnail_eligible:
+    - image/jpeg
+    - image/pjpeg
+    - image/png
+    - image/gif
+    - image/webp
+    - image/avif
+  target_decode_or_extract:
+    - image/tiff
+    - image/bmp
+    - image/heif
+    - image/heic
+    - image/jp2
+    - image/jpx
+    - image/jxl
+    - image/vnd.adobe.photoshop
+    - image/x-photoshop
+    - image/x-tga
+    - image/tga
+  macos_sips_probe_targets:
+    - image/tiff
+    - image/bmp
+    - image/heif
+    - image/heic
+    - image/jp2
+    - image/jpx
+    - image/jxl
+    - image/vnd.adobe.photoshop
+    - image/x-tga
+    - application/pdf fallback only
 performance:
   - use io.MultiWriter or equivalent tee so original upload storage and thumbnail decode can begin from one stream
   - isolate thumbnail errors from original upload unless execution mode requires generated asset readiness
@@ -82,4 +115,5 @@ references:
   - system:external-tool-registry
   - policy:tool-backend-selection-policy
   - policy:external-delegation-policy
+  - requirement:expanded-thumbnail-source-support
 ```

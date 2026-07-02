@@ -23,6 +23,9 @@ policy:
       generate: data:thumbnail-generation-config enabled
       mode: sequential or async from data:thumbnail-generation-config execution_mode
       flow: flow:image-thumbnail-generation
+      source_priority:
+        - embedded thumbnail
+        - generated full-image thumbnail
       outputs:
         - image_thumbnail
     svg:
@@ -41,6 +44,9 @@ policy:
       generate: configurable
       mode: optional
       flow: flow:document-preview-generation
+      source_priority:
+        - embedded Office thumbnail
+        - LibreOffice PDF normalization and rendered page thumbnail
       outputs:
         - document_preview_page
         - normalized_pdf optional
@@ -48,7 +54,12 @@ policy:
       generate: configurable
       mode: optional
       flow: flow:video-preview-generation
+      source_priority:
+        - attached picture or cover art
+        - scored early keyframe still thumbnail
+        - animated preview clip
       outputs:
+        - video_still_thumbnail
         - video_animated_preview
     other:
       generate: false
@@ -75,5 +86,6 @@ references:
   - flow:svg-preview-generation
   - flow:document-preview-generation
   - flow:video-preview-generation
+  - requirement:expanded-thumbnail-source-support
   - policy:search-extraction-policy
 ```

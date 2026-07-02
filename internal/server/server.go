@@ -53,11 +53,20 @@ type uploadDeadlineMarker struct {
 	UploadKey            string `json:"upload_key"`
 	ObjectKey            string `json:"object_key"`
 	TempObjectKey        string `json:"temp_object_key,omitempty"`
+	OwnerTokenHash       string `json:"owner_token_hash,omitempty"`
 	UploadStartDeadline  string `json:"upload_start_deadline"`
 	UploadFinishDeadline string `json:"upload_finish_deadline"`
 	Status               string `json:"status"`
 	CreatedAt            string `json:"created_at"`
 	UpdatedAt            string `json:"updated_at"`
+}
+
+type asyncTaskMarker struct {
+	ObjectKey string `json:"object_key"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func New(cfg config.Config, store storage.Store) *Server {
@@ -188,6 +197,8 @@ func (s *Server) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		s.watchUploads(w, r)
 	case len(parts) == 2 && parts[0] == "keys" && r.Method == http.MethodGet:
 		s.getUpload(w, r, parts[1])
+	case len(parts) == 2 && parts[0] == "keys" && r.Method == http.MethodDelete:
+		s.cancelUploadKey(w, r, parts[1])
 	case len(parts) == 3 && parts[0] == "keys" && parts[2] == "content" && r.Method == http.MethodPut:
 		s.uploadFile(w, r, parts[1])
 	default:
@@ -224,6 +235,10 @@ func (s *Server) handleBackendAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if escapedPath == base+"/tasks/wait" && r.Method == http.MethodPost {
+		s.waitAsyncTasks(w, r)
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "backend route not found")
@@ -503,6 +518,8 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	uploadKey := randomToken(24)
+	ownerToken := s.uploadOwnerToken(w, r)
+	ownerTokenHash := hashToken(ownerToken)
 	fileName := safeSegment(req.FileName)
 	prefix := storagePrefix(uploadKey, req.Prefix)
 	objectKey := path.Join(prefix, fileName)
@@ -511,23 +528,25 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 		expiresAt = now.Add(s.cfg.UploadDeadlines.StartTimeout)
 	}
 	item := &model.UploadItem{
-		UploadKey:     uploadKey,
-		Role:          req.Role,
-		OriginalName:  req.FileName,
-		ContentType:   req.ContentType,
-		SizeBytes:     req.SizeBytes,
-		StoragePrefix: prefix,
-		ObjectKey:     objectKey,
-		DisplayKey:    objectKey,
-		Status:        model.UploadKeyCreated,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		ExpiresAt:     expiresAt,
+		UploadKey:      uploadKey,
+		Role:           req.Role,
+		OriginalName:   req.FileName,
+		ContentType:    req.ContentType,
+		SizeBytes:      req.SizeBytes,
+		StoragePrefix:  prefix,
+		ObjectKey:      objectKey,
+		DisplayKey:     objectKey,
+		Status:         model.UploadKeyCreated,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		ExpiresAt:      expiresAt,
+		OwnerTokenHash: ownerTokenHash,
 	}
 	if s.cfg.UploadDeadlines.Enabled {
 		if err := s.putUploadMarker(r.Context(), uploadDeadlineMarker{
 			UploadKey:            uploadKey,
 			ObjectKey:            objectKey,
+			OwnerTokenHash:       ownerTokenHash,
 			UploadStartDeadline:  now.Add(s.cfg.UploadDeadlines.StartTimeout).Format(time.RFC3339Nano),
 			UploadFinishDeadline: now.Add(s.cfg.UploadDeadlines.FinishTimeout).Format(time.RFC3339Nano),
 			Status:               "key_created",
@@ -562,6 +581,40 @@ func (s *Server) getUpload(w http.ResponseWriter, _ *http.Request, uploadKey str
 	writeJSON(w, http.StatusOK, item)
 }
 
+func (s *Server) cancelUploadKey(w http.ResponseWriter, r *http.Request, uploadKey string) {
+	item, ok := s.upload(uploadKey)
+	if !ok {
+		writeError(w, http.StatusNotFound, "upload_not_found", "upload key not found")
+		return
+	}
+	if item.Status != model.UploadKeyCreated {
+		writeError(w, http.StatusConflict, "upload_already_started", "upload key can be canceled only before upload starts")
+		return
+	}
+	if !s.uploadOwnerMatches(r, item.OwnerTokenHash) {
+		writeError(w, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
+		return
+	}
+	if s.cfg.UploadDeadlines.Enabled {
+		marker, err := s.loadUploadMarker(r.Context(), uploadKey)
+		if err != nil {
+			writeError(w, http.StatusGone, "upload_key_expired", "upload key expired or missing")
+			return
+		}
+		if marker.OwnerTokenHash != "" && !s.uploadOwnerMatches(r, marker.OwnerTokenHash) {
+			writeError(w, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
+			return
+		}
+		_ = s.deleteUploadMarker(r.Context(), uploadKey)
+	}
+	s.updateUpload(uploadKey, func(current *model.UploadItem) {
+		current.Status = model.UploadCanceled
+		current.UpdatedAt = time.Now().UTC()
+	})
+	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadCanceled, Item: mustUpload(s.upload(uploadKey))})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey string) {
 	target, ok := s.uploadTarget(uploadKey)
 	if !ok {
@@ -570,6 +623,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	}
 	if target.status == model.UploadUploaded {
 		writeError(w, http.StatusConflict, "already_uploaded", "upload key already has content")
+		return
+	}
+	if target.status == model.UploadCanceled {
+		writeError(w, http.StatusGone, "upload_canceled", "upload key was canceled")
 		return
 	}
 	uploadCtx := r.Context()
@@ -694,8 +751,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		},
 	}
 	var thumbnailJob *thumbnailUploadJob
-	if s.thumbnailEligible(contentType) {
-		thumbnailJob = s.startThumbnailUpload(target.objectKey)
+	if s.thumbnailEligible(contentType) && !documentFullScanUpload {
+		thumbnailJob = s.startThumbnailUpload(target.objectKey, contentType)
 	}
 	var sideWriters []*io.PipeWriter
 	var documentFullScanDone <-chan error
@@ -798,9 +855,16 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	})
 	if s.thumbnailEligible(contentType) {
 		if s.cfg.Thumbnails.ExecutionMode == "sequential" {
-			uploaded = s.finishThumbnailUpload(uploadKey, thumbnailJob, uploadCtx)
+			uploaded = s.finishThumbnailUpload(uploadKey, thumbnailJob, uploadCtx, contentType)
 		} else {
-			go s.finishThumbnailUpload(uploadKey, thumbnailJob, context.Background())
+			if err := s.putAsyncTaskMarker(context.Background(), asyncTaskMarker{
+				ObjectKey: target.objectKey,
+				Kind:      "image_thumbnail",
+				Status:    "running",
+			}); err != nil {
+				slog.Warn("async_task_marker_create_failed", "upload_key", uploadKey, "object_key", target.objectKey, "kind", "image_thumbnail", "error", err)
+			}
+			go s.finishThumbnailUpload(uploadKey, thumbnailJob, context.Background(), contentType)
 		}
 	}
 	w.Header().Set("ETag", result.ETag)
@@ -856,6 +920,53 @@ func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
 		case <-deadline.C:
 			items, _ = s.uploadsForKeys(req.UploadKeys)
 			writeJSON(w, http.StatusOK, model.WaitUploadsResponse{Ready: false, Timeout: true, Items: items})
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
+	var req model.WaitAsyncTasksRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+		return
+	}
+	if len(req.ObjectKeys) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_object_keys", "object_keys is required")
+		return
+	}
+	kinds := normalizedTaskKinds(req.Kinds)
+	timeout := 60 * time.Second
+	if req.TimeoutSeconds > 0 {
+		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	}
+	poll := 200 * time.Millisecond
+	if req.PollMillis > 0 {
+		poll = time.Duration(req.PollMillis) * time.Millisecond
+	}
+	if poll < 50*time.Millisecond {
+		poll = 50 * time.Millisecond
+	}
+	if poll > 5*time.Second {
+		poll = 5 * time.Second
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		tasks, ready := s.asyncTaskStatuses(r.Context(), req.ObjectKeys, kinds)
+		if ready {
+			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: true, Tasks: tasks})
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-deadline.C:
+			tasks, _ = s.asyncTaskStatuses(context.Background(), req.ObjectKeys, kinds)
+			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: false, Timeout: true, Tasks: tasks})
 			return
 		case <-ticker.C:
 		}
@@ -1170,6 +1281,7 @@ func (s *Server) putUploadMarker(ctx context.Context, marker uploadDeadlineMarke
 			"upload-key":             marker.UploadKey,
 			"object-key":             marker.ObjectKey,
 			"temp-object-key":        marker.TempObjectKey,
+			"owner-token-hash":       marker.OwnerTokenHash,
 			"upload-start-deadline":  marker.UploadStartDeadline,
 			"upload-finish-deadline": marker.UploadFinishDeadline,
 			"status":                 marker.Status,
@@ -1197,6 +1309,9 @@ func (s *Server) loadUploadMarker(ctx context.Context, uploadKey string) (upload
 	if marker.TempObjectKey == "" {
 		marker.TempObjectKey = metadata["temp-object-key"]
 	}
+	if marker.OwnerTokenHash == "" {
+		marker.OwnerTokenHash = metadata["owner-token-hash"]
+	}
 	if marker.UploadStartDeadline == "" {
 		marker.UploadStartDeadline = metadata["upload-start-deadline"]
 	}
@@ -1214,6 +1329,59 @@ func (s *Server) loadUploadMarker(ctx context.Context, uploadKey string) (upload
 
 func (s *Server) deleteUploadMarker(ctx context.Context, uploadKey string) error {
 	return s.store.DeleteObject(ctx, storage.DeleteInput{Bucket: s.cfg.Bucket, Key: s.uploadMarkerObjectKey(uploadKey)})
+}
+
+func (s *Server) asyncTaskObjectKey(objectKey, kind string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + objectKey))
+	return path.Join(".streamuploader/tasks", hex.EncodeToString(sum[:])+".json")
+}
+
+func (s *Server) putAsyncTaskMarker(ctx context.Context, marker asyncTaskMarker) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if marker.CreatedAt == "" {
+		marker.CreatedAt = now
+	}
+	marker.UpdatedAt = now
+	body, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	_, err = s.store.PutObject(ctx, storage.PutInput{
+		Bucket:      s.cfg.Bucket,
+		Key:         s.asyncTaskObjectKey(marker.ObjectKey, marker.Kind),
+		Body:        bytes.NewReader(body),
+		ContentType: "application/json",
+		Metadata: map[string]string{
+			"object-key": marker.ObjectKey,
+			"kind":       marker.Kind,
+			"status":     marker.Status,
+		},
+	})
+	return err
+}
+
+func (s *Server) deleteAsyncTaskMarker(ctx context.Context, objectKey, kind string) {
+	_ = s.store.DeleteObject(ctx, storage.DeleteInput{Bucket: s.cfg.Bucket, Key: s.asyncTaskObjectKey(objectKey, kind)})
+}
+
+func (s *Server) asyncTaskStatuses(ctx context.Context, objectKeys, kinds []string) ([]model.WaitAsyncTaskStatus, bool) {
+	tasks := make([]model.WaitAsyncTaskStatus, 0, len(objectKeys)*len(kinds))
+	ready := true
+	for _, objectKey := range objectKeys {
+		objectKey = strings.TrimSpace(objectKey)
+		if objectKey == "" {
+			continue
+		}
+		for _, kind := range kinds {
+			pending := false
+			if _, err := s.store.HeadObject(ctx, storage.HeadInput{Bucket: s.cfg.Bucket, Key: s.asyncTaskObjectKey(objectKey, kind)}); err == nil {
+				pending = true
+				ready = false
+			}
+			tasks = append(tasks, model.WaitAsyncTaskStatus{ObjectKey: objectKey, Kind: kind, Pending: pending})
+		}
+	}
+	return tasks, ready
 }
 
 func (s *Server) CleanupExpiredUploads(ctx context.Context) error {
@@ -1360,7 +1528,16 @@ func (s *Server) thumbnailEligible(contentType string) bool {
 	}
 	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 	switch contentType {
-	case "image/jpeg", "image/pjpeg", "image/png", "image/gif", "image/webp", "image/avif":
+	case "image/jpeg", "image/pjpeg", "image/png", "image/gif", "image/webp", "image/avif",
+		"image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml",
+		"image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence",
+		"image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf",
+		"image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga",
+		"application/pdf",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska":
 		return true
 	default:
 		return false
@@ -1381,14 +1558,14 @@ type thumbnailUploadResult struct {
 	err        error
 }
 
-func (s *Server) startThumbnailUpload(sourceKey string) *thumbnailUploadJob {
+func (s *Server) startThumbnailUpload(sourceKey, sourceContentType string) *thumbnailUploadJob {
 	reader, writer := io.Pipe()
 	job := &thumbnailUploadJob{
 		writer: writer,
 		done:   make(chan thumbnailUploadResult, 1),
 	}
 	go func() {
-		conversion, err := thumbnail.ConvertFromReader(context.Background(), reader, sourceKey, s.cfg.Thumbnails)
+		conversion, err := thumbnail.ConvertFromReaderWithContentType(context.Background(), reader, sourceKey, sourceContentType, s.cfg.Thumbnails)
 		_, _ = io.Copy(io.Discard, reader)
 		_ = reader.Close()
 		job.done <- thumbnailUploadResult{conversion: conversion, err: err}
@@ -1396,9 +1573,13 @@ func (s *Server) startThumbnailUpload(sourceKey string) *thumbnailUploadJob {
 	return job
 }
 
-func (s *Server) finishThumbnailUpload(uploadKey string, job *thumbnailUploadJob, ctx context.Context) *model.UploadItem {
+func (s *Server) finishThumbnailUpload(uploadKey string, job *thumbnailUploadJob, ctx context.Context, sourceContentType string) *model.UploadItem {
+	item, _ := s.upload(uploadKey)
+	if item != nil && s.cfg.Thumbnails.ExecutionMode == "async" {
+		defer s.deleteAsyncTaskMarker(context.Background(), item.ObjectKey, "image_thumbnail")
+	}
 	if job == nil {
-		return s.generateThumbnailForUpload(uploadKey)
+		return s.generateThumbnailForUpload(uploadKey, sourceContentType)
 	}
 	result := <-job.done
 	if result.err == nil {
@@ -1407,12 +1588,12 @@ func (s *Server) finishThumbnailUpload(uploadKey string, job *thumbnailUploadJob
 	return s.updateThumbnailForUpload(uploadKey, result.conversion.Result, result.err)
 }
 
-func (s *Server) generateThumbnailForUpload(uploadKey string) *model.UploadItem {
+func (s *Server) generateThumbnailForUpload(uploadKey, sourceContentType string) *model.UploadItem {
 	item, ok := s.upload(uploadKey)
 	if !ok || item.Thumbnail == nil {
 		return item
 	}
-	result, err := thumbnail.Generate(context.Background(), s.store, s.cfg.Bucket, item.ObjectKey, s.cfg.Thumbnails)
+	result, err := thumbnail.GenerateWithContentType(context.Background(), s.store, s.cfg.Bucket, item.ObjectKey, sourceContentType, s.cfg.Thumbnails)
 	return s.updateThumbnailForUpload(uploadKey, result, err)
 }
 
@@ -1536,8 +1717,9 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	} else if contains(s.cfg.AllowedOrigins, origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key,X-Request-ID,X-Upload-Key")
 	w.Header().Set("Access-Control-Expose-Headers", "Location,ETag,Last-Modified,Content-Range,Accept-Ranges,X-Request-ID")
 	w.Header().Set("Access-Control-Max-Age", "600")
@@ -1905,6 +2087,44 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"error": code, "message": message})
 }
 
+func (s *Server) uploadOwnerToken(w http.ResponseWriter, r *http.Request) string {
+	const cookieName = "streamuploader_owner"
+	if cookie, err := r.Cookie(cookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		return cookie.Value
+	}
+	token := randomToken(32)
+	maxAge := int(s.cfg.SessionTTL.Seconds())
+	if maxAge <= 0 {
+		maxAge = int((24 * time.Hour).Seconds())
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    token,
+		Path:     s.uploadBase,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   strings.HasPrefix(strings.ToLower(s.cfg.PublicBaseURL), "https://"),
+	})
+	return token
+}
+
+func (s *Server) uploadOwnerMatches(r *http.Request, wantHash string) bool {
+	if wantHash == "" {
+		return false
+	}
+	cookie, err := r.Cookie("streamuploader_owner")
+	if err != nil {
+		return false
+	}
+	return hashToken(cookie.Value) == wantHash
+}
+
+func hashToken(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 func randomToken(bytesLen int) string {
 	b := make([]byte, bytesLen)
 	if _, err := rand.Read(b); err != nil {
@@ -1981,7 +2201,30 @@ func contains(values []string, needle string) bool {
 }
 
 func terminal(status model.UploadStatus) bool {
-	return status == model.UploadUploaded || status == model.UploadFailed || status == model.UploadExpired
+	return status == model.UploadUploaded || status == model.UploadFailed || status == model.UploadExpired || status == model.UploadCanceled
+}
+
+func normalizedTaskKinds(kinds []string) []string {
+	if len(kinds) == 0 {
+		return []string{"image_thumbnail"}
+	}
+	out := make([]string, 0, len(kinds))
+	seen := map[string]struct{}{}
+	for _, kind := range kinds {
+		kind = strings.ToLower(strings.TrimSpace(kind))
+		if kind == "" {
+			continue
+		}
+		if _, ok := seen[kind]; ok {
+			continue
+		}
+		seen[kind] = struct{}{}
+		out = append(out, kind)
+	}
+	if len(out) == 0 {
+		return []string{"image_thumbnail"}
+	}
+	return out
 }
 
 func cloneUpload(item *model.UploadItem) *model.UploadItem {

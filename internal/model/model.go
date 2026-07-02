@@ -10,6 +10,7 @@ const (
 	UploadUploaded   UploadStatus = "uploaded"
 	UploadFailed     UploadStatus = "failed"
 	UploadExpired    UploadStatus = "expired"
+	UploadCanceled   UploadStatus = "canceled"
 )
 
 type UploadItem struct {
@@ -30,6 +31,7 @@ type UploadItem struct {
 	ExpiresAt      time.Time     `json:"expires_at"`
 	UploadedAt     *time.Time    `json:"uploaded_at,omitempty"`
 	Thumbnail      *DerivedAsset `json:"thumbnail,omitempty"`
+	OwnerTokenHash string        `json:"-"`
 }
 
 type DerivedAsset struct {
@@ -72,6 +74,25 @@ type WaitUploadsResponse struct {
 	Ready   bool          `json:"ready"`
 	Timeout bool          `json:"timeout"`
 	Items   []*UploadItem `json:"items"`
+}
+
+type WaitAsyncTasksRequest struct {
+	ObjectKeys     []string `json:"object_keys"`
+	Kinds          []string `json:"kinds,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	PollMillis     int      `json:"poll_millis,omitempty"`
+}
+
+type WaitAsyncTaskStatus struct {
+	ObjectKey string `json:"object_key"`
+	Kind      string `json:"kind"`
+	Pending   bool   `json:"pending"`
+}
+
+type WaitAsyncTasksResponse struct {
+	Ready   bool                  `json:"ready"`
+	Timeout bool                  `json:"timeout"`
+	Tasks   []WaitAsyncTaskStatus `json:"tasks"`
 }
 
 type WatchClientMessage struct {

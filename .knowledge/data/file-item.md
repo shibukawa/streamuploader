@@ -30,6 +30,8 @@ fields:
       - scan_pending
       - clean
       - failed
+      - expired
+      - canceled
   security_decision: allow or reject
   security_check: data:security-check-result
   client_temp_id: optional UI correlation id

@@ -12,6 +12,15 @@ components:
     purpose:
       - validate container and streams
       - detect duration, resolution, frame rate, and codec
+      - detect attached pictures or cover art
+  still_thumbnail:
+    preferred_tool: ffmpeg
+    selection:
+      - use attached picture when present and valid
+      - otherwise extract up to first 10 keyframes
+      - score normalized still candidates by encoded byte size
+      - choose largest candidate after rejecting black or duplicate frames
+      - draw play triangle overlay after final resize
   transcode:
     preferred_tool: ffmpeg
     fallback_tool: avconvert on macOS for simple preview when configured
@@ -29,6 +38,8 @@ constraints:
   - treat conversion failure as preview failure, not original file corruption
 references:
   - flow:video-preview-generation
+  - data:thumbnail-generation-config
+  - requirement:expanded-thumbnail-source-support
   - system:external-tool-registry
   - policy:tool-backend-selection-policy
 ```

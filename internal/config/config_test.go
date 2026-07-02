@@ -225,6 +225,41 @@ func TestEnvPrefersSUPrefix(t *testing.T) {
 	}
 }
 
+func TestThumbnailVideoCandidateKeyframesConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "security.yaml")
+	body := []byte(`
+thumbnails:
+  enabled: true
+  video_candidate_keyframes: 24
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadSecurityPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Thumbnails.VideoCandidateKeyframes != 24 {
+		t.Fatalf("video candidate keyframes = %d", policy.Thumbnails.VideoCandidateKeyframes)
+	}
+
+	body = []byte(`
+thumbnails:
+  enabled: true
+  video_candidate_keyframes: 60
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	policy, err = LoadSecurityPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Thumbnails.VideoCandidateKeyframes != 60 {
+		t.Fatalf("max video candidate keyframes = %d", policy.Thumbnails.VideoCandidateKeyframes)
+	}
+}
+
 func TestLoadEnablesClamAVFromEnvironment(t *testing.T) {
 	t.Setenv("SU_CLAMAV_HOST", "clamd.local:3310")
 	t.Setenv("SU_CLAMAV_SCAN_TIMEOUT_MS", "12000")
@@ -285,6 +320,11 @@ func TestMIMEFileTypeExpandsCategoriesAndShortNames(t *testing.T) {
 		"jpeg":   "image/jpeg",
 		".png":   "image/png",
 		"pdf":    "application/pdf",
+		"heic":   "image/heic",
+		"jxl":    "image/jxl",
+		"jp2":    "image/jp2",
+		"psd":    "image/vnd.adobe.photoshop",
+		"tga":    "image/x-tga",
 	}
 	for input, want := range tests {
 		if got := MIMEFileType(input); !containsString(got, want) {

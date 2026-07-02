@@ -22,6 +22,7 @@ flow:
       actions:
         - run sandboxed renderer
         - prefer system:svg-renderer
+        - allow macOS sips fallback only after sanitize_svg has produced safe input or rejected unsafe input
         - render to fixed preview sizes
         - force transparent or configured background
     - name: encode_preview
@@ -45,4 +46,3 @@ references:
   - system:svg-renderer
   - system:s3-storage
 ```
-

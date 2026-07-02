@@ -483,6 +483,18 @@
             "image/bmp": {
               "type": "boolean"
             },
+            "image/heic": {
+              "type": "boolean"
+            },
+            "image/heic-sequence": {
+              "type": "boolean"
+            },
+            "image/heif": {
+              "type": "boolean"
+            },
+            "image/heif-sequence": {
+              "type": "boolean"
+            },
             "image/gif": {
               "type": "boolean"
             },
@@ -490,6 +502,21 @@
               "type": "boolean"
             },
             "image/pjpeg": {
+              "type": "boolean"
+            },
+            "image/jp2": {
+              "type": "boolean"
+            },
+            "image/jpf": {
+              "type": "boolean"
+            },
+            "image/jpm": {
+              "type": "boolean"
+            },
+            "image/jpx": {
+              "type": "boolean"
+            },
+            "image/jxl": {
               "type": "boolean"
             },
             "image/png": {
@@ -501,7 +528,22 @@
             "image/tiff": {
               "type": "boolean"
             },
+            "image/x-tiff": {
+              "type": "boolean"
+            },
+            "image/tga": {
+              "type": "boolean"
+            },
+            "image/vnd.adobe.photoshop": {
+              "type": "boolean"
+            },
             "image/webp": {
+              "type": "boolean"
+            },
+            "image/x-photoshop": {
+              "type": "boolean"
+            },
+            "image/x-tga": {
               "type": "boolean"
             },
             "text/csv": {
@@ -852,6 +894,18 @@
             "image/bmp": {
               "type": "boolean"
             },
+            "image/heic": {
+              "type": "boolean"
+            },
+            "image/heic-sequence": {
+              "type": "boolean"
+            },
+            "image/heif": {
+              "type": "boolean"
+            },
+            "image/heif-sequence": {
+              "type": "boolean"
+            },
             "image/gif": {
               "type": "boolean"
             },
@@ -859,6 +913,21 @@
               "type": "boolean"
             },
             "image/pjpeg": {
+              "type": "boolean"
+            },
+            "image/jp2": {
+              "type": "boolean"
+            },
+            "image/jpf": {
+              "type": "boolean"
+            },
+            "image/jpm": {
+              "type": "boolean"
+            },
+            "image/jpx": {
+              "type": "boolean"
+            },
+            "image/jxl": {
               "type": "boolean"
             },
             "image/png": {
@@ -870,7 +939,22 @@
             "image/tiff": {
               "type": "boolean"
             },
+            "image/x-tiff": {
+              "type": "boolean"
+            },
+            "image/tga": {
+              "type": "boolean"
+            },
+            "image/vnd.adobe.photoshop": {
+              "type": "boolean"
+            },
             "image/webp": {
+              "type": "boolean"
+            },
+            "image/x-photoshop": {
+              "type": "boolean"
+            },
+            "image/x-tga": {
               "type": "boolean"
             },
             "text/csv": {
@@ -984,6 +1068,20 @@
                 "video/quicktime",
                 "video/webm",
                 "video/x-matroska",
+                "image/heif",
+                "image/heic",
+                "image/heif-sequence",
+                "image/heic-sequence",
+                "image/jxl",
+                "image/jp2",
+                "image/jpx",
+                "image/jpm",
+                "image/jpf",
+                "image/x-tiff",
+                "image/vnd.adobe.photoshop",
+                "image/x-photoshop",
+                "image/x-tga",
+                "image/tga",
                 "image/bmp"
               ],
               "type": "string"
@@ -1140,6 +1238,11 @@
         },
         "upscale": {
           "type": "boolean"
+        },
+        "video_candidate_keyframes": {
+          "maximum": 60,
+          "minimum": 1,
+          "type": "integer"
         },
         "width": {
           "maximum": 4096,
