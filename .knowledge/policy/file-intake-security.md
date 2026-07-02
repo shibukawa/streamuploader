@@ -65,6 +65,9 @@ rules:
     - unknown type when whitelist mode is strict
     - file exceeding configured size limit
     - archive violating policy:archive-bomb-protection
+    - file exceeding policy:resource-limit-policy
+    - file failing policy:structural-validation-policy
+    - file rejected by policy:file-type-sanitization-policy
   references:
     - rule:prefix-replay
     - requirement:streaming-upload
@@ -73,5 +76,10 @@ rules:
     - system:content-detector
     - decision:mime-detector-library
     - policy:archive-bomb-protection
+    - policy:file-type-sanitization-policy
+    - policy:resource-limit-policy
+    - policy:structural-validation-policy
+    - policy:document-active-content-policy
+    - policy:svg-security-policy
     - data:security-check-result
 ```

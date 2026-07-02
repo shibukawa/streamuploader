@@ -40,8 +40,9 @@ endpoints:
       - receive bytes through service boundary
       - inspect prefix before storage commit
       - reject declared MIME and magic-header mismatch with JSON error
-      - stream to system:s3-storage
       - run policy:file-intake-security
+      - run policy:file-type-sanitization-policy before storage upload when sanitizer transforms bytes or chunk-only checks can decide early
+      - stream sanitized or accepted bytes to system:s3-storage
       - update data:file-item state
     errors:
       content_type_mismatch:
@@ -84,6 +85,21 @@ endpoints:
         body:
           error: upload_deadline_exceeded
           message: upload did not finish before deadline
+      file_sanitization_policy_violation:
+        status: 415
+        body:
+          error: file_sanitization_policy_violation
+          message: uploaded file violates configured file type sanitization policy
+      resource_limit_exceeded:
+        status: 413
+        body:
+          error: resource_limit_exceeded
+          message: uploaded file exceeds configured resource limits
+      structural_validation_failed:
+        status: 415
+        body:
+          error: structural_validation_failed
+          message: uploaded file is malformed or structurally inconsistent
   wait_uploads:
     method: POST
     path: "{base_path}/wait"
@@ -129,6 +145,9 @@ references:
   - decision:mime-detector-library
   - policy:storage-key-allocation-policy
   - policy:file-intake-security
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
   - policy:upload-key-deadline-policy
   - api:backend-control-api
   - requirement:application-metadata-submit

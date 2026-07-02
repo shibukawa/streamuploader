@@ -79,6 +79,120 @@
       },
       "type": "object"
     },
+    "file_sanitization": {
+      "additionalProperties": false,
+      "properties": {
+        "default_mode": {
+          "enum": [
+            "secure_default",
+            "accept_as_is"
+          ],
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "image_video_metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "default_mode": {
+              "enum": [
+                "sanitize_metadata",
+                "reject_on_sensitive_metadata",
+                "accept_as_is"
+              ],
+              "type": "string"
+            },
+            "no_reencode": {
+              "type": "boolean"
+            },
+            "preserve": {
+              "items": {
+                "enum": [
+                  "Orientation",
+                  "ICC Profile"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "legacy_office": {
+          "additionalProperties": false,
+          "properties": {
+            "default_mode": {
+              "enum": [
+                "reject",
+                "accept_as_is"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "office_pdf": {
+          "additionalProperties": false,
+          "properties": {
+            "default_mode": {
+              "enum": [
+                "reject_active_content",
+                "sanitize_when_supported",
+                "accept_as_is"
+              ],
+              "type": "string"
+            },
+            "full_scan_required": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "per_file_type": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "enum": [
+                  "sanitize_metadata",
+                  "reject_on_sensitive_metadata",
+                  "reject_active_content",
+                  "reject_active_or_external_content",
+                  "reject",
+                  "sanitize_when_supported",
+                  "accept_as_is"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "svg": {
+          "additionalProperties": false,
+          "properties": {
+            "allow_data_urls": {
+              "type": "boolean"
+            },
+            "default_mode": {
+              "enum": [
+                "reject_active_or_external_content",
+                "sanitize_when_supported",
+                "accept_as_is"
+              ],
+              "type": "string"
+            },
+            "prefer_streaming_xml_parser": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "http_cache": {
       "additionalProperties": false,
       "properties": {
@@ -890,6 +1004,63 @@
       },
       "type": "object"
     },
+    "resource_limits": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_decompressed_size_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_embedded_object_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_file_size_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_image_height": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_image_pixel_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_image_width": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_object_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_parser_time_ms": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_pdf_page_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_sanitized_memory_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_xml_depth": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_zip_entries": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "shared_key": {
       "additionalProperties": false,
       "properties": {
@@ -900,6 +1071,18 @@
         "max_ttl": {
           "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "structural_validation": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "strict": {
+          "type": "boolean"
         }
       },
       "type": "object"

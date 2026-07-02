@@ -46,9 +46,11 @@
 {"category": "constraint", "id": "policy:audit-log-policy", "path": ".knowledge/policy/audit-log-policy.md", "role": "supporting", "title": "Audit Log Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:backend-control-plane-policy", "path": ".knowledge/policy/backend-control-plane-policy.md", "role": "supporting", "title": "Backend Control Plane Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:checksum-dedupe-policy", "path": ".knowledge/policy/checksum-dedupe-policy.md", "role": "supporting", "title": "Checksum Dedupe Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:document-active-content-policy", "path": ".knowledge/policy/document-active-content-policy.md", "role": "supporting", "title": "Document Active Content Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:download-variant-policy", "path": ".knowledge/policy/download-variant-policy.md", "role": "supporting", "title": "Download Variant Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:external-delegation-policy", "path": ".knowledge/policy/external-delegation-policy.md", "role": "supporting", "title": "External Delegation Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:file-intake-security", "path": ".knowledge/policy/file-intake-security.md", "role": "supporting", "title": "File Intake Security", "type": "policy"}
+{"category": "constraint", "id": "policy:file-type-sanitization-policy", "path": ".knowledge/policy/file-type-sanitization-policy.md", "role": "supporting", "title": "File Type Sanitization Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:http-cors-header-policy", "path": ".knowledge/policy/http-cors-header-policy.md", "role": "supporting", "title": "HTTP CORS Header Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:jwt-claim-authorization", "path": ".knowledge/policy/jwt-claim-authorization.md", "role": "supporting", "title": "JWT Claim Authorization", "type": "policy"}
 {"category": "constraint", "id": "policy:metadata-stripping-policy", "path": ".knowledge/policy/metadata-stripping-policy.md", "role": "supporting", "title": "Metadata Stripping Policy", "type": "policy"}
@@ -57,11 +59,14 @@
 {"category": "constraint", "id": "policy:preview-format-policy", "path": ".knowledge/policy/preview-format-policy.md", "role": "supporting", "title": "Preview Format Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:preview-generation-policy", "path": ".knowledge/policy/preview-generation-policy.md", "role": "supporting", "title": "Preview Generation Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:processor-execution-policy", "path": ".knowledge/policy/processor-execution-policy.md", "role": "supporting", "title": "Processor Execution Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:resource-limit-policy", "path": ".knowledge/policy/resource-limit-policy.md", "role": "supporting", "title": "Resource Limit Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:reverse-proxy-routing-policy", "path": ".knowledge/policy/reverse-proxy-routing-policy.md", "role": "supporting", "title": "Reverse Proxy Routing Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:search-extraction-policy", "path": ".knowledge/policy/search-extraction-policy.md", "role": "supporting", "title": "Search Extraction Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:share-url-policy", "path": ".knowledge/policy/share-url-policy.md", "role": "supporting", "title": "Share URL Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:shared-key-policy", "path": ".knowledge/policy/shared-key-policy.md", "role": "supporting", "title": "Shared Key Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:storage-key-allocation-policy", "path": ".knowledge/policy/storage-key-allocation-policy.md", "role": "supporting", "title": "Storage Key Allocation Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:structural-validation-policy", "path": ".knowledge/policy/structural-validation-policy.md", "role": "supporting", "title": "Structural Validation Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:svg-security-policy", "path": ".knowledge/policy/svg-security-policy.md", "role": "supporting", "title": "SVG Security Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:tool-backend-selection-policy", "path": ".knowledge/policy/tool-backend-selection-policy.md", "role": "supporting", "title": "Tool Backend Selection Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:upload-key-deadline-policy", "path": ".knowledge/policy/upload-key-deadline-policy.md", "role": "supporting", "title": "Upload Key Deadline Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:webhook-policy", "path": ".knowledge/policy/webhook-policy.md", "role": "supporting", "title": "Webhook Policy", "type": "policy"}

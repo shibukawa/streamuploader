@@ -607,7 +607,24 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		item.UpdatedAt = time.Now().UTC()
 	})
 
-	limited := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
+	maxUploadBytes := s.cfg.MaxUploadBytes
+	if s.cfg.Security.ResourceLimits.Enabled && s.cfg.Security.ResourceLimits.MaxFileSizeBytes > 0 && (maxUploadBytes <= 0 || s.cfg.Security.ResourceLimits.MaxFileSizeBytes < maxUploadBytes) {
+		maxUploadBytes = s.cfg.Security.ResourceLimits.MaxFileSizeBytes
+	}
+	if maxUploadBytes <= 0 {
+		maxUploadBytes = 1 << 30
+	}
+	if s.cfg.Security.ResourceLimits.Enabled && r.ContentLength > maxUploadBytes {
+		err := securityUploadError{
+			status:  http.StatusRequestEntityTooLarge,
+			code:    "resource_limit_exceeded",
+			message: "uploaded file exceeds configured maximum file size",
+		}
+		s.failUpload(uploadKey, err.Error())
+		writeError(w, err.status, err.code, err.Error())
+		return
+	}
+	limited := http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	body := io.Reader(limited)
 	var inspectedPrefix []byte
 	archiveKind := archiveKindFor(contentType, target.originalName)
@@ -632,8 +649,20 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			})
 		}
 	}
+	sanitized, err := applyFileSanitization(body, contentType, target.originalName, s.cfg.Security)
+	if err != nil {
+		s.failUpload(uploadKey, err.Error())
+		status, code := securityErrorResponse(err)
+		writeError(w, status, code, err.Error())
+		return
+	}
+	body = sanitized.reader
+	if sanitized.contentType != "" {
+		contentType = sanitized.contentType
+	}
+	documentFullScanUpload := fileRequiresPostUploadFullScan(contentType, target.originalName, s.cfg.Security)
 	archiveUpload := s.cfg.Security.ArchiveGuard.Enabled && archiveKind != archiveUnknown
-	securityStagedUpload := archiveUpload || s.cfg.Security.ClamAV.Enabled
+	securityStagedUpload := archiveUpload || s.cfg.Security.ClamAV.Enabled || documentFullScanUpload
 	objectKey := target.objectKey
 	if securityStagedUpload {
 		objectKey = temporaryUploadObjectKey(target.objectKey, uploadKey)
@@ -669,8 +698,14 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		thumbnailJob = s.startThumbnailUpload(target.objectKey)
 	}
 	var sideWriters []*io.PipeWriter
+	var documentFullScanDone <-chan error
 	if thumbnailJob != nil {
 		sideWriters = append(sideWriters, thumbnailJob.writer)
+	}
+	if documentFullScanUpload {
+		documentWriter, done := startDocumentFullScan(contentType, target.originalName, s.cfg.Security)
+		documentFullScanDone = done
+		sideWriters = append(sideWriters, documentWriter)
 	}
 	result, err := s.putObjectWithSecurityScan(uploadCtx, storage.PutInput{
 		Bucket:      s.cfg.Bucket,
@@ -705,6 +740,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	}
 	if archiveUpload {
 		if err := inspectArchiveObject(uploadCtx, s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, s.cfg.Security.ArchiveGuard); err != nil {
+			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+			s.failUpload(uploadKey, err.Error())
+			status, code := securityErrorResponse(err)
+			writeError(w, status, code, err.Error())
+			return
+		}
+	}
+	if documentFullScanUpload {
+		if err := <-documentFullScanDone; err != nil {
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)

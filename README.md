@@ -41,6 +41,8 @@ Security configuration:
 - MIME/magic-header checking is on by default. Set `SU_MIME_MAGIC_CHECK=false` or `mime_magic.enabled: false` to opt out.
 - Use `mime_magic.allow_file_types` as bool switches such as `images: true`, `png: true`, `jpeg: true`, and `pdf: true`; use `allow_mime_types` with exact MIME keys such as `application/pdf: true`.
 - Browsers and operating systems do not reliably set script MIME types for selected files, so script-like uploads are detected from shebangs and known script extensions. Use `allowed_script_types` or `allowed_script_extensions` to opt in.
+- `file_sanitization` is on by default. JPEG/PNG metadata is stripped without re-encoding, SVG active/external content is rejected, Office/PDF active content is scanned before publish, and legacy `.doc/.xls/.ppt` files are rejected unless a per-type `accept_as_is` override is configured.
+- `resource_limits` and `structural_validation` enforce parser limits and basic format validity before files are published.
 - The YAML security config is validated against the built-in JSON Schema at startup, so unknown file type or MIME keys fail fast. The editor-facing schema is `config/security.schema.json`.
 - ClamAV scanning is optional and enabled by setting `SU_CLAMAV_HOST` to a clamd TCP address such as `clamav:3310`; when enabled, uploads are streamed to ClamAV and S3 in parallel and only published after the scan passes.
 - If the demo app is opened directly instead of through streamuploader, it proxies `/api/upload/*` to `SU_STREAMUPLOADER_PROXY_URL`.

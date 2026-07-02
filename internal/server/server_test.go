@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net"
@@ -554,6 +555,7 @@ func TestUploadMimeMagicCheckCanOptOut(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
 	security.MimeMagic.Enabled = false
+	security.FileSanitization.Enabled = false
 	cfg := config.Config{
 		Mode:           "standalone_cross_origin",
 		PublicBaseURL:  "http://example.test",
@@ -616,7 +618,7 @@ func TestUploadAllowFileTypeCategory(t *testing.T) {
 	}
 	decode(t, keyResp, &key)
 
-	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	png := makeTestPNG(t, 1, 1)
 	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(png))
 	uploadReq.Header.Set("Content-Type", "image/png")
 	uploadResp := do(t, uploadReq)
@@ -847,6 +849,267 @@ func TestUploadWithClamAVRejectsDetectionAndDeletesTmp(t *testing.T) {
 		t.Fatalf("infected object was published at %s", key.ObjectKey)
 	}
 	assertNoTmpObjects(t, store)
+}
+
+func TestUploadSanitizesJPEGEXIFBeforeStorage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := makeJPEGWithAPP1(t)
+	if !jpegHasAPP1(body) {
+		t.Fatal("test JPEG is missing APP1 metadata")
+	}
+	resp, key := uploadTestObject(t, srv.URL, "photo.jpg", "image/jpeg", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := append([]byte(nil), store.objects[key.ObjectKey]...)
+	store.mu.Unlock()
+	if jpegHasAPP1(got) {
+		t.Fatal("stored JPEG still contains APP1 metadata")
+	}
+	if _, _, err := image.DecodeConfig(bytes.NewReader(got)); err != nil {
+		t.Fatalf("stored JPEG is not decodable: %v", err)
+	}
+}
+
+func TestUploadSanitizesQuickTimeMetadataBeforeStorage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := makeBMFF(
+		bmffBox("ftyp", []byte("qt  \x00\x00\x00\x00qt  ")),
+		bmffBox("moov", append(
+			bmffBox("mvhd", []byte{0, 0, 0, 0}),
+			bmffBox("udta", []byte("GPS and camera metadata"))...,
+		)),
+		bmffBox("mdat", []byte("media payload")),
+	)
+	resp, key := uploadTestObject(t, srv.URL, "clip.mov", "video/quicktime", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := append([]byte(nil), store.objects[key.ObjectKey]...)
+	store.mu.Unlock()
+	if bytes.Contains(got, []byte("GPS and camera metadata")) || bytes.Contains(got, []byte("udta")) {
+		t.Fatalf("stored video still contains metadata box: %q", string(got))
+	}
+	if !bytes.Contains(got, []byte("media payload")) {
+		t.Fatal("stored video lost media payload")
+	}
+}
+
+func TestSanitizeWEBPMetadataPreservesICC(t *testing.T) {
+	body := makeWEBP(
+		webpChunk("VP8X", []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+		webpChunk("ICCP", []byte("profile")),
+		webpChunk("EXIF", []byte("gps")),
+		webpChunk("XMP ", []byte("author")),
+	)
+	got, err := sanitizeWEBPMetadata(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(got, []byte("gps")) || bytes.Contains(got, []byte("author")) || bytes.Contains(got, []byte("EXIF")) || bytes.Contains(got, []byte("XMP ")) {
+		t.Fatalf("WebP metadata was not removed: %q", string(got))
+	}
+	if !bytes.Contains(got, []byte("ICCP")) || !bytes.Contains(got, []byte("profile")) {
+		t.Fatalf("WebP ICC profile was not preserved: %q", string(got))
+	}
+}
+
+func TestUploadRejectsSVGActiveContent(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "bad.svg", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>`))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var body map[string]string
+	decode(t, resp, &body)
+	if body["error"] != "svg_active_content_rejected" && body["error"] != "svg_script_detected" {
+		t.Fatalf("error body = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected SVG was stored")
+	}
+}
+
+func TestUploadRejectsPDFJavaScript(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	pdf := []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog /OpenAction << /S /JavaScript /JS (app.alert('x')) >> >>\nendobj\n%%EOF\n")
+	resp, key := uploadTestObject(t, srv.URL, "active.pdf", "application/pdf", pdf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var body map[string]string
+	decode(t, resp, &body)
+	if body["error"] != "document_active_content_rejected" {
+		t.Fatalf("error body = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected PDF was stored")
+	}
+}
+
+func TestUploadPDFScansTmpThenPublishes(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	pdf := []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Type /Page >>\nendobj\n%%EOF\n")
+	resp, key := uploadTestObject(t, srv.URL, "safe.pdf", "application/pdf", pdf)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := append([]byte(nil), store.objects[key.ObjectKey]...)
+	copies := store.copies
+	store.mu.Unlock()
+	if !bytes.Equal(got, pdf) {
+		t.Fatal("published PDF body changed")
+	}
+	if copies != 1 {
+		t.Fatalf("PDF full scan should publish from tmp via copy, copies=%d", copies)
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsOfficeMacroPart(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := makeZipWithEntries(t, map[string][]byte{
+		"[Content_Types].xml":          []byte(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`),
+		"word/document.xml":            []byte(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`),
+		"word/vbaProject.bin":          []byte("macro"),
+		"word/_rels/document.xml.rels": []byte(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`),
+	})
+	resp, key := uploadTestObject(t, srv.URL, "macro.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "document_active_content_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected Office document was stored")
+	}
+}
+
+func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
+	body := []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 'd', 'o', 'c'}
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.Enabled = false
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "legacy.doc", "application/msword", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "legacy_office_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected legacy Office document was stored")
+	}
+
+	optOutStore := &fakeStore{objects: map[string][]byte{}}
+	optOut := config.DefaultSecurityPolicy()
+	optOut.MimeMagic.Enabled = false
+	optOut.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"application/msword": {Mode: "accept_as_is"}}
+	optOutCfg := testUploadConfig(optOut)
+	optOutSrv := httptest.NewServer(New(optOutCfg, optOutStore).Handler())
+	defer optOutSrv.Close()
+
+	okResp, okKey := uploadTestObject(t, optOutSrv.URL, "legacy.doc", "application/msword", body)
+	defer okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(okResp.Body)
+		t.Fatalf("opt-out upload status = %d body=%q", okResp.StatusCode, string(respBody))
+	}
+	optOutStore.mu.Lock()
+	got := optOutStore.objects[okKey.ObjectKey]
+	optOutStore.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("opt-out legacy Office body changed")
+	}
+}
+
+func TestUploadRejectsImageDimensionLimit(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ResourceLimits.MaxImageWidth = 1
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, _ := uploadTestObject(t, srv.URL, "wide.png", "image/png", makeTestPNG(t, 2, 1))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var body map[string]string
+	decode(t, resp, &body)
+	if body["error"] != "resource_limit_exceeded" {
+		t.Fatalf("error body = %+v", body)
+	}
 }
 
 func TestReverseProxyNonUploadPaths(t *testing.T) {
@@ -1451,19 +1714,104 @@ func uploadTestObject(t *testing.T, baseURL, fileName, contentType string, body 
 
 func makeZip(t *testing.T, name string, body []byte) []byte {
 	t.Helper()
+	return makeZipWithEntries(t, map[string][]byte{name: body})
+}
+
+func makeZipWithEntries(t *testing.T, entries map[string][]byte) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	w, err := zw.Create(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Write(body); err != nil {
-		t.Fatal(err)
+	for name, body := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(body); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func makeTestPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 120, A: 255})
+		}
+	}
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeJPEGWithAPP1(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			img.Set(x, y, color.RGBA{R: 20, G: 40, B: 80, A: 255})
+		}
+	}
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	body := buf.Bytes()
+	if len(body) < 2 || body[0] != 0xff || body[1] != 0xd8 {
+		t.Fatal("encoded JPEG missing SOI")
+	}
+	app1Payload := append([]byte("Exif\x00\x00"), []byte("GPS metadata")...)
+	segmentLen := len(app1Payload) + 2
+	app1 := []byte{0xff, 0xe1, byte(segmentLen >> 8), byte(segmentLen)}
+	app1 = append(app1, app1Payload...)
+	out := append([]byte{}, body[:2]...)
+	out = append(out, app1...)
+	out = append(out, body[2:]...)
+	return out
+}
+
+func makeBMFF(boxes ...[]byte) []byte {
+	return bytes.Join(boxes, nil)
+}
+
+func bmffBox(boxType string, payload []byte) []byte {
+	var out bytes.Buffer
+	var header [8]byte
+	binary.BigEndian.PutUint32(header[:4], uint32(len(payload)+8))
+	copy(header[4:8], []byte(boxType))
+	out.Write(header[:])
+	out.Write(payload)
+	return out.Bytes()
+}
+
+func makeWEBP(chunks ...[]byte) []byte {
+	payload := bytes.Join(chunks, nil)
+	out := make([]byte, 12)
+	copy(out[:4], []byte("RIFF"))
+	binary.LittleEndian.PutUint32(out[4:8], uint32(4+len(payload)))
+	copy(out[8:12], []byte("WEBP"))
+	out = append(out, payload...)
+	return out
+}
+
+func webpChunk(chunkType string, payload []byte) []byte {
+	var out bytes.Buffer
+	var header [8]byte
+	copy(header[:4], []byte(chunkType))
+	binary.LittleEndian.PutUint32(header[4:8], uint32(len(payload)))
+	out.Write(header[:])
+	out.Write(payload)
+	if len(payload)%2 == 1 {
+		out.WriteByte(0)
+	}
+	return out.Bytes()
 }
 
 func makeGzip(t *testing.T, body []byte) []byte {

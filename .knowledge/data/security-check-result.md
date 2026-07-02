@@ -43,6 +43,22 @@ fields:
     unsafe_path: boolean optional
     inspection_complete: boolean optional
     inspection_time_ms: integer optional
+  sanitization:
+    mode: string optional
+    performed: boolean
+    output_size_bytes: integer optional
+    metadata_removed: list optional
+    preserved_metadata: list optional
+  structural_validation:
+    performed: boolean
+    valid: boolean optional
+    validator: string optional
+  resource_limits:
+    checked: boolean
+    exceeded: list optional
+  active_content:
+    inspected: boolean
+    detected_features: list optional
   decision:
     enum:
       - allow
@@ -65,6 +81,13 @@ fields:
       - archive_path_unsafe
       - archive_inspection_timeout
       - archive_unsupported_method
+      - file_too_large
+      - resource_limit_exceeded
+      - structural_validation_failed
+      - sensitive_metadata_detected
+      - sanitizer_unavailable
+      - document_active_content_rejected
+      - svg_active_content_rejected
   error:
     http_status: integer optional
     code: string optional
@@ -74,4 +97,9 @@ references:
   - requirement:mime-magic-consistency
   - decision:mime-detector-library
   - policy:archive-bomb-protection
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - policy:document-active-content-policy
+  - policy:svg-security-policy
 ```

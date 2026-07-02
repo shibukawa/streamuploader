@@ -151,6 +151,105 @@ schema:
         min: 4096
         max: 1048576
       meaning: fixed scratch buffer for streaming decompression, not derived from claimed uncompressed size
+  resource_limits:
+    enabled:
+      type: bool
+      default: true
+      meaning: enable policy:resource-limit-policy before deeper inspection or sanitization
+    max_file_size_bytes:
+      type: integer
+      default: 1073741824
+      meaning: global upload file size cap, default 1 GiB
+    max_decompressed_size_bytes:
+      type: integer
+      default: 536870912
+    max_pdf_page_count:
+      type: integer
+      default: 500
+    max_image_width:
+      type: integer
+      default: 32768
+    max_image_height:
+      type: integer
+      default: 32768
+    max_image_pixel_count:
+      type: integer
+      default: 268435456
+    max_object_count:
+      type: integer
+      default: 100000
+    max_xml_depth:
+      type: integer
+      default: 64
+    max_zip_entries:
+      type: integer
+      default: 10000
+    max_embedded_object_count:
+      type: integer
+      default: 0
+    max_parser_time_ms:
+      type: integer
+      default: 5000
+    max_sanitized_memory_bytes:
+      type: integer
+      default: 67108864
+  structural_validation:
+    enabled:
+      type: bool
+      default: true
+      meaning: enable policy:structural-validation-policy when validator exists for detected file type
+    strict:
+      type: bool
+      default: true
+      meaning: reject malformed, ambiguous, or unsupported validation results for types requiring validation
+  file_sanitization:
+    enabled:
+      type: bool
+      default: true
+      meaning: enable policy:file-type-sanitization-policy
+    default_mode:
+      type: enum
+      default: secure_default
+      values:
+        - secure_default
+        - accept_as_is
+    per_file_type:
+      type: map string object
+      default: {}
+      meaning: override sanitize or inspection mode by file family or MIME type
+      examples:
+        image/jpeg:
+          mode: sanitize_metadata
+        video/quicktime:
+          mode: sanitize_metadata
+        application/pdf:
+          mode: reject_active_content
+        image/svg+xml:
+          mode: reject_active_or_external_content
+        application/msword:
+          mode: reject
+      mode_values:
+        - sanitize_metadata
+        - reject_on_sensitive_metadata
+        - reject_active_content
+        - reject_active_or_external_content
+        - reject
+        - sanitize_when_supported
+        - accept_as_is
+    image_video_metadata:
+      default_mode: sanitize_metadata
+      preserve:
+        - Orientation
+        - ICC Profile
+      no_reencode: true
+    office_pdf:
+      default_mode: reject_active_content
+      full_scan_required: true
+    legacy_office:
+      default_mode: reject
+    svg:
+      default_mode: reject_active_or_external_content
+      prefer_streaming_xml_parser: true
 example:
   mime_magic:
     enabled: true
@@ -190,10 +289,72 @@ example:
     max_probe_bytes: 67108864
     worker_memory_bytes: 67108864
     decompress_buffer_bytes: 32768
+  resource_limits:
+    enabled: true
+    max_file_size_bytes: 1073741824
+    max_decompressed_size_bytes: 536870912
+    max_pdf_page_count: 500
+    max_image_width: 32768
+    max_image_height: 32768
+    max_image_pixel_count: 268435456
+    max_object_count: 100000
+    max_xml_depth: 64
+    max_zip_entries: 10000
+    max_embedded_object_count: 0
+    max_parser_time_ms: 5000
+    max_sanitized_memory_bytes: 67108864
+  structural_validation:
+    enabled: true
+    strict: true
+  file_sanitization:
+    enabled: true
+    default_mode: secure_default
+    per_file_type:
+      image/jpeg:
+        mode: sanitize_metadata
+      image/png:
+        mode: sanitize_metadata
+      video/quicktime:
+        mode: sanitize_metadata
+      application/pdf:
+        mode: reject_active_content
+      application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+        mode: reject_active_content
+      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+        mode: reject_active_content
+      application/vnd.openxmlformats-officedocument.presentationml.presentation:
+        mode: reject_active_content
+      image/svg+xml:
+        mode: reject_active_or_external_content
+      application/msword:
+        mode: reject
+      application/vnd.ms-excel:
+        mode: reject
+      application/vnd.ms-powerpoint:
+        mode: reject
+    image_video_metadata:
+      default_mode: sanitize_metadata
+      preserve:
+        - Orientation
+        - ICC Profile
+      no_reencode: true
+    office_pdf:
+      default_mode: reject_active_content
+      full_scan_required: true
+    legacy_office:
+      default_mode: reject
+    svg:
+      default_mode: reject_active_or_external_content
+      prefer_streaming_xml_parser: true
 references:
   - policy:file-intake-security
   - system:clamav
   - requirement:mime-magic-consistency
   - decision:mime-detector-library
   - policy:archive-bomb-protection
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - policy:document-active-content-policy
+  - policy:svg-security-policy
 ```

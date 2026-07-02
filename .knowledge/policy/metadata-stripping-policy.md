@@ -10,9 +10,16 @@ targets:
   image:
     strip:
       - EXIF GPS
+      - capture timestamp
       - camera serial
+      - camera or device information
       - author
       - software
+      - comments
+      - identifying EXIF, XMP, or IPTC tags
+    preserve:
+      - Orientation
+      - ICC Profile
   pdf:
     strip:
       - author
@@ -28,12 +35,16 @@ targets:
     strip:
       - metadata tags
       - GPS
+      - capture timestamp
+      - device identifiers
 behavior:
   - derived assets strip by default
-  - original stripping is configurable and may create sanitized replacement
-  - preserve orientation only when needed for correct rendering
+  - EXIF-capable uploaded images and videos sanitize metadata by default through policy:file-type-sanitization-policy
+  - original stripping is configurable and may create sanitized replacement before final storage commit
+  - preserve Orientation and ICC Profile only when needed for correct rendering
+  - do not re-encode media for metadata sanitize
 references:
   - data:derived-asset
   - policy:preview-generation-policy
+  - policy:file-type-sanitization-policy
 ```
-

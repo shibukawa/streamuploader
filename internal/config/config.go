@@ -51,14 +51,17 @@ type Config struct {
 }
 
 type SecurityPolicy struct {
-	MimeMagic       MimeMagicPolicy      `yaml:"mime_magic"`
-	ArchiveGuard    ArchiveGuardPolicy   `yaml:"archive_guard"`
-	ClamAV          ClamAVPolicy         `yaml:"clamav"`
-	UploadDeadlines UploadDeadlinePolicy `yaml:"upload_deadlines"`
-	SharedKey       SharedKeyPolicy      `yaml:"shared_key"`
-	HTTPCache       HTTPCachePolicy      `yaml:"http_cache"`
-	Logging         LoggingPolicy        `yaml:"logging"`
-	Thumbnails      ThumbnailPolicy      `yaml:"thumbnails"`
+	MimeMagic            MimeMagicPolicy            `yaml:"mime_magic"`
+	ArchiveGuard         ArchiveGuardPolicy         `yaml:"archive_guard"`
+	ClamAV               ClamAVPolicy               `yaml:"clamav"`
+	ResourceLimits       ResourceLimitPolicy        `yaml:"resource_limits"`
+	StructuralValidation StructuralValidationPolicy `yaml:"structural_validation"`
+	FileSanitization     FileSanitizationPolicy     `yaml:"file_sanitization"`
+	UploadDeadlines      UploadDeadlinePolicy       `yaml:"upload_deadlines"`
+	SharedKey            SharedKeyPolicy            `yaml:"shared_key"`
+	HTTPCache            HTTPCachePolicy            `yaml:"http_cache"`
+	Logging              LoggingPolicy              `yaml:"logging"`
+	Thumbnails           ThumbnailPolicy            `yaml:"thumbnails"`
 }
 
 type MimeMagicPolicy struct {
@@ -97,6 +100,62 @@ type ClamAVPolicy struct {
 	Address          string `yaml:"address"`
 	ScanTimeoutMS    int64  `yaml:"scan_timeout_ms"`
 	StreamChunkBytes int64  `yaml:"stream_chunk_bytes"`
+}
+
+type ResourceLimitPolicy struct {
+	Enabled                  bool  `yaml:"enabled"`
+	MaxFileSizeBytes         int64 `yaml:"max_file_size_bytes"`
+	MaxDecompressedSizeBytes int64 `yaml:"max_decompressed_size_bytes"`
+	MaxPDFPageCount          int64 `yaml:"max_pdf_page_count"`
+	MaxImageWidth            int   `yaml:"max_image_width"`
+	MaxImageHeight           int   `yaml:"max_image_height"`
+	MaxImagePixelCount       int64 `yaml:"max_image_pixel_count"`
+	MaxObjectCount           int64 `yaml:"max_object_count"`
+	MaxXMLDepth              int   `yaml:"max_xml_depth"`
+	MaxZIPEntries            int64 `yaml:"max_zip_entries"`
+	MaxEmbeddedObjectCount   int64 `yaml:"max_embedded_object_count"`
+	MaxParserTimeMS          int64 `yaml:"max_parser_time_ms"`
+	MaxSanitizedMemoryBytes  int64 `yaml:"max_sanitized_memory_bytes"`
+}
+
+type StructuralValidationPolicy struct {
+	Enabled bool `yaml:"enabled"`
+	Strict  bool `yaml:"strict"`
+}
+
+type FileSanitizationPolicy struct {
+	Enabled            bool                           `yaml:"enabled"`
+	DefaultMode        string                         `yaml:"default_mode"`
+	PerFileType        map[string]FileTypePolicy      `yaml:"per_file_type"`
+	ImageVideoMetadata ImageVideoMetadataPolicy       `yaml:"image_video_metadata"`
+	OfficePDF          OfficePDFSanitizationPolicy    `yaml:"office_pdf"`
+	LegacyOffice       LegacyOfficeSanitizationPolicy `yaml:"legacy_office"`
+	SVG                SVGSanitizationPolicy          `yaml:"svg"`
+}
+
+type FileTypePolicy struct {
+	Mode string `yaml:"mode"`
+}
+
+type ImageVideoMetadataPolicy struct {
+	DefaultMode string   `yaml:"default_mode"`
+	Preserve    []string `yaml:"preserve"`
+	NoReencode  bool     `yaml:"no_reencode"`
+}
+
+type OfficePDFSanitizationPolicy struct {
+	DefaultMode      string `yaml:"default_mode"`
+	FullScanRequired bool   `yaml:"full_scan_required"`
+}
+
+type LegacyOfficeSanitizationPolicy struct {
+	DefaultMode string `yaml:"default_mode"`
+}
+
+type SVGSanitizationPolicy struct {
+	DefaultMode              string `yaml:"default_mode"`
+	PreferStreamingXMLParser bool   `yaml:"prefer_streaming_xml_parser"`
+	AllowDataURLs            bool   `yaml:"allow_data_urls"`
 }
 
 type UploadDeadlinePolicy struct {
@@ -399,6 +458,47 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			ScanTimeoutMS:    30000,
 			StreamChunkBytes: 128 << 10,
 		},
+		ResourceLimits: ResourceLimitPolicy{
+			Enabled:                  true,
+			MaxFileSizeBytes:         1 << 30,
+			MaxDecompressedSizeBytes: 512 << 20,
+			MaxPDFPageCount:          500,
+			MaxImageWidth:            32768,
+			MaxImageHeight:           32768,
+			MaxImagePixelCount:       268435456,
+			MaxObjectCount:           100000,
+			MaxXMLDepth:              64,
+			MaxZIPEntries:            10000,
+			MaxEmbeddedObjectCount:   0,
+			MaxParserTimeMS:          5000,
+			MaxSanitizedMemoryBytes:  64 << 20,
+		},
+		StructuralValidation: StructuralValidationPolicy{
+			Enabled: true,
+			Strict:  true,
+		},
+		FileSanitization: FileSanitizationPolicy{
+			Enabled:     true,
+			DefaultMode: "secure_default",
+			PerFileType: map[string]FileTypePolicy{},
+			ImageVideoMetadata: ImageVideoMetadataPolicy{
+				DefaultMode: "sanitize_metadata",
+				Preserve:    []string{"Orientation", "ICC Profile"},
+				NoReencode:  true,
+			},
+			OfficePDF: OfficePDFSanitizationPolicy{
+				DefaultMode:      "reject_active_content",
+				FullScanRequired: true,
+			},
+			LegacyOffice: LegacyOfficeSanitizationPolicy{
+				DefaultMode: "reject",
+			},
+			SVG: SVGSanitizationPolicy{
+				DefaultMode:              "reject_active_or_external_content",
+				PreferStreamingXMLParser: true,
+				AllowDataURLs:            false,
+			},
+		},
 		UploadDeadlines: UploadDeadlinePolicy{
 			Enabled:         true,
 			MarkerPrefix:    ".uploading/",
@@ -477,6 +577,9 @@ func normalizeSecurityPolicy(policy *SecurityPolicy) {
 	policy.MimeMagic.ExpandedDenyMIMETypes = expandMIMETypes(policy.MimeMagic.DenyMIMETypes, policy.MimeMagic.DenyFileTypes)
 	normalizeArchiveGuardPolicy(&policy.ArchiveGuard)
 	normalizeClamAVPolicy(&policy.ClamAV)
+	normalizeResourceLimitPolicy(&policy.ResourceLimits)
+	normalizeStructuralValidationPolicy(&policy.StructuralValidation)
+	normalizeFileSanitizationPolicy(&policy.FileSanitization)
 	normalizeExtendedPolicies(policy)
 }
 
@@ -654,6 +757,112 @@ func normalizeClamAVPolicy(policy *ClamAVPolicy) {
 	}
 	if policy.StreamChunkBytes > 1<<20 {
 		policy.StreamChunkBytes = 1 << 20
+	}
+}
+
+func normalizeResourceLimitPolicy(policy *ResourceLimitPolicy) {
+	defaults := DefaultSecurityPolicy().ResourceLimits
+	if policy.MaxFileSizeBytes <= 0 {
+		policy.MaxFileSizeBytes = defaults.MaxFileSizeBytes
+	}
+	if policy.MaxDecompressedSizeBytes <= 0 {
+		policy.MaxDecompressedSizeBytes = defaults.MaxDecompressedSizeBytes
+	}
+	if policy.MaxPDFPageCount <= 0 {
+		policy.MaxPDFPageCount = defaults.MaxPDFPageCount
+	}
+	if policy.MaxImageWidth <= 0 {
+		policy.MaxImageWidth = defaults.MaxImageWidth
+	}
+	if policy.MaxImageHeight <= 0 {
+		policy.MaxImageHeight = defaults.MaxImageHeight
+	}
+	if policy.MaxImagePixelCount <= 0 {
+		policy.MaxImagePixelCount = defaults.MaxImagePixelCount
+	}
+	if policy.MaxObjectCount <= 0 {
+		policy.MaxObjectCount = defaults.MaxObjectCount
+	}
+	if policy.MaxXMLDepth <= 0 {
+		policy.MaxXMLDepth = defaults.MaxXMLDepth
+	}
+	if policy.MaxZIPEntries <= 0 {
+		policy.MaxZIPEntries = defaults.MaxZIPEntries
+	}
+	if policy.MaxParserTimeMS <= 0 {
+		policy.MaxParserTimeMS = defaults.MaxParserTimeMS
+	}
+	if policy.MaxSanitizedMemoryBytes <= 0 {
+		policy.MaxSanitizedMemoryBytes = defaults.MaxSanitizedMemoryBytes
+	}
+}
+
+func normalizeStructuralValidationPolicy(policy *StructuralValidationPolicy) {
+	defaults := DefaultSecurityPolicy().StructuralValidation
+	if !policy.Enabled && !policy.Strict {
+		*policy = defaults
+	}
+}
+
+func normalizeFileSanitizationPolicy(policy *FileSanitizationPolicy) {
+	defaults := DefaultSecurityPolicy().FileSanitization
+	if policy.DefaultMode == "" && policy.ImageVideoMetadata.DefaultMode == "" && policy.OfficePDF.DefaultMode == "" && policy.LegacyOffice.DefaultMode == "" && policy.SVG.DefaultMode == "" && policy.PerFileType == nil {
+		*policy = defaults
+		return
+	}
+	policy.DefaultMode = normalizeSanitizationMode(policy.DefaultMode)
+	if policy.DefaultMode == "" {
+		policy.DefaultMode = defaults.DefaultMode
+	}
+	if policy.PerFileType == nil {
+		policy.PerFileType = map[string]FileTypePolicy{}
+	}
+	normalizedPerType := map[string]FileTypePolicy{}
+	for key, value := range policy.PerFileType {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		mode := normalizeSanitizationMode(value.Mode)
+		if normalizedKey != "" && mode != "" {
+			normalizedPerType[normalizedKey] = FileTypePolicy{Mode: mode}
+		}
+	}
+	policy.PerFileType = normalizedPerType
+	policy.ImageVideoMetadata.DefaultMode = normalizeSanitizationMode(policy.ImageVideoMetadata.DefaultMode)
+	if policy.ImageVideoMetadata.DefaultMode == "" {
+		policy.ImageVideoMetadata.DefaultMode = defaults.ImageVideoMetadata.DefaultMode
+	}
+	if len(policy.ImageVideoMetadata.Preserve) == 0 {
+		policy.ImageVideoMetadata.Preserve = append([]string(nil), defaults.ImageVideoMetadata.Preserve...)
+	}
+	if !policy.ImageVideoMetadata.NoReencode {
+		policy.ImageVideoMetadata.NoReencode = defaults.ImageVideoMetadata.NoReencode
+	}
+	policy.OfficePDF.DefaultMode = normalizeSanitizationMode(policy.OfficePDF.DefaultMode)
+	if policy.OfficePDF.DefaultMode == "" {
+		policy.OfficePDF.DefaultMode = defaults.OfficePDF.DefaultMode
+	}
+	if !policy.OfficePDF.FullScanRequired {
+		policy.OfficePDF.FullScanRequired = defaults.OfficePDF.FullScanRequired
+	}
+	policy.LegacyOffice.DefaultMode = normalizeSanitizationMode(policy.LegacyOffice.DefaultMode)
+	if policy.LegacyOffice.DefaultMode == "" {
+		policy.LegacyOffice.DefaultMode = defaults.LegacyOffice.DefaultMode
+	}
+	policy.SVG.DefaultMode = normalizeSanitizationMode(policy.SVG.DefaultMode)
+	if policy.SVG.DefaultMode == "" {
+		policy.SVG.DefaultMode = defaults.SVG.DefaultMode
+	}
+	if !policy.SVG.PreferStreamingXMLParser {
+		policy.SVG.PreferStreamingXMLParser = defaults.SVG.PreferStreamingXMLParser
+	}
+}
+
+func normalizeSanitizationMode(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "secure_default", "accept_as_is", "sanitize_metadata", "reject_on_sensitive_metadata", "reject_active_content", "reject_active_or_external_content", "reject", "sanitize_when_supported":
+		return value
+	default:
+		return ""
 	}
 }
 
@@ -925,6 +1134,55 @@ func SecurityPolicyJSONSchema() string {
 					"stream_chunk_bytes": map[string]any{"type": "integer", "minimum": 1024, "maximum": 1048576},
 				},
 			},
+			"resource_limits": policyObjectSchema(map[string]any{
+				"enabled":                     map[string]any{"type": "boolean"},
+				"max_file_size_bytes":         map[string]any{"type": "integer", "minimum": 1},
+				"max_decompressed_size_bytes": map[string]any{"type": "integer", "minimum": 1},
+				"max_pdf_page_count":          map[string]any{"type": "integer", "minimum": 1},
+				"max_image_width":             map[string]any{"type": "integer", "minimum": 1},
+				"max_image_height":            map[string]any{"type": "integer", "minimum": 1},
+				"max_image_pixel_count":       map[string]any{"type": "integer", "minimum": 1},
+				"max_object_count":            map[string]any{"type": "integer", "minimum": 1},
+				"max_xml_depth":               map[string]any{"type": "integer", "minimum": 1},
+				"max_zip_entries":             map[string]any{"type": "integer", "minimum": 1},
+				"max_embedded_object_count":   map[string]any{"type": "integer", "minimum": 0},
+				"max_parser_time_ms":          map[string]any{"type": "integer", "minimum": 1},
+				"max_sanitized_memory_bytes":  map[string]any{"type": "integer", "minimum": 1},
+			}),
+			"structural_validation": policyObjectSchema(map[string]any{
+				"enabled": map[string]any{"type": "boolean"},
+				"strict":  map[string]any{"type": "boolean"},
+			}),
+			"file_sanitization": policyObjectSchema(map[string]any{
+				"enabled":      map[string]any{"type": "boolean"},
+				"default_mode": sanitizationModeSchema("secure_default", "accept_as_is"),
+				"per_file_type": map[string]any{
+					"type": "object",
+					"additionalProperties": policyObjectSchema(map[string]any{
+						"mode": sanitizationModeSchema("sanitize_metadata", "reject_on_sensitive_metadata", "reject_active_content", "reject_active_or_external_content", "reject", "sanitize_when_supported", "accept_as_is"),
+					}),
+				},
+				"image_video_metadata": policyObjectSchema(map[string]any{
+					"default_mode": sanitizationModeSchema("sanitize_metadata", "reject_on_sensitive_metadata", "accept_as_is"),
+					"preserve": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string", "enum": []string{"Orientation", "ICC Profile"}},
+					},
+					"no_reencode": map[string]any{"type": "boolean"},
+				}),
+				"office_pdf": policyObjectSchema(map[string]any{
+					"default_mode":       sanitizationModeSchema("reject_active_content", "sanitize_when_supported", "accept_as_is"),
+					"full_scan_required": map[string]any{"type": "boolean"},
+				}),
+				"legacy_office": policyObjectSchema(map[string]any{
+					"default_mode": sanitizationModeSchema("reject", "accept_as_is"),
+				}),
+				"svg": policyObjectSchema(map[string]any{
+					"default_mode":                sanitizationModeSchema("reject_active_or_external_content", "sanitize_when_supported", "accept_as_is"),
+					"prefer_streaming_xml_parser": map[string]any{"type": "boolean"},
+					"allow_data_urls":             map[string]any{"type": "boolean"},
+				}),
+			}),
 			"upload_deadlines": policyObjectSchema(map[string]any{
 				"enabled":          map[string]any{"type": "boolean"},
 				"marker_prefix":    map[string]any{"type": "string"},
@@ -973,6 +1231,10 @@ func SecurityPolicyJSONSchema() string {
 
 func durationSchema() map[string]any {
 	return map[string]any{"type": "string", "pattern": `^$|^[0-9]+(ns|us|µs|ms|s|m|h)$`}
+}
+
+func sanitizationModeSchema(values ...string) map[string]any {
+	return map[string]any{"type": "string", "enum": values}
 }
 
 func policyObjectSchema(properties map[string]any) map[string]any {
