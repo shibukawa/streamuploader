@@ -3,7 +3,7 @@ id: system:linux-tool-worker-image
 type: system
 title: Linux Tool Worker Image
 ---
-Linux tool worker image provides a deterministic external-tool runtime for preview, scan, and variant jobs.
+Linux tool worker image provides a deterministic external-tool runtime for preview, thumbnail, document, OCR, metadata, and variant jobs.
 
 ```yaml
 purpose:
@@ -45,17 +45,14 @@ packages:
     - Apache Tika Server optional
     - Gotenberg optional
     - Unstructured optional
-  virus_scan:
-    - clamav
-    - clamav-daemon optional
   download_variant:
     - zstd
   metadata_strip:
     - libimage-exiftool-perl optional
 clamav:
-  - do not bake stale virus database as final source of truth
-  - refresh database at runtime or mount managed database volume
-  - allow clamd sidecar or in-image clamd deployment
+  - do not install ClamAV in this tool worker image
+  - run ClamAV as a separate clamd container or managed scanner endpoint
+  - connect from API service through system:clamav when enabled
 operations:
   - run non-root
   - pin distro and package versions where reproducibility matters

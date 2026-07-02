@@ -1,357 +1,1007 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "StreamUploader security policy",
-  "type": "object",
   "additionalProperties": false,
   "properties": {
+    "archive_guard": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_encrypted": {
+          "type": "boolean"
+        },
+        "decompress_buffer_bytes": {
+          "maximum": 1048576,
+          "minimum": 4096,
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_compression_ratio": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_depth": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_entries": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_filename_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_inspection_time_ms": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_probe_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_single_entry_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_total_uncompressed_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "worker_memory_bytes": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "clamav": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "scan_timeout_ms": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "stream_chunk_bytes": {
+          "maximum": 1048576,
+          "minimum": 1024,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "http_cache": {
+      "additionalProperties": false,
+      "properties": {
+        "forward_etag": {
+          "type": "boolean"
+        },
+        "forward_last_modified": {
+          "type": "boolean"
+        },
+        "max_age": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "private",
+            "public",
+            "no-store"
+          ],
+          "type": "string"
+        },
+        "s_max_age": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "logging": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "mime_magic": {
-      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_file_types": {
+          "additionalProperties": false,
+          "properties": {
+            "7z": {
+              "type": "boolean"
+            },
+            "archive": {
+              "type": "boolean"
+            },
+            "archives": {
+              "type": "boolean"
+            },
+            "audio": {
+              "type": "boolean"
+            },
+            "avif": {
+              "type": "boolean"
+            },
+            "bmp": {
+              "type": "boolean"
+            },
+            "br": {
+              "type": "boolean"
+            },
+            "brotli": {
+              "type": "boolean"
+            },
+            "bz2": {
+              "type": "boolean"
+            },
+            "bzip2": {
+              "type": "boolean"
+            },
+            "csv": {
+              "type": "boolean"
+            },
+            "dll": {
+              "type": "boolean"
+            },
+            "document": {
+              "type": "boolean"
+            },
+            "documents": {
+              "type": "boolean"
+            },
+            "elf": {
+              "type": "boolean"
+            },
+            "exe": {
+              "type": "boolean"
+            },
+            "executable": {
+              "type": "boolean"
+            },
+            "gif": {
+              "type": "boolean"
+            },
+            "gz": {
+              "type": "boolean"
+            },
+            "gzip": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "boolean"
+            },
+            "images": {
+              "type": "boolean"
+            },
+            "jpeg": {
+              "type": "boolean"
+            },
+            "jpg": {
+              "type": "boolean"
+            },
+            "json": {
+              "type": "boolean"
+            },
+            "pdf": {
+              "type": "boolean"
+            },
+            "plain": {
+              "type": "boolean"
+            },
+            "png": {
+              "type": "boolean"
+            },
+            "svg": {
+              "type": "boolean"
+            },
+            "text": {
+              "type": "boolean"
+            },
+            "tif": {
+              "type": "boolean"
+            },
+            "tiff": {
+              "type": "boolean"
+            },
+            "txt": {
+              "type": "boolean"
+            },
+            "video": {
+              "type": "boolean"
+            },
+            "videos": {
+              "type": "boolean"
+            },
+            "webp": {
+              "type": "boolean"
+            },
+            "xml": {
+              "type": "boolean"
+            },
+            "xz": {
+              "type": "boolean"
+            },
+            "zip": {
+              "type": "boolean"
+            },
+            "zst": {
+              "type": "boolean"
+            },
+            "zstd": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "allow_mime_types": {
+          "additionalProperties": false,
+          "properties": {
+            "application/br": {
+              "type": "boolean"
+            },
+            "application/gzip": {
+              "type": "boolean"
+            },
+            "application/json": {
+              "type": "boolean"
+            },
+            "application/msword": {
+              "type": "boolean"
+            },
+            "application/pdf": {
+              "type": "boolean"
+            },
+            "application/rtf": {
+              "type": "boolean"
+            },
+            "application/vnd.ms-excel": {
+              "type": "boolean"
+            },
+            "application/vnd.ms-powerpoint": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "type": "boolean"
+            },
+            "application/x-7z-compressed": {
+              "type": "boolean"
+            },
+            "application/x-brotli": {
+              "type": "boolean"
+            },
+            "application/x-bzip2": {
+              "type": "boolean"
+            },
+            "application/x-dosexec": {
+              "type": "boolean"
+            },
+            "application/x-executable": {
+              "type": "boolean"
+            },
+            "application/x-gzip": {
+              "type": "boolean"
+            },
+            "application/x-httpd-php": {
+              "type": "boolean"
+            },
+            "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-sharedlib": {
+              "type": "boolean"
+            },
+            "application/x-tar": {
+              "type": "boolean"
+            },
+            "application/x-xz": {
+              "type": "boolean"
+            },
+            "application/x-zstd": {
+              "type": "boolean"
+            },
+            "application/xml": {
+              "type": "boolean"
+            },
+            "application/zip": {
+              "type": "boolean"
+            },
+            "application/zstd": {
+              "type": "boolean"
+            },
+            "audio/aac": {
+              "type": "boolean"
+            },
+            "audio/flac": {
+              "type": "boolean"
+            },
+            "audio/mp4": {
+              "type": "boolean"
+            },
+            "audio/mpeg": {
+              "type": "boolean"
+            },
+            "audio/ogg": {
+              "type": "boolean"
+            },
+            "audio/wav": {
+              "type": "boolean"
+            },
+            "audio/webm": {
+              "type": "boolean"
+            },
+            "image/avif": {
+              "type": "boolean"
+            },
+            "image/bmp": {
+              "type": "boolean"
+            },
+            "image/gif": {
+              "type": "boolean"
+            },
+            "image/jpeg": {
+              "type": "boolean"
+            },
+            "image/pjpeg": {
+              "type": "boolean"
+            },
+            "image/png": {
+              "type": "boolean"
+            },
+            "image/svg+xml": {
+              "type": "boolean"
+            },
+            "image/tiff": {
+              "type": "boolean"
+            },
+            "image/webp": {
+              "type": "boolean"
+            },
+            "text/csv": {
+              "type": "boolean"
+            },
+            "text/javascript": {
+              "type": "boolean"
+            },
+            "text/markdown": {
+              "type": "boolean"
+            },
+            "text/plain": {
+              "type": "boolean"
+            },
+            "text/x-perl": {
+              "type": "boolean"
+            },
+            "text/x-python": {
+              "type": "boolean"
+            },
+            "text/x-ruby": {
+              "type": "boolean"
+            },
+            "text/x-shellscript": {
+              "type": "boolean"
+            },
+            "text/xml": {
+              "type": "boolean"
+            },
+            "video/mp4": {
+              "type": "boolean"
+            },
+            "video/mpeg": {
+              "type": "boolean"
+            },
+            "video/quicktime": {
+              "type": "boolean"
+            },
+            "video/webm": {
+              "type": "boolean"
+            },
+            "video/x-matroska": {
+              "type": "boolean"
+            },
+            "video/x-msvideo": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "allowed_script_extensions": {
+          "additionalProperties": false,
+          "properties": {
+            "bash": {
+              "type": "boolean"
+            },
+            "cjs": {
+              "type": "boolean"
+            },
+            "js": {
+              "type": "boolean"
+            },
+            "ksh": {
+              "type": "boolean"
+            },
+            "mjs": {
+              "type": "boolean"
+            },
+            "php": {
+              "type": "boolean"
+            },
+            "pl": {
+              "type": "boolean"
+            },
+            "py": {
+              "type": "boolean"
+            },
+            "rb": {
+              "type": "boolean"
+            },
+            "sh": {
+              "type": "boolean"
+            },
+            "zsh": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "allowed_script_types": {
+          "additionalProperties": false,
+          "properties": {
+            "node": {
+              "type": "boolean"
+            },
+            "perl": {
+              "type": "boolean"
+            },
+            "php": {
+              "type": "boolean"
+            },
+            "python": {
+              "type": "boolean"
+            },
+            "ruby": {
+              "type": "boolean"
+            },
+            "shell": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "deny_file_types": {
+          "additionalProperties": false,
+          "properties": {
+            "7z": {
+              "type": "boolean"
+            },
+            "archive": {
+              "type": "boolean"
+            },
+            "archives": {
+              "type": "boolean"
+            },
+            "audio": {
+              "type": "boolean"
+            },
+            "avif": {
+              "type": "boolean"
+            },
+            "bmp": {
+              "type": "boolean"
+            },
+            "br": {
+              "type": "boolean"
+            },
+            "brotli": {
+              "type": "boolean"
+            },
+            "bz2": {
+              "type": "boolean"
+            },
+            "bzip2": {
+              "type": "boolean"
+            },
+            "csv": {
+              "type": "boolean"
+            },
+            "dll": {
+              "type": "boolean"
+            },
+            "document": {
+              "type": "boolean"
+            },
+            "documents": {
+              "type": "boolean"
+            },
+            "elf": {
+              "type": "boolean"
+            },
+            "exe": {
+              "type": "boolean"
+            },
+            "executable": {
+              "type": "boolean"
+            },
+            "gif": {
+              "type": "boolean"
+            },
+            "gz": {
+              "type": "boolean"
+            },
+            "gzip": {
+              "type": "boolean"
+            },
+            "image": {
+              "type": "boolean"
+            },
+            "images": {
+              "type": "boolean"
+            },
+            "jpeg": {
+              "type": "boolean"
+            },
+            "jpg": {
+              "type": "boolean"
+            },
+            "json": {
+              "type": "boolean"
+            },
+            "pdf": {
+              "type": "boolean"
+            },
+            "plain": {
+              "type": "boolean"
+            },
+            "png": {
+              "type": "boolean"
+            },
+            "svg": {
+              "type": "boolean"
+            },
+            "text": {
+              "type": "boolean"
+            },
+            "tif": {
+              "type": "boolean"
+            },
+            "tiff": {
+              "type": "boolean"
+            },
+            "txt": {
+              "type": "boolean"
+            },
+            "video": {
+              "type": "boolean"
+            },
+            "videos": {
+              "type": "boolean"
+            },
+            "webp": {
+              "type": "boolean"
+            },
+            "xml": {
+              "type": "boolean"
+            },
+            "xz": {
+              "type": "boolean"
+            },
+            "zip": {
+              "type": "boolean"
+            },
+            "zst": {
+              "type": "boolean"
+            },
+            "zstd": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "deny_mime_types": {
+          "additionalProperties": false,
+          "properties": {
+            "application/br": {
+              "type": "boolean"
+            },
+            "application/gzip": {
+              "type": "boolean"
+            },
+            "application/json": {
+              "type": "boolean"
+            },
+            "application/msword": {
+              "type": "boolean"
+            },
+            "application/pdf": {
+              "type": "boolean"
+            },
+            "application/rtf": {
+              "type": "boolean"
+            },
+            "application/vnd.ms-excel": {
+              "type": "boolean"
+            },
+            "application/vnd.ms-powerpoint": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "type": "boolean"
+            },
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "type": "boolean"
+            },
+            "application/x-7z-compressed": {
+              "type": "boolean"
+            },
+            "application/x-brotli": {
+              "type": "boolean"
+            },
+            "application/x-bzip2": {
+              "type": "boolean"
+            },
+            "application/x-dosexec": {
+              "type": "boolean"
+            },
+            "application/x-executable": {
+              "type": "boolean"
+            },
+            "application/x-gzip": {
+              "type": "boolean"
+            },
+            "application/x-httpd-php": {
+              "type": "boolean"
+            },
+            "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-sharedlib": {
+              "type": "boolean"
+            },
+            "application/x-tar": {
+              "type": "boolean"
+            },
+            "application/x-xz": {
+              "type": "boolean"
+            },
+            "application/x-zstd": {
+              "type": "boolean"
+            },
+            "application/xml": {
+              "type": "boolean"
+            },
+            "application/zip": {
+              "type": "boolean"
+            },
+            "application/zstd": {
+              "type": "boolean"
+            },
+            "audio/aac": {
+              "type": "boolean"
+            },
+            "audio/flac": {
+              "type": "boolean"
+            },
+            "audio/mp4": {
+              "type": "boolean"
+            },
+            "audio/mpeg": {
+              "type": "boolean"
+            },
+            "audio/ogg": {
+              "type": "boolean"
+            },
+            "audio/wav": {
+              "type": "boolean"
+            },
+            "audio/webm": {
+              "type": "boolean"
+            },
+            "image/avif": {
+              "type": "boolean"
+            },
+            "image/bmp": {
+              "type": "boolean"
+            },
+            "image/gif": {
+              "type": "boolean"
+            },
+            "image/jpeg": {
+              "type": "boolean"
+            },
+            "image/pjpeg": {
+              "type": "boolean"
+            },
+            "image/png": {
+              "type": "boolean"
+            },
+            "image/svg+xml": {
+              "type": "boolean"
+            },
+            "image/tiff": {
+              "type": "boolean"
+            },
+            "image/webp": {
+              "type": "boolean"
+            },
+            "text/csv": {
+              "type": "boolean"
+            },
+            "text/javascript": {
+              "type": "boolean"
+            },
+            "text/markdown": {
+              "type": "boolean"
+            },
+            "text/plain": {
+              "type": "boolean"
+            },
+            "text/x-perl": {
+              "type": "boolean"
+            },
+            "text/x-python": {
+              "type": "boolean"
+            },
+            "text/x-ruby": {
+              "type": "boolean"
+            },
+            "text/x-shellscript": {
+              "type": "boolean"
+            },
+            "text/xml": {
+              "type": "boolean"
+            },
+            "video/mp4": {
+              "type": "boolean"
+            },
+            "video/mpeg": {
+              "type": "boolean"
+            },
+            "video/quicktime": {
+              "type": "boolean"
+            },
+            "video/webm": {
+              "type": "boolean"
+            },
+            "video/x-matroska": {
+              "type": "boolean"
+            },
+            "video/x-msvideo": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "equivalent_mime_types": {
+          "items": {
+            "items": {
+              "enum": [
+                "text/plain",
+                "text/csv",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "audio/aac",
+                "application/x-bzip2",
+                "text/x-python",
+                "application/x-msdownload",
+                "application/xml",
+                "audio/webm",
+                "audio/flac",
+                "application/x-httpd-php",
+                "application/x-dosexec",
+                "application/gzip",
+                "application/x-tar",
+                "application/pdf",
+                "text/markdown",
+                "image/gif",
+                "application/x-7z-compressed",
+                "text/x-perl",
+                "application/rtf",
+                "audio/wav",
+                "application/x-executable",
+                "application/msword",
+                "application/vnd.ms-excel",
+                "application/x-zstd",
+                "audio/mp4",
+                "audio/ogg",
+                "text/x-shellscript",
+                "application/x-gzip",
+                "application/json",
+                "image/tiff",
+                "image/png",
+                "application/br",
+                "image/webp",
+                "video/mp4",
+                "application/zip",
+                "text/xml",
+                "video/mpeg",
+                "application/x-brotli",
+                "image/jpeg",
+                "video/x-msvideo",
+                "image/svg+xml",
+                "audio/mpeg",
+                "image/avif",
+                "image/pjpeg",
+                "text/javascript",
+                "text/x-ruby",
+                "application/x-sharedlib",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "application/x-xz",
+                "application/zstd",
+                "video/quicktime",
+                "video/webm",
+                "video/x-matroska",
+                "image/bmp"
+              ],
+              "type": "string"
+            },
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "prefix_bytes": {
+          "maximum": 1048576,
+          "minimum": 512,
+          "type": "integer"
+        },
+        "reject_script_uploads": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "shared_key": {
+      "additionalProperties": false,
+      "properties": {
+        "default_ttl": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "max_ttl": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "thumbnails": {
       "additionalProperties": false,
       "properties": {
         "enabled": {
           "type": "boolean"
         },
-        "prefix_bytes": {
-          "type": "integer",
-          "minimum": 512,
-          "maximum": 1048576
+        "execution_mode": {
+          "enum": [
+            "async",
+            "sequential"
+          ],
+          "type": "string"
         },
-        "reject_script_uploads": {
+        "external_timeout": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "external_webhook_url": {
+          "type": "string"
+        },
+        "fit": {
+          "enum": [
+            "contain",
+            "cover"
+          ],
+          "type": "string"
+        },
+        "height": {
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "lossless_policy": {
+          "enum": [
+            "force_avif_reduction",
+            "webp_lossless"
+          ],
+          "type": "string"
+        },
+        "object_key_suffix": {
+          "type": "string"
+        },
+        "preferred_format": {
+          "enum": [
+            "avif",
+            "webp",
+            "jpeg",
+            "jpg"
+          ],
+          "type": "string"
+        },
+        "upscale": {
           "type": "boolean"
         },
-        "allowed_script_types": {
-          "$ref": "#/$defs/scriptTypeSwitches"
-        },
-        "allowed_script_extensions": {
-          "$ref": "#/$defs/scriptExtensionSwitches"
-        },
-        "allow_file_types": {
-          "$ref": "#/$defs/fileTypeSwitches"
-        },
-        "deny_file_types": {
-          "$ref": "#/$defs/fileTypeSwitches"
-        },
-        "allow_mime_types": {
-          "$ref": "#/$defs/mimeTypeSwitches"
-        },
-        "deny_mime_types": {
-          "$ref": "#/$defs/mimeTypeSwitches"
-        },
-        "equivalent_mime_types": {
-          "type": "array",
-          "items": {
-            "type": "array",
-            "minItems": 2,
-            "items": {
-              "type": "string",
-              "enum": [
-                "application/gzip",
-                "application/json",
-                "application/msword",
-                "application/pdf",
-                "application/rtf",
-                "application/br",
-                "application/vnd.ms-excel",
-                "application/vnd.ms-powerpoint",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/x-brotli",
-                "application/x-7z-compressed",
-                "application/x-bzip2",
-                "application/x-dosexec",
-                "application/x-executable",
-                "application/x-gzip",
-                "application/x-httpd-php",
-                "application/x-msdownload",
-                "application/x-sharedlib",
-                "application/x-tar",
-                "application/x-xz",
-                "application/xml",
-                "application/zstd",
-                "application/x-zstd",
-                "application/zip",
-                "audio/aac",
-                "audio/flac",
-                "audio/mp4",
-                "audio/mpeg",
-                "audio/ogg",
-                "audio/wav",
-                "audio/webm",
-                "image/avif",
-                "image/bmp",
-                "image/gif",
-                "image/jpeg",
-                "image/pjpeg",
-                "image/png",
-                "image/svg+xml",
-                "image/tiff",
-                "image/webp",
-                "text/csv",
-                "text/javascript",
-                "text/markdown",
-                "text/plain",
-                "text/x-perl",
-                "text/x-python",
-                "text/x-ruby",
-                "text/x-shellscript",
-                "text/xml",
-                "video/mp4",
-                "video/mpeg",
-                "video/quicktime",
-                "video/webm",
-                "video/x-matroska",
-                "video/x-msvideo"
-              ]
-            }
-          }
+        "width": {
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
         }
-      }
-    },
-    "archive_guard": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "strict": { "type": "boolean" },
-        "allow_encrypted": { "type": "boolean" },
-        "max_total_uncompressed_bytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_single_entry_bytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_compression_ratio": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        },
-        "max_entries": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_depth": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_filename_bytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_inspection_time_ms": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "max_probe_bytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "worker_memory_bytes": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "decompress_buffer_bytes": {
-          "type": "integer",
-          "minimum": 4096,
-          "maximum": 1048576
-        }
-      }
-    },
-    "clamav": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "address": { "type": "string" },
-        "scan_timeout_ms": { "type": "integer", "minimum": 1 },
-        "stream_chunk_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 }
-      }
+      },
+      "type": "object"
     },
     "upload_deadlines": {
-      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "marker_prefix": { "type": "string" },
-        "start_timeout": { "$ref": "#/$defs/duration" },
-        "finish_timeout": { "$ref": "#/$defs/duration" },
-        "cleanup_enabled": { "type": "boolean" },
-        "cleanup_interval": { "$ref": "#/$defs/duration" },
-        "cleanup_mode": { "type": "string", "enum": ["server_loop", "cleanup_once", "disabled"] }
-      }
-    },
-    "shared_key": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "default_ttl": { "$ref": "#/$defs/duration" },
-        "max_ttl": { "$ref": "#/$defs/duration" }
-      }
-    },
-    "http_cache": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "mode": { "type": "string", "enum": ["private", "public", "no-store"] },
-        "max_age": { "$ref": "#/$defs/duration" },
-        "s_max_age": { "$ref": "#/$defs/duration" },
-        "forward_etag": { "type": "boolean" },
-        "forward_last_modified": { "type": "boolean" }
-      }
-    },
-    "logging": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "format": { "type": "string", "enum": ["text", "json"] },
-        "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
-      }
+        "cleanup_enabled": {
+          "type": "boolean"
+        },
+        "cleanup_interval": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "cleanup_mode": {
+          "enum": [
+            "server_loop",
+            "cleanup_once",
+            "disabled"
+          ],
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "finish_timeout": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "marker_prefix": {
+          "type": "string"
+        },
+        "start_timeout": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
     }
   },
-  "$defs": {
-    "duration": {
-      "type": "string",
-      "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$"
-    },
-    "fileTypeSwitches": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "archive": { "type": "boolean" },
-        "archives": { "type": "boolean" },
-        "audio": { "type": "boolean" },
-        "avif": { "type": "boolean" },
-        "bmp": { "type": "boolean" },
-        "br": { "type": "boolean" },
-        "brotli": { "type": "boolean" },
-        "bz2": { "type": "boolean" },
-        "bzip2": { "type": "boolean" },
-        "csv": { "type": "boolean" },
-        "7z": { "type": "boolean" },
-        "dll": { "type": "boolean" },
-        "document": { "type": "boolean" },
-        "documents": { "type": "boolean" },
-        "elf": { "type": "boolean" },
-        "exe": { "type": "boolean" },
-        "executable": { "type": "boolean" },
-        "gif": { "type": "boolean" },
-        "gz": { "type": "boolean" },
-        "gzip": { "type": "boolean" },
-        "image": { "type": "boolean" },
-        "images": { "type": "boolean" },
-        "jpeg": { "type": "boolean" },
-        "jpg": { "type": "boolean" },
-        "json": { "type": "boolean" },
-        "pdf": { "type": "boolean" },
-        "plain": { "type": "boolean" },
-        "png": { "type": "boolean" },
-        "svg": { "type": "boolean" },
-        "text": { "type": "boolean" },
-        "tif": { "type": "boolean" },
-        "tiff": { "type": "boolean" },
-        "txt": { "type": "boolean" },
-        "video": { "type": "boolean" },
-        "videos": { "type": "boolean" },
-        "webp": { "type": "boolean" },
-        "xml": { "type": "boolean" },
-        "xz": { "type": "boolean" },
-        "zip": { "type": "boolean" },
-        "zst": { "type": "boolean" },
-        "zstd": { "type": "boolean" }
-      }
-    },
-    "mimeTypeSwitches": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "application/gzip": { "type": "boolean" },
-        "application/json": { "type": "boolean" },
-        "application/msword": { "type": "boolean" },
-        "application/pdf": { "type": "boolean" },
-        "application/rtf": { "type": "boolean" },
-        "application/br": { "type": "boolean" },
-        "application/vnd.ms-excel": { "type": "boolean" },
-        "application/vnd.ms-powerpoint": { "type": "boolean" },
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation": { "type": "boolean" },
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { "type": "boolean" },
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": { "type": "boolean" },
-        "application/x-brotli": { "type": "boolean" },
-        "application/x-7z-compressed": { "type": "boolean" },
-        "application/x-bzip2": { "type": "boolean" },
-        "application/x-dosexec": { "type": "boolean" },
-        "application/x-executable": { "type": "boolean" },
-        "application/x-gzip": { "type": "boolean" },
-        "application/x-httpd-php": { "type": "boolean" },
-        "application/x-msdownload": { "type": "boolean" },
-        "application/x-sharedlib": { "type": "boolean" },
-        "application/x-tar": { "type": "boolean" },
-        "application/x-xz": { "type": "boolean" },
-        "application/xml": { "type": "boolean" },
-        "application/zstd": { "type": "boolean" },
-        "application/x-zstd": { "type": "boolean" },
-        "application/zip": { "type": "boolean" },
-        "audio/aac": { "type": "boolean" },
-        "audio/flac": { "type": "boolean" },
-        "audio/mp4": { "type": "boolean" },
-        "audio/mpeg": { "type": "boolean" },
-        "audio/ogg": { "type": "boolean" },
-        "audio/wav": { "type": "boolean" },
-        "audio/webm": { "type": "boolean" },
-        "image/avif": { "type": "boolean" },
-        "image/bmp": { "type": "boolean" },
-        "image/gif": { "type": "boolean" },
-        "image/jpeg": { "type": "boolean" },
-        "image/pjpeg": { "type": "boolean" },
-        "image/png": { "type": "boolean" },
-        "image/svg+xml": { "type": "boolean" },
-        "image/tiff": { "type": "boolean" },
-        "image/webp": { "type": "boolean" },
-        "text/csv": { "type": "boolean" },
-        "text/javascript": { "type": "boolean" },
-        "text/markdown": { "type": "boolean" },
-        "text/plain": { "type": "boolean" },
-        "text/x-perl": { "type": "boolean" },
-        "text/x-python": { "type": "boolean" },
-        "text/x-ruby": { "type": "boolean" },
-        "text/x-shellscript": { "type": "boolean" },
-        "text/xml": { "type": "boolean" },
-        "video/mp4": { "type": "boolean" },
-        "video/mpeg": { "type": "boolean" },
-        "video/quicktime": { "type": "boolean" },
-        "video/webm": { "type": "boolean" },
-        "video/x-matroska": { "type": "boolean" },
-        "video/x-msvideo": { "type": "boolean" }
-      }
-    },
-    "scriptTypeSwitches": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "shell": { "type": "boolean" },
-        "python": { "type": "boolean" },
-        "node": { "type": "boolean" },
-        "ruby": { "type": "boolean" },
-        "perl": { "type": "boolean" },
-        "php": { "type": "boolean" }
-      }
-    },
-    "scriptExtensionSwitches": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "sh": { "type": "boolean" },
-        "bash": { "type": "boolean" },
-        "zsh": { "type": "boolean" },
-        "ksh": { "type": "boolean" },
-        "py": { "type": "boolean" },
-        "js": { "type": "boolean" },
-        "mjs": { "type": "boolean" },
-        "cjs": { "type": "boolean" },
-        "rb": { "type": "boolean" },
-        "pl": { "type": "boolean" },
-        "php": { "type": "boolean" }
-      }
-    }
-  }
+  "title": "StreamUploader security policy",
+  "type": "object"
 }

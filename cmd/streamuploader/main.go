@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -10,9 +14,17 @@ import (
 	"streamuploader/internal/config"
 	"streamuploader/internal/server"
 	"streamuploader/internal/storage"
+	"streamuploader/internal/thumbnail"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "thumbnail-convert" {
+		if err := runThumbnailConvert(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg := config.Load()
 	configureLogging(cfg.Logging)
 	logStartupConfig(cfg)
@@ -48,6 +60,45 @@ func main() {
 		slog.Error("server_failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runThumbnailConvert(args []string) error {
+	fs := flag.NewFlagSet("thumbnail-convert", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	width := fs.Int("width", 400, "thumbnail width")
+	height := fs.Int("height", 400, "thumbnail height")
+	fit := fs.String("fit", "contain", "contain or cover")
+	format := fs.String("format", "avif", "avif, webp, or jpeg")
+	losslessPolicy := fs.String("lossless-policy", "force_avif_reduction", "force_avif_reduction or webp_lossless")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	policy := config.DefaultSecurityPolicy().Thumbnails
+	policy.Enabled = true
+	policy.Width = *width
+	policy.Height = *height
+	policy.Fit = *fit
+	policy.PreferredFormat = *format
+	policy.LosslessPolicy = *losslessPolicy
+	plan := thumbnail.Configure(policy)
+	body, contentType, backend, outW, outH, err := thumbnail.ConvertWithPlan(os.Stdin, policy, plan)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stdout.Write(body); err != nil {
+		return err
+	}
+	_ = json.NewEncoder(os.Stderr).Encode(map[string]any{
+		"content_type": contentType,
+		"backend":      backend,
+		"width":        outW,
+		"height":       outH,
+		"size_bytes":   len(body),
+	})
+	return nil
 }
 
 func configureLogging(policy config.LoggingPolicy) {
@@ -89,6 +140,22 @@ func logStartupConfig(cfg config.Config) {
 		"forward_last_modified", cfg.HTTPCache.ForwardLastMod,
 	)
 	slog.Info("logging_config", "format", cfg.Logging.Format, "level", cfg.Logging.Level)
+	thumbnailPlan := thumbnail.Configure(cfg.Thumbnails)
+	slog.Info("thumbnail_config",
+		"enabled", cfg.Thumbnails.Enabled,
+		"execution_mode", cfg.Thumbnails.ExecutionMode,
+		"width", cfg.Thumbnails.Width,
+		"height", cfg.Thumbnails.Height,
+		"fit", cfg.Thumbnails.Fit,
+		"preferred_format", cfg.Thumbnails.PreferredFormat,
+		"lossless_policy", cfg.Thumbnails.LosslessPolicy,
+		"object_key_suffix", cfg.Thumbnails.ObjectKeySuffix,
+		"external_webhook_enabled", cfg.Thumbnails.ExternalWebhookURL != "",
+		"backend", thumbnailPlan.Summary,
+		"cgo_enabled", thumbnailPlan.CGOEnabled,
+		"ffmpeg_path", thumbnailPlan.FFmpegPath,
+		"sips_path", thumbnailPlan.SipsPath,
+	)
 }
 
 func contains(values []string, needle string) bool {

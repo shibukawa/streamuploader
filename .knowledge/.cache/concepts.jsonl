@@ -19,6 +19,7 @@
 {"category": "structure", "id": "data:security-policy-config", "path": ".knowledge/data/security-policy-config.md", "role": "supporting", "title": "Security Policy Config", "type": "data"}
 {"category": "structure", "id": "data:shared-key-record", "path": ".knowledge/data/shared-key-record.md", "role": "supporting", "title": "Shared Key Record", "type": "data"}
 {"category": "structure", "id": "data:storage-key-allocation", "path": ".knowledge/data/storage-key-allocation.md", "role": "supporting", "title": "Storage Key Allocation", "type": "data"}
+{"category": "structure", "id": "data:thumbnail-generation-config", "path": ".knowledge/data/thumbnail-generation-config.md", "role": "supporting", "title": "Thumbnail Generation Config", "type": "data"}
 {"category": "structure", "id": "data:upload-batch", "path": ".knowledge/data/upload-batch.md", "role": "supporting", "title": "Upload Batch", "type": "data"}
 {"category": "structure", "id": "data:upload-deadline-config", "path": ".knowledge/data/upload-deadline-config.md", "role": "supporting", "title": "Upload Deadline Config", "type": "data"}
 {"category": "structure", "id": "data:upload-record", "path": ".knowledge/data/upload-record.md", "role": "supporting", "title": "Upload Record", "type": "data"}
@@ -87,4 +88,5 @@
 {"category": "external", "id": "system:server-deployment-modes", "path": ".knowledge/system/server-deployment-modes.md", "role": "supporting", "title": "Server Deployment Modes", "type": "system"}
 {"category": "external", "id": "system:svg-renderer", "path": ".knowledge/system/svg-renderer.md", "role": "supporting", "title": "SVG Renderer", "type": "system"}
 {"category": "external", "id": "system:text-extractor", "path": ".knowledge/system/text-extractor.md", "role": "supporting", "title": "Text Extractor", "type": "system"}
+{"category": "external", "id": "system:thumbnail-converter", "path": ".knowledge/system/thumbnail-converter.md", "role": "supporting", "title": "Thumbnail Converter", "type": "system"}
 {"category": "objective", "id": "vision:stream-upload-wrapper", "path": ".knowledge/vision/stream-upload-wrapper.md", "role": "primary", "title": "Stream Upload Wrapper", "type": "vision"}

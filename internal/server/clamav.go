@@ -16,22 +16,31 @@ import (
 	"streamuploader/internal/storage"
 )
 
-func (s *Server) putObjectWithSecurityScan(ctx context.Context, input storage.PutInput, measured *progressReader) (storage.PutResult, error) {
-	if !s.cfg.Security.ClamAV.Enabled {
+func (s *Server) putObjectWithSecurityScan(ctx context.Context, input storage.PutInput, measured *progressReader, sideWriters ...*io.PipeWriter) (storage.PutResult, error) {
+	if !s.cfg.Security.ClamAV.Enabled && len(sideWriters) == 0 {
 		input.Body = measured
 		return s.store.PutObject(ctx, input)
 	}
 
 	s3Reader, s3Writer := io.Pipe()
-	avReader, avWriter := io.Pipe()
-	writers := io.MultiWriter(s3Writer, avWriter)
+	writers := make([]io.Writer, 0, 2+len(sideWriters))
+	writers = append(writers, s3Writer)
+	var avReader *io.PipeReader
+	var avWriter *io.PipeWriter
+	if s.cfg.Security.ClamAV.Enabled {
+		avReader, avWriter = io.Pipe()
+		writers = append(writers, avWriter)
+	}
+	for _, writer := range sideWriters {
+		writers = append(writers, writer)
+	}
 
 	var wg sync.WaitGroup
 	var putResult storage.PutResult
 	var putErr error
 	var scanErr error
 
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		putInput := input
@@ -39,19 +48,32 @@ func (s *Server) putObjectWithSecurityScan(ctx context.Context, input storage.Pu
 		putResult, putErr = s.store.PutObject(ctx, putInput)
 		_ = s3Reader.Close()
 	}()
-	go func() {
-		defer wg.Done()
-		scanErr = scanReaderWithClamAV(ctx, avReader, s.cfg.Security.ClamAV)
-		_ = avReader.Close()
-	}()
+	if s.cfg.Security.ClamAV.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			scanErr = scanReaderWithClamAV(ctx, avReader, s.cfg.Security.ClamAV)
+			_ = avReader.Close()
+		}()
+	}
 
-	_, copyErr := io.CopyBuffer(writers, measured, make([]byte, 32<<10))
+	_, copyErr := io.CopyBuffer(io.MultiWriter(writers...), measured, make([]byte, 32<<10))
 	if copyErr != nil {
 		_ = s3Writer.CloseWithError(copyErr)
-		_ = avWriter.CloseWithError(copyErr)
+		if avWriter != nil {
+			_ = avWriter.CloseWithError(copyErr)
+		}
+		for _, writer := range sideWriters {
+			_ = writer.CloseWithError(copyErr)
+		}
 	} else {
 		_ = s3Writer.Close()
-		_ = avWriter.Close()
+		if avWriter != nil {
+			_ = avWriter.Close()
+		}
+		for _, writer := range sideWriters {
+			_ = writer.Close()
+		}
 	}
 	wg.Wait()
 

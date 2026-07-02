@@ -17,10 +17,11 @@ policy:
   defaults:
     mode: optional
     generate: false
+    image_thumbnail_enabled: data:thumbnail-generation-config enabled default false
   data_type_rules:
     image:
-      generate: true
-      mode: optional unless application requires preview before metadata submit
+      generate: data:thumbnail-generation-config enabled
+      mode: sequential or async from data:thumbnail-generation-config execution_mode
       flow: flow:image-thumbnail-generation
       outputs:
         - image_thumbnail
@@ -55,6 +56,11 @@ policy:
     optional:
       - upload acceptance can proceed after original file acceptance
       - derived assets appear later in status
+    async_thumbnail:
+      - wait endpoint completes on original upload readiness
+      - thumbnail asset may still be pending
+    sequential_thumbnail:
+      - wait endpoint completes only after thumbnail terminal state
     required_before_metadata_submit:
       - upload batch readiness requires generated assets
       - frontend metadata payload includes generated asset keys
@@ -63,6 +69,7 @@ policy:
       - application later records derived asset keys when supported
 references:
   - data:derived-asset
+  - data:thumbnail-generation-config
   - policy:preview-format-policy
   - flow:image-thumbnail-generation
   - flow:svg-preview-generation

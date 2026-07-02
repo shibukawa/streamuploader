@@ -69,3 +69,15 @@ http_cache:
 logging:
   format: text
   level: info
+thumbnails:
+  enabled: true
+  execution_mode: async
+  width: 400
+  height: 400
+  fit: contain
+  upscale: false
+  lossless_policy: force_avif_reduction
+  preferred_format: avif
+  object_key_suffix: /thumbnail
+  external_webhook_url: ""
+  external_timeout: 30s

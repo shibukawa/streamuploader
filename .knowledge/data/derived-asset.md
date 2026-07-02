@@ -22,6 +22,8 @@ fields:
       - extracted_metadata
       - ocr_text
   object_key: S3 object key for generated asset
+  object_key_convention:
+    image_thumbnail_default: source object key plus /thumbnail
   content_type: generated media type
   content_encoding: optional HTTP content encoding such as zstd
   replaces_original: boolean optional
@@ -42,6 +44,7 @@ fields:
 references:
   - data:file-item
   - flow:image-thumbnail-generation
+  - data:thumbnail-generation-config
   - flow:svg-preview-generation
   - flow:document-preview-generation
   - flow:video-preview-generation

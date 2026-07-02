@@ -47,6 +47,7 @@ type Config struct {
 	UploadDeadlines         UploadDeadlinePolicy
 	HTTPCache               HTTPCachePolicy
 	Logging                 LoggingPolicy
+	Thumbnails              ThumbnailPolicy
 }
 
 type SecurityPolicy struct {
@@ -57,6 +58,7 @@ type SecurityPolicy struct {
 	SharedKey       SharedKeyPolicy      `yaml:"shared_key"`
 	HTTPCache       HTTPCachePolicy      `yaml:"http_cache"`
 	Logging         LoggingPolicy        `yaml:"logging"`
+	Thumbnails      ThumbnailPolicy      `yaml:"thumbnails"`
 }
 
 type MimeMagicPolicy struct {
@@ -212,6 +214,58 @@ type LoggingPolicy struct {
 	Level  string `yaml:"level"`
 }
 
+type ThumbnailPolicy struct {
+	Enabled            bool          `yaml:"enabled"`
+	ExecutionMode      string        `yaml:"execution_mode"`
+	Width              int           `yaml:"width"`
+	Height             int           `yaml:"height"`
+	Fit                string        `yaml:"fit"`
+	Upscale            bool          `yaml:"upscale"`
+	LosslessPolicy     string        `yaml:"lossless_policy"`
+	PreferredFormat    string        `yaml:"preferred_format"`
+	ObjectKeySuffix    string        `yaml:"object_key_suffix"`
+	ExternalWebhookURL string        `yaml:"external_webhook_url"`
+	ExternalTimeout    time.Duration `yaml:"external_timeout"`
+}
+
+func (p *ThumbnailPolicy) UnmarshalYAML(value *yaml.Node) error {
+	type rawPolicy struct {
+		Enabled            bool   `yaml:"enabled"`
+		ExecutionMode      string `yaml:"execution_mode"`
+		Width              int    `yaml:"width"`
+		Height             int    `yaml:"height"`
+		Fit                string `yaml:"fit"`
+		Upscale            bool   `yaml:"upscale"`
+		LosslessPolicy     string `yaml:"lossless_policy"`
+		PreferredFormat    string `yaml:"preferred_format"`
+		ObjectKeySuffix    string `yaml:"object_key_suffix"`
+		ExternalWebhookURL string `yaml:"external_webhook_url"`
+		ExternalTimeout    string `yaml:"external_timeout"`
+	}
+	var raw rawPolicy
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	timeout, err := parseOptionalDuration(raw.ExternalTimeout)
+	if err != nil {
+		return err
+	}
+	*p = ThumbnailPolicy{
+		Enabled:            raw.Enabled,
+		ExecutionMode:      raw.ExecutionMode,
+		Width:              raw.Width,
+		Height:             raw.Height,
+		Fit:                raw.Fit,
+		Upscale:            raw.Upscale,
+		LosslessPolicy:     raw.LosslessPolicy,
+		PreferredFormat:    raw.PreferredFormat,
+		ObjectKeySuffix:    raw.ObjectKeySuffix,
+		ExternalWebhookURL: raw.ExternalWebhookURL,
+		ExternalTimeout:    timeout,
+	}
+	return nil
+}
+
 func parseOptionalDuration(value string) (time.Duration, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -249,6 +303,17 @@ func Load() Config {
 	security.HTTPCache.MaxAge = envDurationSeconds("HTTP_CACHE_MAX_AGE_SECONDS", security.HTTPCache.MaxAge)
 	security.Logging.Format = env("LOG_FORMAT", env("SLOG_FORMAT", security.Logging.Format))
 	security.Logging.Level = env("LOG_LEVEL", security.Logging.Level)
+	security.Thumbnails.Enabled = envBool("THUMBNAILS_ENABLED", security.Thumbnails.Enabled)
+	security.Thumbnails.ExecutionMode = env("THUMBNAILS_EXECUTION_MODE", security.Thumbnails.ExecutionMode)
+	security.Thumbnails.Width = envInt("THUMBNAILS_WIDTH", security.Thumbnails.Width)
+	security.Thumbnails.Height = envInt("THUMBNAILS_HEIGHT", security.Thumbnails.Height)
+	security.Thumbnails.Fit = env("THUMBNAILS_FIT", security.Thumbnails.Fit)
+	security.Thumbnails.Upscale = envBool("THUMBNAILS_UPSCALE", security.Thumbnails.Upscale)
+	security.Thumbnails.LosslessPolicy = env("THUMBNAILS_LOSSLESS_POLICY", security.Thumbnails.LosslessPolicy)
+	security.Thumbnails.PreferredFormat = env("THUMBNAILS_PREFERRED_FORMAT", security.Thumbnails.PreferredFormat)
+	security.Thumbnails.ObjectKeySuffix = env("THUMBNAILS_OBJECT_KEY_SUFFIX", security.Thumbnails.ObjectKeySuffix)
+	security.Thumbnails.ExternalWebhookURL = env("THUMBNAIL_WEBHOOK_URL", env("THUMBNAILS_EXTERNAL_WEBHOOK_URL", security.Thumbnails.ExternalWebhookURL))
+	security.Thumbnails.ExternalTimeout = envDuration("THUMBNAILS_EXTERNAL_TIMEOUT", security.Thumbnails.ExternalTimeout)
 	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
@@ -286,6 +351,7 @@ func Load() Config {
 		UploadDeadlines:         security.UploadDeadlines,
 		HTTPCache:               security.HTTPCache,
 		Logging:                 security.Logging,
+		Thumbnails:              security.Thumbnails,
 	}
 }
 
@@ -352,6 +418,18 @@ func DefaultSecurityPolicy() SecurityPolicy {
 		Logging: LoggingPolicy{
 			Format: "text",
 			Level:  "info",
+		},
+		Thumbnails: ThumbnailPolicy{
+			Enabled:         false,
+			ExecutionMode:   "async",
+			Width:           400,
+			Height:          400,
+			Fit:             "contain",
+			Upscale:         false,
+			LosslessPolicy:  "force_avif_reduction",
+			PreferredFormat: "avif",
+			ObjectKeySuffix: "/thumbnail",
+			ExternalTimeout: 30 * time.Second,
 		},
 	}
 }
@@ -454,6 +532,69 @@ func normalizeExtendedPolicies(policy *SecurityPolicy) {
 	policy.Logging.Level = strings.ToLower(strings.TrimSpace(policy.Logging.Level))
 	if policy.Logging.Level == "" {
 		policy.Logging.Level = defaults.Logging.Level
+	}
+	normalizeThumbnailPolicy(&policy.Thumbnails)
+}
+
+func normalizeThumbnailPolicy(policy *ThumbnailPolicy) {
+	defaults := DefaultSecurityPolicy().Thumbnails
+	policy.ExecutionMode = strings.ToLower(strings.TrimSpace(policy.ExecutionMode))
+	if policy.ExecutionMode == "" {
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	switch policy.ExecutionMode {
+	case "async", "sequential":
+	default:
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	if policy.Width <= 0 {
+		policy.Width = defaults.Width
+	}
+	if policy.Height <= 0 {
+		policy.Height = defaults.Height
+	}
+	if policy.Width > 4096 {
+		policy.Width = 4096
+	}
+	if policy.Height > 4096 {
+		policy.Height = 4096
+	}
+	policy.Fit = strings.ToLower(strings.TrimSpace(policy.Fit))
+	if policy.Fit == "" {
+		policy.Fit = defaults.Fit
+	}
+	switch policy.Fit {
+	case "contain", "cover":
+	default:
+		policy.Fit = defaults.Fit
+	}
+	policy.LosslessPolicy = strings.ToLower(strings.TrimSpace(policy.LosslessPolicy))
+	if policy.LosslessPolicy == "" {
+		policy.LosslessPolicy = defaults.LosslessPolicy
+	}
+	switch policy.LosslessPolicy {
+	case "force_avif_reduction", "webp_lossless":
+	default:
+		policy.LosslessPolicy = defaults.LosslessPolicy
+	}
+	policy.PreferredFormat = strings.ToLower(strings.TrimSpace(policy.PreferredFormat))
+	if policy.PreferredFormat == "" {
+		policy.PreferredFormat = defaults.PreferredFormat
+	}
+	switch policy.PreferredFormat {
+	case "avif", "webp", "jpeg", "jpg":
+	default:
+		policy.PreferredFormat = defaults.PreferredFormat
+	}
+	policy.ObjectKeySuffix = strings.TrimSpace(policy.ObjectKeySuffix)
+	if policy.ObjectKeySuffix == "" {
+		policy.ObjectKeySuffix = defaults.ObjectKeySuffix
+	}
+	if !strings.HasPrefix(policy.ObjectKeySuffix, "/") {
+		policy.ObjectKeySuffix = "/" + policy.ObjectKeySuffix
+	}
+	if policy.ExternalTimeout <= 0 {
+		policy.ExternalTimeout = defaults.ExternalTimeout
 	}
 }
 
@@ -807,6 +948,19 @@ func SecurityPolicyJSONSchema() string {
 			"logging": policyObjectSchema(map[string]any{
 				"format": map[string]any{"type": "string", "enum": []string{"text", "json"}},
 				"level":  map[string]any{"type": "string", "enum": []string{"debug", "info", "warn", "error"}},
+			}),
+			"thumbnails": policyObjectSchema(map[string]any{
+				"enabled":              map[string]any{"type": "boolean"},
+				"execution_mode":       map[string]any{"type": "string", "enum": []string{"async", "sequential"}},
+				"width":                map[string]any{"type": "integer", "minimum": 1, "maximum": 4096},
+				"height":               map[string]any{"type": "integer", "minimum": 1, "maximum": 4096},
+				"fit":                  map[string]any{"type": "string", "enum": []string{"contain", "cover"}},
+				"upscale":              map[string]any{"type": "boolean"},
+				"lossless_policy":      map[string]any{"type": "string", "enum": []string{"force_avif_reduction", "webp_lossless"}},
+				"preferred_format":     map[string]any{"type": "string", "enum": []string{"avif", "webp", "jpeg", "jpg"}},
+				"object_key_suffix":    map[string]any{"type": "string"},
+				"external_webhook_url": map[string]any{"type": "string"},
+				"external_timeout":     durationSchema(),
 			}),
 		},
 	}

@@ -8,6 +8,7 @@
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "policy:placeholder-serving-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/derived-asset-serving-api.md", "source": "api:derived-asset-serving-api", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
@@ -16,6 +17,7 @@
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:shared-key-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:derived-asset-serving-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:shared-key-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/health-api.md", "source": "api:health-api", "target": "system:backend-control-listener", "target_category": "external", "target_type": "system"}
@@ -39,6 +41,7 @@
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "system:application-server", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "data:upload-batch", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "data:storage-key-allocation", "target_category": "structure", "target_type": "data"}
@@ -88,6 +91,7 @@
 {"context": "body", "path": ".knowledge/concept/upload-experience-improvements.md", "source": "concept:upload-experience-improvements", "target": "flow:hls-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "flow:image-thumbnail-generation", "target_category": "behavior", "target_type": "flow"}
+{"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "flow:svg-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "flow:document-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "flow:video-preview-generation", "target_category": "behavior", "target_type": "flow"}
@@ -147,6 +151,12 @@
 {"context": "body", "path": ".knowledge/data/shared-key-record.md", "source": "data:shared-key-record", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/data/storage-key-allocation.md", "source": "data:storage-key-allocation", "target": "policy:storage-key-allocation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/storage-key-allocation.md", "source": "data:storage-key-allocation", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "flow:image-thumbnail-generation", "target_category": "behavior", "target_type": "flow"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "policy:preview-format-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "policy:tool-backend-selection-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "system:thumbnail-converter", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/data/thumbnail-generation-config.md", "source": "data:thumbnail-generation-config", "target": "policy:external-delegation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/data/upload-batch.md", "source": "data:upload-batch", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
@@ -211,11 +221,14 @@
 {"context": "body", "path": ".knowledge/flow/hls-generation.md", "source": "flow:hls-generation", "target": "policy:worker-queue-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/hls-generation.md", "source": "flow:hls-generation", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "policy:preview-generation-policy", "target_category": "constraint", "target_type": "policy"}
-{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
-{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "policy:preview-format-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "system:thumbnail-converter", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "policy:preview-format-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "data:metadata-payload", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "api:derived-asset-serving-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "flow:document-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "system:local-command-processor", "target_category": "external", "target_type": "system"}
@@ -344,10 +357,12 @@
 {"context": "body", "path": ".knowledge/policy/object-access-policy.md", "source": "policy:object-access-policy", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/placeholder-serving-policy.md", "source": "policy:placeholder-serving-policy", "target": "api:derived-asset-serving-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/placeholder-serving-policy.md", "source": "policy:placeholder-serving-policy", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/preview-format-policy.md", "source": "policy:preview-format-policy", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/preview-format-policy.md", "source": "policy:preview-format-policy", "target": "flow:image-thumbnail-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/preview-format-policy.md", "source": "policy:preview-format-policy", "target": "flow:svg-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/preview-format-policy.md", "source": "policy:preview-format-policy", "target": "flow:video-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/preview-generation-policy.md", "source": "policy:preview-generation-policy", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/policy/preview-generation-policy.md", "source": "policy:preview-generation-policy", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/preview-generation-policy.md", "source": "policy:preview-generation-policy", "target": "flow:image-thumbnail-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/preview-generation-policy.md", "source": "policy:preview-generation-policy", "target": "flow:svg-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/preview-generation-policy.md", "source": "policy:preview-generation-policy", "target": "flow:document-preview-generation", "target_category": "behavior", "target_type": "flow"}
@@ -388,6 +403,7 @@
 {"context": "body", "path": ".knowledge/policy/storage-key-allocation-policy.md", "source": "policy:storage-key-allocation-policy", "target": "data:storage-key-allocation", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/storage-key-allocation-policy.md", "source": "policy:storage-key-allocation-policy", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/storage-key-allocation-policy.md", "source": "policy:storage-key-allocation-policy", "target": "decision:upload-transport-boundary", "target_category": "constraint", "target_type": "decision"}
+{"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "system:thumbnail-converter", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "system:external-tool-registry", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "system:linux-tool-worker-image", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/tool-backend-selection-policy.md", "source": "policy:tool-backend-selection-policy", "target": "system:text-extractor", "target_category": "external", "target_type": "system"}
@@ -494,6 +510,7 @@
 {"context": "body", "path": ".knowledge/system/external-tool-registry.md", "source": "system:external-tool-registry", "target": "system:linux-tool-worker-image", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/external-tool-registry.md", "source": "system:external-tool-registry", "target": "system:text-extractor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/external-tool-registry.md", "source": "system:external-tool-registry", "target": "system:ocr-engine", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/system/linux-tool-worker-image.md", "source": "system:linux-tool-worker-image", "target": "system:clamav", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/linux-tool-worker-image.md", "source": "system:linux-tool-worker-image", "target": "system:external-tool-registry", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/linux-tool-worker-image.md", "source": "system:linux-tool-worker-image", "target": "system:text-extractor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/linux-tool-worker-image.md", "source": "system:linux-tool-worker-image", "target": "system:ocr-engine", "target_category": "external", "target_type": "system"}
@@ -545,6 +562,14 @@
 {"context": "body", "path": ".knowledge/system/text-extractor.md", "source": "system:text-extractor", "target": "system:external-processing-delegates", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/system/text-extractor.md", "source": "system:text-extractor", "target": "policy:external-delegation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/system/text-extractor.md", "source": "system:text-extractor", "target": "policy:tool-backend-selection-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "system:linux-tool-worker-image", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "data:processor-result", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "system:external-tool-registry", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "policy:tool-backend-selection-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/system/thumbnail-converter.md", "source": "system:thumbnail-converter", "target": "policy:external-delegation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/vision/stream-upload-wrapper.md", "source": "vision:stream-upload-wrapper", "target": "system:application-server", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/vision/stream-upload-wrapper.md", "source": "vision:stream-upload-wrapper", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/vision/stream-upload-wrapper.md", "source": "vision:stream-upload-wrapper", "target": "requirement:streaming-upload", "target_category": "objective", "target_type": "requirement"}

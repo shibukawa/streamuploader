@@ -31,6 +31,7 @@ import (
 	"streamuploader/internal/config"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
+	"streamuploader/internal/thumbnail"
 )
 
 var safeSegmentPattern = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -87,6 +88,7 @@ func New(cfg config.Config, store storage.Store) *Server {
 	if cfg.HTTPCache.Mode == "" {
 		cfg.HTTPCache = config.DefaultSecurityPolicy().HTTPCache
 	}
+	thumbnail.Configure(cfg.Thumbnails)
 	var proxy *httputil.ReverseProxy
 	if cfg.ApplicationServerURL != "" {
 		if target, err := url.Parse(cfg.ApplicationServerURL); err == nil {
@@ -433,6 +435,17 @@ func (s *Server) handleFileAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.streamObject(w, r, key, name, contentType, attachment)
+	case strings.HasPrefix(escaped, prefix) && strings.HasSuffix(escaped, "/thumbnail") && r.Method == http.MethodGet:
+		if !s.cfg.Thumbnails.Enabled {
+			writeError(w, http.StatusNotFound, "not_found", "thumbnail generation is disabled")
+			return
+		}
+		key, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(escaped, prefix), "/thumbnail"))
+		if err != nil || strings.TrimSpace(key) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+			return
+		}
+		s.streamObject(w, r, key+s.cfg.Thumbnails.ObjectKeySuffix, path.Base(key), "", false)
 	case strings.HasPrefix(escaped, prefix) && (strings.HasSuffix(escaped, "/content") || strings.HasSuffix(escaped, "/download")) && r.Method == http.MethodGet:
 		attachment := strings.HasSuffix(escaped, "/download")
 		suffix := "/content"
@@ -651,11 +664,19 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			})
 		},
 	}
+	var thumbnailJob *thumbnailUploadJob
+	if s.thumbnailEligible(contentType) {
+		thumbnailJob = s.startThumbnailUpload(target.objectKey)
+	}
+	var sideWriters []*io.PipeWriter
+	if thumbnailJob != nil {
+		sideWriters = append(sideWriters, thumbnailJob.writer)
+	}
 	result, err := s.putObjectWithSecurityScan(uploadCtx, storage.PutInput{
 		Bucket:      s.cfg.Bucket,
 		Key:         objectKey,
 		ContentType: contentType,
-	}, measured)
+	}, measured, sideWriters...)
 	if err != nil {
 		if securityStagedUpload {
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
@@ -721,8 +742,23 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		item.ChecksumSHA256 = hex.EncodeToString(measured.hash.Sum(nil))
 		item.UploadedAt = &now
 		item.UpdatedAt = now
+		if s.thumbnailEligible(contentType) {
+			item.Thumbnail = &model.DerivedAsset{
+				Kind:      "image_thumbnail",
+				ObjectKey: item.ObjectKey + s.cfg.Thumbnails.ObjectKeySuffix,
+				URL:       s.thumbnailURL(item.ObjectKey),
+				Status:    "pending",
+			}
+		}
 		uploaded = cloneUpload(item)
 	})
+	if s.thumbnailEligible(contentType) {
+		if s.cfg.Thumbnails.ExecutionMode == "sequential" {
+			uploaded = s.finishThumbnailUpload(uploadKey, thumbnailJob, uploadCtx)
+		} else {
+			go s.finishThumbnailUpload(uploadKey, thumbnailJob, context.Background())
+		}
+	}
 	w.Header().Set("ETag", result.ETag)
 	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadUploaded, Item: uploaded})
 	writeJSON(w, http.StatusOK, uploaded)
@@ -1266,9 +1302,111 @@ func (s *Server) uploadsForKeys(keys []string) ([]*model.UploadItem, bool) {
 		if !terminal(item.Status) {
 			ready = false
 		}
+		if s.cfg.Thumbnails.Enabled && s.cfg.Thumbnails.ExecutionMode == "sequential" && item.Thumbnail != nil && item.Thumbnail.Status == "pending" {
+			ready = false
+		}
 		items = append(items, item)
 	}
 	return items, ready
+}
+
+func (s *Server) thumbnailEligible(contentType string) bool {
+	if !s.cfg.Thumbnails.Enabled {
+		return false
+	}
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch contentType {
+	case "image/jpeg", "image/pjpeg", "image/png", "image/gif", "image/webp", "image/avif":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) thumbnailURL(objectKey string) string {
+	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + s.fileBase + "/" + url.PathEscape(objectKey) + "/thumbnail"
+}
+
+type thumbnailUploadJob struct {
+	writer *io.PipeWriter
+	done   chan thumbnailUploadResult
+}
+
+type thumbnailUploadResult struct {
+	conversion thumbnail.Conversion
+	err        error
+}
+
+func (s *Server) startThumbnailUpload(sourceKey string) *thumbnailUploadJob {
+	reader, writer := io.Pipe()
+	job := &thumbnailUploadJob{
+		writer: writer,
+		done:   make(chan thumbnailUploadResult, 1),
+	}
+	go func() {
+		conversion, err := thumbnail.ConvertFromReader(context.Background(), reader, sourceKey, s.cfg.Thumbnails)
+		_, _ = io.Copy(io.Discard, reader)
+		_ = reader.Close()
+		job.done <- thumbnailUploadResult{conversion: conversion, err: err}
+	}()
+	return job
+}
+
+func (s *Server) finishThumbnailUpload(uploadKey string, job *thumbnailUploadJob, ctx context.Context) *model.UploadItem {
+	if job == nil {
+		return s.generateThumbnailForUpload(uploadKey)
+	}
+	result := <-job.done
+	if result.err == nil {
+		result.err = thumbnail.StoreConversion(ctx, s.store, s.cfg.Bucket, result.conversion)
+	}
+	return s.updateThumbnailForUpload(uploadKey, result.conversion.Result, result.err)
+}
+
+func (s *Server) generateThumbnailForUpload(uploadKey string) *model.UploadItem {
+	item, ok := s.upload(uploadKey)
+	if !ok || item.Thumbnail == nil {
+		return item
+	}
+	result, err := thumbnail.Generate(context.Background(), s.store, s.cfg.Bucket, item.ObjectKey, s.cfg.Thumbnails)
+	return s.updateThumbnailForUpload(uploadKey, result, err)
+}
+
+func (s *Server) updateThumbnailForUpload(uploadKey string, result thumbnail.Result, err error) *model.UploadItem {
+	item, ok := s.upload(uploadKey)
+	if !ok {
+		return nil
+	}
+	var updated *model.UploadItem
+	s.updateUpload(uploadKey, func(current *model.UploadItem) {
+		if current.Thumbnail == nil {
+			current.Thumbnail = &model.DerivedAsset{Kind: "image_thumbnail", ObjectKey: current.ObjectKey + s.cfg.Thumbnails.ObjectKeySuffix, URL: s.thumbnailURL(current.ObjectKey)}
+		}
+		current.UpdatedAt = time.Now().UTC()
+		if err != nil {
+			current.Thumbnail.Status = "failed"
+			current.Thumbnail.Error = err.Error()
+			updated = cloneUpload(current)
+			return
+		}
+		current.Thumbnail.Status = "generated"
+		current.Thumbnail.ObjectKey = result.ObjectKey
+		current.Thumbnail.URL = s.thumbnailURL(current.ObjectKey)
+		current.Thumbnail.ContentType = result.ContentType
+		current.Thumbnail.Width = result.Width
+		current.Thumbnail.Height = result.Height
+		current.Thumbnail.SizeBytes = result.SizeBytes
+		updated = cloneUpload(current)
+	})
+	if err != nil {
+		slog.Warn("thumbnail_generation_failed", "upload_key", uploadKey, "object_key", item.ObjectKey, "error", err)
+	} else {
+		slog.Info("thumbnail_generated", "upload_key", uploadKey, "object_key", result.ObjectKey, "content_type", result.ContentType, "backend", result.Backend)
+	}
+	if updated != nil {
+		s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: updated.Status, Item: updated})
+	}
+	return updated
 }
 
 func (s *Server) broadcastSnapshot(item *model.UploadItem) {
@@ -1810,6 +1948,10 @@ func cloneUpload(item *model.UploadItem) *model.UploadItem {
 	if item.UploadedAt != nil {
 		uploadedAt := *item.UploadedAt
 		copyItem.UploadedAt = &uploadedAt
+	}
+	if item.Thumbnail != nil {
+		thumbnailCopy := *item.Thumbnail
+		copyItem.Thumbnail = &thumbnailCopy
 	}
 	return &copyItem
 }

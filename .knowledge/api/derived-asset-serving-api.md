@@ -28,12 +28,16 @@ endpoints:
       - exposes data:derived-asset status
   thumbnail:
     method: GET
-    path: /api/file/{key}/thumbnail/{preset}
+    path: /api/file/{key}/thumbnail
+    alternate_path: /api/file/{key}/thumbnail/{preset}
     behavior:
       - return thumbnail data:derived-asset when ready
       - return placeholder while pending when policy:placeholder-serving-policy permits
+      - default preset resolves object key suffix /thumbnail
+      - set content type from generated data:derived-asset
 references:
   - data:derived-asset
+  - data:thumbnail-generation-config
   - api:session-progress-api
   - api:download-api
   - policy:placeholder-serving-policy

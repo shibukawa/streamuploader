@@ -29,13 +29,15 @@ features:
     missing_behavior: skip SVG preview
   image_thumbnail:
     preferred:
-      - libvips or ImageMagick when enabled
-      - ffmpeg for video-derived stills or animated previews
-      - rsvg-convert for SVG raster previews
+      - system:thumbnail-converter in-process Go backend when source is Go-decodable and codec is linked
+      - vegidio/avif-go for AVIF when CGO is enabled and selected
+      - chai2010/webp for WebP when CGO is enabled and selected
     fallback:
-      - Go image libraries for simple static image formats
-      - sips on macOS
-      - qlmanage on macOS for generic thumbnails
+      - sips on macOS for AVIF-capable simple transforms
+      - vips for fast resize and AVIF/WebP output
+      - ffmpeg for broad decode fallback
+      - eringen/gowebper for pure-Go lossless/simple WebP when CGO is disabled
+      - image/jpeg final static fallback
     missing_behavior: skip image preview or use original only when policy allows
   virus_scan:
     preferred: clamdscan
@@ -80,6 +82,7 @@ reporting:
   - include missing backend reason in status when feature is skipped
 references:
   - system:external-tool-registry
+  - system:thumbnail-converter
   - system:linux-tool-worker-image
   - system:text-extractor
   - system:ocr-engine

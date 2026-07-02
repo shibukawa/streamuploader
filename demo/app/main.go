@@ -46,6 +46,12 @@ type fileFact struct {
 	ChecksumSHA256 string `json:"checksum_sha256,omitempty"`
 	ObjectKey      string `json:"object_key"`
 	DisplayKey     string `json:"display_key"`
+	Thumbnail      *struct {
+		URL         string `json:"url,omitempty"`
+		ObjectKey   string `json:"object_key,omitempty"`
+		ContentType string `json:"content_type,omitempty"`
+		Status      string `json:"status,omitempty"`
+	} `json:"thumbnail,omitempty"`
 }
 
 type fileRecord struct {
@@ -59,6 +65,7 @@ type fileRecord struct {
 	ChecksumSHA256 string    `json:"checksum_sha256,omitempty"`
 	ObjectKey      string    `json:"object_key"`
 	DisplayKey     string    `json:"display_key"`
+	ThumbnailURL   string    `json:"thumbnail_url,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -173,6 +180,7 @@ func (a *app) filesAPI(w http.ResponseWriter, r *http.Request) {
 				ChecksumSHA256: file.ChecksumSHA256,
 				ObjectKey:      file.ObjectKey,
 				DisplayKey:     file.DisplayKey,
+				ThumbnailURL:   thumbnailURL(a.cfg, file),
 				CreatedAt:      now,
 			})
 		}
@@ -464,6 +472,16 @@ func publicObjectURL(cfg appConfig, objectKey string) string {
 	return base + "/" + escapeObjectPath(objectKey)
 }
 
+func thumbnailURL(cfg appConfig, file fileFact) string {
+	if file.Thumbnail != nil && file.Thumbnail.URL != "" {
+		return file.Thumbnail.URL
+	}
+	if file.ObjectKey == "" {
+		return ""
+	}
+	return streamUploaderPublicURL(cfg) + "/api/file/" + url.PathEscape(file.ObjectKey) + "/thumbnail"
+}
+
 func streamUploaderPublicURL(cfg appConfig) string {
 	return strings.TrimRight(cfg.StreamUploaderPublicURL, "/")
 }
@@ -587,6 +605,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     th, td { border-bottom: 1px solid #e3e7ee; padding: 9px 7px; text-align: left; vertical-align: top; }
     th { color: #475467; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
     .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .thumb { width: 72px; height: 72px; object-fit: contain; background: #eef1f5; border: 1px solid #d9dde5; border-radius: 6px; display: block; }
+    .thumb-missing { width: 72px; height: 72px; background: #eef1f5; border: 1px dashed #c6ccd7; border-radius: 6px; }
     .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .muted { color: #667085; font-size: 13px; }
     .uploads { display: grid; gap: 8px; margin-top: 12px; }
@@ -629,7 +649,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
         </div>
       </div>
       <table>
-        <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Select all files"></th><th>Title</th><th>File</th><th>Size</th><th>Object Key</th><th>Actions</th></tr></thead>
+        <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Select all files"></th><th>Thumbnail</th><th>Title</th><th>File</th><th>Size</th><th>Object Key</th><th>Actions</th></tr></thead>
         <tbody id="fileRows"></tbody>
       </table>
     </section>
@@ -896,7 +916,7 @@ async function loadFiles() {
   selectAll.checked = false;
   for (const file of files) {
     const tr = document.createElement("tr");
-    tr.innerHTML = "<td><input type='checkbox' data-file-id='' aria-label='Select file'></td><td></td><td></td><td></td><td></td><td><div class='row-actions'><a class='button'>Direct</a><a class='button'>Presigned</a><a class='button'>Proxy</a><a class='button'>Shared</a><button class='danger'>Delete</button></div></td>";
+    tr.innerHTML = "<td><input type='checkbox' data-file-id='' aria-label='Select file'></td><td></td><td></td><td></td><td></td><td></td><td><div class='row-actions'><a class='button'>Direct</a><a class='button'>Presigned</a><a class='button'>Proxy</a><a class='button'>Shared</a><button class='danger'>Delete</button></div></td>";
     const checkbox = tr.querySelector("input[data-file-id]");
     checkbox.dataset.fileId = file.id;
     checkbox.addEventListener("change", () => {
@@ -904,10 +924,21 @@ async function loadFiles() {
       else selected.delete(file.id);
       updateZipState();
     });
-    tr.children[1].textContent = file.title;
-    tr.children[2].textContent = file.original_name;
-    tr.children[3].textContent = formatBytes(file.size_bytes);
-    tr.children[4].textContent = file.object_key;
+    if (file.thumbnail_url) {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = file.thumbnail_url;
+      img.onerror = () => img.replaceWith(Object.assign(document.createElement("div"), {className: "thumb-missing"}));
+      tr.children[1].appendChild(img);
+    } else {
+      tr.children[1].appendChild(Object.assign(document.createElement("div"), {className: "thumb-missing"}));
+    }
+    tr.children[2].textContent = file.title;
+    tr.children[3].textContent = file.original_name;
+    tr.children[4].textContent = formatBytes(file.size_bytes);
+    tr.children[5].textContent = file.object_key;
     const links = tr.querySelectorAll("a");
     links[0].href = "/demo/api/files/" + file.id + "/download?mode=direct";
     links[1].href = "/demo/api/files/" + file.id + "/download?mode=presigned";

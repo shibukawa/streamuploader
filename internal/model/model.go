@@ -13,22 +13,35 @@ const (
 )
 
 type UploadItem struct {
-	UploadKey      string       `json:"upload_key"`
-	Role           string       `json:"role,omitempty"`
-	OriginalName   string       `json:"original_name"`
-	ContentType    string       `json:"content_type,omitempty"`
-	SizeBytes      int64        `json:"size_bytes,omitempty"`
-	UploadedBytes  int64        `json:"uploaded_bytes"`
-	ChecksumSHA256 string       `json:"checksum_sha256,omitempty"`
-	StoragePrefix  string       `json:"storage_prefix"`
-	ObjectKey      string       `json:"object_key"`
-	DisplayKey     string       `json:"display_key"`
-	Status         UploadStatus `json:"status"`
-	Error          string       `json:"error,omitempty"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	ExpiresAt      time.Time    `json:"expires_at"`
-	UploadedAt     *time.Time   `json:"uploaded_at,omitempty"`
+	UploadKey      string        `json:"upload_key"`
+	Role           string        `json:"role,omitempty"`
+	OriginalName   string        `json:"original_name"`
+	ContentType    string        `json:"content_type,omitempty"`
+	SizeBytes      int64         `json:"size_bytes,omitempty"`
+	UploadedBytes  int64         `json:"uploaded_bytes"`
+	ChecksumSHA256 string        `json:"checksum_sha256,omitempty"`
+	StoragePrefix  string        `json:"storage_prefix"`
+	ObjectKey      string        `json:"object_key"`
+	DisplayKey     string        `json:"display_key"`
+	Status         UploadStatus  `json:"status"`
+	Error          string        `json:"error,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	ExpiresAt      time.Time     `json:"expires_at"`
+	UploadedAt     *time.Time    `json:"uploaded_at,omitempty"`
+	Thumbnail      *DerivedAsset `json:"thumbnail,omitempty"`
+}
+
+type DerivedAsset struct {
+	Kind        string `json:"kind"`
+	ObjectKey   string `json:"object_key"`
+	URL         string `json:"url,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
 }
 
 type CreateUploadKeyRequest struct {

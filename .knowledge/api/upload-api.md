@@ -93,6 +93,8 @@ endpoints:
     behavior:
       - verify requested upload keys exist and belong to current caller context when auth is delegated
       - block until all requested uploads reach terminal success or failure or timeout
+      - when data:thumbnail-generation-config execution_mode is sequential, include thumbnail terminal state in readiness
+      - when data:thumbnail-generation-config execution_mode is async, do not wait for thumbnail completion
       - return durable file facts for frontend metadata submission
   watch_uploads:
     method: GET
@@ -118,6 +120,7 @@ references:
   - data:file-item
   - data:upload-batch
   - data:storage-key-allocation
+  - data:thumbnail-generation-config
   - data:security-check-result
   - flow:session-assembly
   - flow:security-gated-upload-acceptance

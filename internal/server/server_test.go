@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -224,6 +227,179 @@ func TestUploadKeyFlow(t *testing.T) {
 	decode(t, waitResp, &wait)
 	if !wait.Ready || len(wait.Items) != 1 || wait.Items[0].Status != "uploaded" {
 		t.Fatalf("wait response = %+v", wait)
+	}
+}
+
+func TestUploadImageGeneratesThumbnail(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:                    "standalone_cross_origin",
+		PublicBaseURL:           "http://example.test",
+		UploadBasePath:          "/api/upload",
+		AllowedOrigins:          []string{"*"},
+		Bucket:                  "bucket",
+		SessionTTL:              time.Hour,
+		MaxUploadBytes:          1 << 20,
+		AllowFrontendFileAccess: true,
+		Thumbnails: config.ThumbnailPolicy{
+			Enabled:         true,
+			ExecutionMode:   "sequential",
+			Width:           64,
+			Height:          64,
+			Fit:             "contain",
+			LosslessPolicy:  "force_avif_reduction",
+			PreferredFormat: "avif",
+			ObjectKeySuffix: "/thumbnail",
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"image.png","content_type":"image/png"}`)
+	if keyResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key status = %d", keyResp.StatusCode)
+	}
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	var pngBody bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 96, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 96; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 2), G: uint8(y * 4), B: 180, A: 255})
+		}
+	}
+	if err := png.Encode(&pngBody, img); err != nil {
+		t.Fatal(err)
+	}
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(pngBody.Bytes()))
+	uploadReq.Header.Set("Content-Type", "image/png")
+	uploadResp := do(t, uploadReq)
+	if uploadResp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d", uploadResp.StatusCode)
+	}
+	var uploaded struct {
+		Thumbnail *struct {
+			Status    string `json:"status"`
+			ObjectKey string `json:"object_key"`
+		} `json:"thumbnail"`
+	}
+	decode(t, uploadResp, &uploaded)
+	if uploaded.Thumbnail == nil || uploaded.Thumbnail.Status != "generated" || uploaded.Thumbnail.ObjectKey != key.ObjectKey+"/thumbnail" {
+		t.Fatalf("thumbnail response = %+v", uploaded.Thumbnail)
+	}
+	if _, ok := store.objects[key.ObjectKey+"/thumbnail"]; !ok {
+		t.Fatalf("thumbnail object was not stored")
+	}
+	thumbResp, err := http.Get(app.URL + "/api/file/" + url.PathEscape(key.ObjectKey) + "/thumbnail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer thumbResp.Body.Close()
+	if thumbResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(thumbResp.Body)
+		t.Fatalf("thumbnail status = %d body=%q", thumbResp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(thumbResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) == 0 {
+		t.Fatal("thumbnail response body is empty")
+	}
+}
+
+func TestUploadImageGeneratesThumbnailWithExternalWebhook(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	var webhookBody []byte
+	converter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		webhookBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read webhook body: %v", err)
+			return
+		}
+		if r.Header.Get("X-Thumbnail-Width") != "32" || r.Header.Get("X-Thumbnail-Preferred-Format") != "webp" {
+			t.Errorf("unexpected thumbnail headers: width=%q format=%q", r.Header.Get("X-Thumbnail-Width"), r.Header.Get("X-Thumbnail-Preferred-Format"))
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("X-Thumbnail-Width", "32")
+		w.Header().Set("X-Thumbnail-Height", "24")
+		w.Header().Set("X-Thumbnail-Backend", "test-webhook")
+		_, _ = w.Write([]byte("converted-thumbnail"))
+	}))
+	defer converter.Close()
+
+	cfg := config.Config{
+		Mode:                    "standalone_cross_origin",
+		PublicBaseURL:           "http://example.test",
+		UploadBasePath:          "/api/upload",
+		AllowedOrigins:          []string{"*"},
+		Bucket:                  "bucket",
+		SessionTTL:              time.Hour,
+		MaxUploadBytes:          1 << 20,
+		AllowFrontendFileAccess: true,
+		Thumbnails: config.ThumbnailPolicy{
+			Enabled:            true,
+			ExecutionMode:      "sequential",
+			Width:              32,
+			Height:             24,
+			Fit:                "contain",
+			LosslessPolicy:     "force_avif_reduction",
+			PreferredFormat:    "webp",
+			ObjectKeySuffix:    "/thumbnail",
+			ExternalWebhookURL: converter.URL,
+			ExternalTimeout:    time.Second,
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"image.png","content_type":"image/png"}`)
+	if keyResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key status = %d", keyResp.StatusCode)
+	}
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	var pngBody bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	if err := png.Encode(&pngBody, img); err != nil {
+		t.Fatal(err)
+	}
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewReader(pngBody.Bytes()))
+	uploadReq.Header.Set("Content-Type", "image/png")
+	uploadResp := do(t, uploadReq)
+	if uploadResp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d", uploadResp.StatusCode)
+	}
+	var uploaded struct {
+		Thumbnail *struct {
+			Status      string `json:"status"`
+			ObjectKey   string `json:"object_key"`
+			ContentType string `json:"content_type"`
+			Width       int    `json:"width"`
+			Height      int    `json:"height"`
+		} `json:"thumbnail"`
+	}
+	decode(t, uploadResp, &uploaded)
+	if uploaded.Thumbnail == nil || uploaded.Thumbnail.Status != "generated" || uploaded.Thumbnail.ContentType != "image/webp" {
+		t.Fatalf("thumbnail response = %+v", uploaded.Thumbnail)
+	}
+	if uploaded.Thumbnail.Width != 32 || uploaded.Thumbnail.Height != 24 {
+		t.Fatalf("thumbnail size = %+v", uploaded.Thumbnail)
+	}
+	if !bytes.Equal(webhookBody, pngBody.Bytes()) {
+		t.Fatalf("webhook body length = %d, want %d", len(webhookBody), pngBody.Len())
+	}
+	if got := string(store.objects[key.ObjectKey+"/thumbnail"]); got != "converted-thumbnail" {
+		t.Fatalf("stored thumbnail = %q", got)
 	}
 }
 

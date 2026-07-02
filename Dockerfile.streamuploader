@@ -5,9 +5,9 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/streamuploader ./cmd/streamuploader
+RUN CGO_ENABLED=1 go build -o /out/streamuploader ./cmd/streamuploader
 
-FROM gcr.io/distroless/static-debian12
+FROM gcr.io/distroless/base-debian12
 COPY --from=build /out/streamuploader /streamuploader
 USER nonroot:nonroot
 EXPOSE 8080
