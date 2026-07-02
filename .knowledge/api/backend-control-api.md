@@ -54,6 +54,13 @@ endpoints:
     behavior:
       - mark thumbnails, previews, extracted text, OCR, and variants stale
       - enqueue regeneration when requested
+  wait_async_tasks:
+    method: GET
+    path: /internal/tasks/wait
+    behavior:
+      - block backend caller until selected data:async-task-marker objects disappear
+      - support thumbnails, OCR, text extraction, metadata extraction, and future policy:worker-queue-policy task kinds
+      - return timeout response with per-task pending state
 constraints:
   - no browser CORS
   - no upload capability token authorization
@@ -65,4 +72,6 @@ references:
   - api:health-api
   - system:s3-storage
   - policy:audit-log-policy
+  - api:async-task-wait-api
+  - data:async-task-marker
 ```

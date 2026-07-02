@@ -100,6 +100,26 @@ endpoints:
         body:
           error: structural_validation_failed
           message: uploaded file is malformed or structurally inconsistent
+  cancel_upload_key:
+    method: DELETE
+    path: "{base_path}/keys/{upload_key}"
+    behavior:
+      - require policy:frontend-upload-cancel-policy owner cookie match
+      - allow only data:file-item status key_created
+      - delete upload deadline marker when present
+      - set status to canceled
+      - reject uploading or uploaded keys
+    errors:
+      owner_mismatch:
+        status: 403
+        body:
+          error: owner_mismatch
+          message: upload key belongs to another client
+      upload_already_started:
+        status: 409
+        body:
+          error: upload_already_started
+          message: upload key can be canceled only before upload starts
   wait_uploads:
     method: POST
     path: "{base_path}/wait"
@@ -149,6 +169,7 @@ references:
   - policy:resource-limit-policy
   - policy:structural-validation-policy
   - policy:upload-key-deadline-policy
+  - policy:frontend-upload-cancel-policy
   - api:backend-control-api
   - requirement:application-metadata-submit
 ```

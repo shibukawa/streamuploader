@@ -21,6 +21,8 @@ jobs:
   - webhook_delivery
 behavior:
   - idempotent job keys
+  - create data:async-task-marker when asynchronous work starts
+  - delete data:async-task-marker when work reaches terminal success or terminal failure
   - timing follows policy:processor-execution-policy pre_accept, post_accept, or on_demand
   - selected backend recorded from system:external-tool-registry
   - delegated provider recorded from system:external-processing-delegates when external delegation is used
@@ -50,4 +52,6 @@ references:
   - policy:external-delegation-policy
   - policy:processor-execution-policy
   - system:local-command-processor
+  - data:async-task-marker
+  - api:async-task-wait-api
 ```

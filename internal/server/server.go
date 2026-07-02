@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -237,7 +238,7 @@ func (s *Server) handleBackendAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if escapedPath == base+"/tasks/wait" && r.Method == http.MethodPost {
+	if escapedPath == base+"/tasks/wait" && r.Method == http.MethodGet {
 		s.waitAsyncTasks(w, r)
 		return
 	}
@@ -927,23 +928,23 @@ func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
-	var req model.WaitAsyncTasksRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
-		return
-	}
-	if len(req.ObjectKeys) == 0 {
+	query := r.URL.Query()
+	objectKeys := splitQueryValues(query["object_key"])
+	objectKeys = append(objectKeys, splitQueryValues(query["object_keys"])...)
+	if len(objectKeys) == 0 {
 		writeError(w, http.StatusBadRequest, "missing_object_keys", "object_keys is required")
 		return
 	}
-	kinds := normalizedTaskKinds(req.Kinds)
+	kinds := splitQueryValues(query["kind"])
+	kinds = append(kinds, splitQueryValues(query["kinds"])...)
+	kinds = normalizedTaskKinds(kinds)
 	timeout := 60 * time.Second
-	if req.TimeoutSeconds > 0 {
-		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	if timeoutSeconds := positiveQueryInt(query.Get("timeout_seconds")); timeoutSeconds > 0 {
+		timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 	poll := 200 * time.Millisecond
-	if req.PollMillis > 0 {
-		poll = time.Duration(req.PollMillis) * time.Millisecond
+	if pollMillis := positiveQueryInt(query.Get("poll_millis")); pollMillis > 0 {
+		poll = time.Duration(pollMillis) * time.Millisecond
 	}
 	if poll < 50*time.Millisecond {
 		poll = 50 * time.Millisecond
@@ -956,7 +957,7 @@ func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
-		tasks, ready := s.asyncTaskStatuses(r.Context(), req.ObjectKeys, kinds)
+		tasks, ready := s.asyncTaskStatuses(r.Context(), objectKeys, kinds)
 		if ready {
 			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: true, Tasks: tasks})
 			return
@@ -965,7 +966,7 @@ func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-deadline.C:
-			tasks, _ = s.asyncTaskStatuses(context.Background(), req.ObjectKeys, kinds)
+			tasks, _ = s.asyncTaskStatuses(context.Background(), objectKeys, kinds)
 			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: false, Timeout: true, Tasks: tasks})
 			return
 		case <-ticker.C:
@@ -2225,6 +2226,30 @@ func normalizedTaskKinds(kinds []string) []string {
 		return []string{"image_thumbnail"}
 	}
 	return out
+}
+
+func splitQueryValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+func positiveQueryInt(value string) int {
+	if strings.TrimSpace(value) == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 func cloneUpload(item *model.UploadItem) *model.UploadItem {

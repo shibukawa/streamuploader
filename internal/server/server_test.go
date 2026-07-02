@@ -260,6 +260,19 @@ func TestCancelUploadKeyRequiresOwnerCookie(t *testing.T) {
 		UploadKey string `json:"upload_key"`
 	}
 	decode(t, keyResp, &key)
+	secondKeyReq, _ := http.NewRequest(http.MethodPost, app.URL+"/api/upload/keys", strings.NewReader(`{"file_name":"second.txt"}`))
+	secondKeyReq.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		secondKeyReq.AddCookie(cookie)
+	}
+	secondKeyResp := do(t, secondKeyReq)
+	if secondKeyResp.StatusCode != http.StatusCreated {
+		t.Fatalf("second create key status = %d", secondKeyResp.StatusCode)
+	}
+	if got := len(secondKeyResp.Cookies()); got != 0 {
+		t.Fatalf("existing owner cookie was reissued: cookies=%d", got)
+	}
+	_ = secondKeyResp.Body.Close()
 
 	noCookieReq, _ := http.NewRequest(http.MethodDelete, app.URL+"/api/upload/keys/"+key.UploadKey, nil)
 	noCookieResp := do(t, noCookieReq)
@@ -312,7 +325,8 @@ func TestBackendWaitAsyncTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q],"timeout_seconds":1,"poll_millis":50}`, objectKey))
+	waitReq, _ := http.NewRequest(http.MethodGet, app.URL+"/internal/tasks/wait?object_key="+url.QueryEscape(objectKey)+"&timeout_seconds=1&poll_millis=50", nil)
+	waitResp := do(t, waitReq)
 	if waitResp.StatusCode != http.StatusOK {
 		t.Fatalf("wait status = %d", waitResp.StatusCode)
 	}
@@ -329,7 +343,8 @@ func TestBackendWaitAsyncTasks(t *testing.T) {
 	}
 
 	srv.deleteAsyncTaskMarker(context.Background(), objectKey, "image_thumbnail")
-	doneResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q],"timeout_seconds":1}`, objectKey))
+	doneReq, _ := http.NewRequest(http.MethodGet, app.URL+"/internal/tasks/wait?object_key="+url.QueryEscape(objectKey)+"&timeout_seconds=1", nil)
+	doneResp := do(t, doneReq)
 	if doneResp.StatusCode != http.StatusOK {
 		t.Fatalf("done wait status = %d", doneResp.StatusCode)
 	}
@@ -344,6 +359,12 @@ func TestBackendWaitAsyncTasks(t *testing.T) {
 	if !done.Ready || done.Timeout || len(done.Tasks) != 1 || done.Tasks[0].Pending {
 		t.Fatalf("wait done response = %+v", done)
 	}
+
+	postResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q]}`, objectKey))
+	if postResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST wait status = %d", postResp.StatusCode)
+	}
+	_ = postResp.Body.Close()
 }
 
 func TestUploadImageGeneratesThumbnail(t *testing.T) {

@@ -76,13 +76,6 @@ type WaitUploadsResponse struct {
 	Items   []*UploadItem `json:"items"`
 }
 
-type WaitAsyncTasksRequest struct {
-	ObjectKeys     []string `json:"object_keys"`
-	Kinds          []string `json:"kinds,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	PollMillis     int      `json:"poll_millis,omitempty"`
-}
-
 type WaitAsyncTaskStatus struct {
 	ObjectKey string `json:"object_key"`
 	Kind      string `json:"kind"`
