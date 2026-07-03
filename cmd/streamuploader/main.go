@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"streamuploader/internal/config"
@@ -122,6 +124,11 @@ func configureLogging(policy config.LoggingPolicy) {
 }
 
 func logStartupConfig(cfg config.Config) {
+	if cfg.SecurityConfigPath == "" {
+		slog.Info("security_config_loaded", "source", "built_in_defaults")
+	} else {
+		slog.Info("security_config_loaded", "source", "file", "path", cfg.SecurityConfigPath)
+	}
 	if contains(cfg.AllowedOrigins, "*") {
 		slog.Warn("wildcard_allowed_origins", "message", "ALLOWED_ORIGINS contains wildcard; use explicit origins for public deployments")
 	}
@@ -151,11 +158,253 @@ func logStartupConfig(cfg config.Config) {
 		"lossless_policy", cfg.Thumbnails.LosslessPolicy,
 		"object_key_suffix", cfg.Thumbnails.ObjectKeySuffix,
 		"external_webhook_enabled", cfg.Thumbnails.ExternalWebhookURL != "",
-		"backend", thumbnailPlan.Summary,
-		"cgo_enabled", thumbnailPlan.CGOEnabled,
-		"ffmpeg_path", thumbnailPlan.FFmpegPath,
-		"sips_path", thumbnailPlan.SipsPath,
 	)
+	logStartupFileTypePolicies(cfg.Security, cfg.Thumbnails, thumbnailPlan)
+}
+
+type fileTypePolicyLog struct {
+	Type        string
+	ContentType string
+	Group       string
+	Extension   string
+	ScriptType  string
+}
+
+func logStartupFileTypePolicies(policy config.SecurityPolicy, thumbnails config.ThumbnailPolicy, plan thumbnail.Plan) {
+	for _, entry := range startupFileTypes() {
+		mode := resolvedSanitizationMode(entry, policy.FileSanitization)
+		act := policyAction(policy, mode, entry)
+		args := []any{"type", entry.Type, "act", act}
+		if backend := thumbnailBackend(entry, thumbnails, plan); backend != "" {
+			args = append(args, "thumbnail", backend)
+		}
+		slog.Info("policy", args...)
+	}
+}
+
+func startupFileTypes() []fileTypePolicyLog {
+	return []fileTypePolicyLog{
+		{Type: "jpeg", ContentType: "image/jpeg", Group: "image"},
+		{Type: "png", ContentType: "image/png", Group: "image"},
+		{Type: "gif", ContentType: "image/gif", Group: "image"},
+		{Type: "webp", ContentType: "image/webp", Group: "image"},
+		{Type: "avif", ContentType: "image/avif", Group: "image"},
+		{Type: "heif", ContentType: "image/heif", Group: "image"},
+		{Type: "svg", ContentType: "image/svg+xml", Group: "svg"},
+		{Type: "pdf", ContentType: "application/pdf", Group: "office_pdf"},
+		{Type: "docx", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Group: "ooxml"},
+		{Type: "xlsx", ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Group: "ooxml"},
+		{Type: "pptx", ContentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Group: "ooxml"},
+		{Type: "doc", ContentType: "application/msword", Group: "legacy_or_complex"},
+		{Type: "xls", ContentType: "application/vnd.ms-excel", Group: "legacy_or_complex"},
+		{Type: "ppt", ContentType: "application/vnd.ms-powerpoint", Group: "legacy_or_complex"},
+		{Type: "txt", ContentType: "text/plain", Group: "text"},
+		{Type: "text", ContentType: "text/plain", Group: "text"},
+		{Type: "csv", ContentType: "text/csv", Group: "text"},
+		{Type: "md", ContentType: "text/markdown", Group: "markup"},
+		{Type: "html", ContentType: "text/html", Group: "markup"},
+		{Type: "rtf", ContentType: "application/rtf", Group: "legacy_or_complex"},
+		{Type: "json", ContentType: "application/json", Group: "text"},
+		{Type: "xml", ContentType: "application/xml", Group: "markup"},
+		{Type: "sh", ContentType: "text/x-shellscript", Group: "script", Extension: "sh", ScriptType: "shell"},
+		{Type: "py", ContentType: "text/x-python", Group: "script", Extension: "py", ScriptType: "python"},
+		{Type: "js", ContentType: "text/javascript", Group: "script", Extension: "js", ScriptType: "node"},
+		{Type: "mp4", ContentType: "video/mp4", Group: "video"},
+		{Type: "mov", ContentType: "video/quicktime", Group: "video"},
+		{Type: "elf", ContentType: "application/x-executable", Group: "executable"},
+		{Type: "mach-o", ContentType: "application/x-mach-binary", Group: "executable"},
+		{Type: "exe", ContentType: "application/x-dosexec", Group: "executable"},
+		{Type: "octet-stream", ContentType: "application/octet-stream", Group: "generic"},
+	}
+}
+
+func resolvedSanitizationMode(entry fileTypePolicyLog, policy config.FileSanitizationPolicy) string {
+	if mode := perFileTypeMode(entry.ContentType, policy); mode != "" {
+		return mode
+	}
+	if mode := perFileTypeMode(entry.Type, policy); mode != "" {
+		return mode
+	}
+	if mode := perFileTypeMode("."+entry.Type, policy); mode != "" {
+		return mode
+	}
+	switch entry.Group {
+	case "image", "video":
+		return fallbackMode(policy.ImageVideoMetadata.DefaultMode, "sanitize_metadata")
+	case "svg":
+		return fallbackMode(policy.SVG.DefaultMode, "reject_active_or_external_content")
+	case "office_pdf", "ooxml":
+		return fallbackMode(policy.OfficePDF.DefaultMode, "reject_active_content")
+	case "legacy_or_complex":
+		return fallbackMode(policy.LegacyOrComplexDocuments.DefaultMode, "reject")
+	case "markup":
+		return fallbackMode(policy.Markup.DefaultMode, "reject_active_or_external_content")
+	default:
+		return fallbackMode(policy.DefaultMode, "secure_default")
+	}
+}
+
+func perFileTypeMode(key string, policy config.FileSanitizationPolicy) string {
+	if policy.PerFileType == nil {
+		return ""
+	}
+	if entry, ok := policy.PerFileType[strings.ToLower(strings.TrimSpace(key))]; ok {
+		return strings.ToLower(strings.TrimSpace(entry.Mode))
+	}
+	return ""
+}
+
+func fallbackMode(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func policyAction(policy config.SecurityPolicy, mode string, entry fileTypePolicyLog) string {
+	if action := mimeMagicAction(policy.MimeMagic, entry); action != "" {
+		return action
+	}
+	return sanitizationAction(policy.FileSanitization.Enabled, mode, entry)
+}
+
+func mimeMagicAction(policy config.MimeMagicPolicy, entry fileTypePolicyLog) string {
+	if entry.Group == "script" && policy.RejectScriptUploads && !scriptAllowedForStartup(policy, entry) {
+		return "reject_script"
+	}
+	denyMIMETypes := policy.ExpandedDenyMIMETypes
+	if denyMIMETypes == nil {
+		denyMIMETypes = enabledMIMETypes(policy.DenyMIMETypes)
+	}
+	if containsString(denyMIMETypes, entry.ContentType) {
+		return "reject"
+	}
+	allowMIMETypes := policy.ExpandedAllowMIMETypes
+	if allowMIMETypes == nil {
+		allowMIMETypes = enabledMIMETypes(policy.AllowMIMETypes)
+	}
+	if len(allowMIMETypes) > 0 && !containsString(allowMIMETypes, entry.ContentType) {
+		return "reject_not_allowed"
+	}
+	return ""
+}
+
+func scriptAllowedForStartup(policy config.MimeMagicPolicy, entry fileTypePolicyLog) bool {
+	if entry.ScriptType != "" && policy.AllowedScriptTypes[entry.ScriptType] {
+		return true
+	}
+	if entry.Extension != "" && policy.AllowedScriptExtensions[entry.Extension] {
+		return true
+	}
+	return false
+}
+
+func enabledMIMETypes(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value, enabled := range values {
+		if enabled {
+			out = append(out, strings.ToLower(strings.TrimSpace(value)))
+		}
+	}
+	return out
+}
+
+func containsString(values []string, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizationAction(enabled bool, mode string, entry fileTypePolicyLog) string {
+	if entry.Group == "executable" {
+		return "reject"
+	}
+	if !enabled {
+		return "ok"
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "accept_as_is":
+		return "ok"
+	case "sanitize_metadata", "sanitize_when_supported":
+		return "sanitize_metadata"
+	case "reject":
+		return "reject"
+	case "reject_active_content":
+		return "reject_active_content"
+	case "reject_active_or_external_content":
+		return "reject_active_or_external_content"
+	case "reject_on_sensitive_metadata":
+		return "reject_sensitive_metadata"
+	case "secure_default":
+		if entry.Group == "image" || entry.Group == "video" {
+			return "sanitize_metadata"
+		}
+		return "ok"
+	default:
+		return "unknown"
+	}
+}
+
+func thumbnailBackend(entry fileTypePolicyLog, policy config.ThumbnailPolicy, plan thumbnail.Plan) string {
+	if !policy.Enabled {
+		return ""
+	}
+	if plan.ExternalWebhook {
+		return "webhook"
+	}
+	switch entry.Group {
+	case "image":
+		if internalThumbnailInput(entry.Type) {
+			return "internal"
+		}
+		return toolThumbnailBackend(plan)
+	case "svg", "office_pdf":
+		return toolThumbnailBackend(plan)
+	case "ooxml":
+		return officeThumbnailBackend()
+	case "video":
+		if plan.FFmpegPath != "" {
+			return "ffmpeg"
+		}
+	}
+	return ""
+}
+
+func internalThumbnailInput(fileType string) bool {
+	switch fileType {
+	case "jpeg", "png", "gif", "webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolThumbnailBackend(plan thumbnail.Plan) string {
+	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
+		if strings.HasPrefix(candidate.Backend, "ffmpeg:") {
+			return "ffmpeg"
+		}
+	}
+	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
+		if strings.HasPrefix(candidate.Backend, "sips:") {
+			return "sips"
+		}
+	}
+	return "unavailable"
+}
+
+func officeThumbnailBackend() string {
+	for _, name := range []string{"soffice", "libreoffice"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return "libreoffice"
+		}
+	}
+	return "unavailable"
 }
 
 func contains(values []string, needle string) bool {

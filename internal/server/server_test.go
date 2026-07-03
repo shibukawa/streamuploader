@@ -687,10 +687,9 @@ func TestUploadAllowsConfiguredScriptType(t *testing.T) {
 	}
 }
 
-func TestUploadMimeMagicCheckCanOptOut(t *testing.T) {
+func TestUploadMimeMagicCheckAlwaysRejectsMismatch(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	security.FileSanitization.Enabled = false
 	cfg := config.Config{
 		Mode:           "standalone_cross_origin",
@@ -717,15 +716,15 @@ func TestUploadMimeMagicCheckCanOptOut(t *testing.T) {
 	uploadReq.Header.Set("Content-Type", "image/jpeg")
 	uploadResp := do(t, uploadReq)
 	defer uploadResp.Body.Close()
-	if uploadResp.StatusCode != http.StatusOK {
+	if uploadResp.StatusCode != http.StatusUnsupportedMediaType {
 		body, _ := io.ReadAll(uploadResp.Body)
 		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
 	}
 	store.mu.Lock()
-	got := store.objects[key.ObjectKey]
+	_, stored := store.objects[key.ObjectKey]
 	store.mu.Unlock()
-	if !bytes.Equal(got, elf) {
-		t.Fatalf("stored object = %x", got)
+	if stored {
+		t.Fatal("mismatched upload was stored")
 	}
 }
 
@@ -823,7 +822,6 @@ func TestUploadAllowFileTypeCategoryRejectsOutsideType(t *testing.T) {
 func TestUploadRejectsZipArchiveBombBeforeStorage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
 	security.ArchiveGuard.MaxSingleEntryBytes = 512
 	security.ArchiveGuard.MaxCompressionRatio = 1000
@@ -857,7 +855,6 @@ func TestUploadRejectsZipArchiveBombBeforeStorage(t *testing.T) {
 func TestUploadRejectsGzipArchiveBombBeforeStorage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
 	security.ArchiveGuard.MaxSingleEntryBytes = 512
 	security.ArchiveGuard.MaxCompressionRatio = 1000
@@ -891,7 +888,6 @@ func TestUploadRejectsGzipArchiveBombBeforeStorage(t *testing.T) {
 func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	security.ArchiveGuard.MaxTotalUncompressedBytes = 2048
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
@@ -1017,7 +1013,6 @@ func TestUploadSanitizesJPEGEXIFBeforeStorage(t *testing.T) {
 func TestUploadSanitizesQuickTimeMetadataBeforeStorage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	cfg := testUploadConfig(security)
 	srv := httptest.NewServer(New(cfg, store).Handler())
 	defer srv.Close()
@@ -1069,7 +1064,6 @@ func TestSanitizeWEBPMetadataPreservesICC(t *testing.T) {
 func TestUploadRejectsSVGActiveContent(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	cfg := testUploadConfig(security)
 	srv := httptest.NewServer(New(cfg, store).Handler())
 	defer srv.Close()
@@ -1090,6 +1084,114 @@ func TestUploadRejectsSVGActiveContent(t *testing.T) {
 	store.mu.Unlock()
 	if stored {
 		t.Fatal("rejected SVG was stored")
+	}
+}
+
+func TestInspectMarkupRejectsMarkdownHTMLScript(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	err := inspectMarkup([]byte("# Title\n\n<script>alert(1)</script>\n"), "text/markdown", "note.md", policy.ResourceLimits, policy.FileSanitization.Markup)
+	if err == nil {
+		t.Fatal("expected Markdown raw HTML script to be rejected")
+	}
+	var uploadErr securityUploadError
+	if !errors.As(err, &uploadErr) || uploadErr.code != "markup_script_detected" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestInspectMarkupRejectsHTMLScript(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	err := inspectMarkup([]byte(`<html><script>alert(1)</script></html>`), "text/html", "page.html", policy.ResourceLimits, policy.FileSanitization.Markup)
+	if err == nil {
+		t.Fatal("expected HTML script to be rejected")
+	}
+	var uploadErr securityUploadError
+	if !errors.As(err, &uploadErr) || uploadErr.code != "markup_script_detected" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestInspectMarkupRejectsXMLExternalEntity(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	body := []byte(`<?xml version="1.0"?><!DOCTYPE doc [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><doc>&xxe;</doc>`)
+	err := inspectMarkup(body, "application/xml", "doc.xml", policy.ResourceLimits, policy.FileSanitization.Markup)
+	if err == nil {
+		t.Fatal("expected XML external entity to be rejected")
+	}
+	var uploadErr securityUploadError
+	if !errors.As(err, &uploadErr) || uploadErr.code != "xml_external_entity_detected" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestUploadRejectsHTMLIframe(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "bad.html", "text/html", []byte(`<html><body><iframe src="https://example.test"></iframe></body></html>`))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var body map[string]string
+	decode(t, resp, &body)
+	if body["error"] != "markup_iframe_detected" {
+		t.Fatalf("error body = %+v", body)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected HTML was stored")
+	}
+}
+
+func TestUploadRejectsRTFByDefaultAndAllowsOptOut(t *testing.T) {
+	body := []byte(`{\rtf1\ansi{\object\objemb{\*\objdata 01050000}}}`)
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	resp, key := uploadTestObject(t, srv.URL, "doc.rtf", "application/rtf", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "legacy_document_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("rejected RTF was stored")
+	}
+
+	optOutStore := &fakeStore{objects: map[string][]byte{}}
+	optOut := config.DefaultSecurityPolicy()
+	optOut.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"application/rtf": {Mode: "accept_as_is"}}
+	optOutCfg := testUploadConfig(optOut)
+	optOutSrv := httptest.NewServer(New(optOutCfg, optOutStore).Handler())
+	defer optOutSrv.Close()
+
+	okResp, okKey := uploadTestObject(t, optOutSrv.URL, "doc.rtf", "application/rtf", body)
+	defer okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(okResp.Body)
+		t.Fatalf("opt-out upload status = %d body=%q", okResp.StatusCode, string(respBody))
+	}
+	optOutStore.mu.Lock()
+	got := optOutStore.objects[okKey.ObjectKey]
+	optOutStore.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("opt-out RTF body changed")
 	}
 }
 
@@ -1148,7 +1250,6 @@ func TestUploadPDFScansTmpThenPublishes(t *testing.T) {
 func TestUploadRejectsOfficeMacroPart(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	cfg := testUploadConfig(security)
 	srv := httptest.NewServer(New(cfg, store).Handler())
 	defer srv.Close()
@@ -1182,7 +1283,6 @@ func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
 	body := []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 'd', 'o', 'c'}
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
-	security.MimeMagic.Enabled = false
 	cfg := testUploadConfig(security)
 	srv := httptest.NewServer(New(cfg, store).Handler())
 	defer srv.Close()
@@ -1207,7 +1307,6 @@ func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
 
 	optOutStore := &fakeStore{objects: map[string][]byte{}}
 	optOut := config.DefaultSecurityPolicy()
-	optOut.MimeMagic.Enabled = false
 	optOut.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"application/msword": {Mode: "accept_as_is"}}
 	optOutCfg := testUploadConfig(optOut)
 	optOutSrv := httptest.NewServer(New(optOutCfg, optOutStore).Handler())

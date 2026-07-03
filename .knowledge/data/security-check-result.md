@@ -88,6 +88,12 @@ fields:
       - sanitizer_unavailable
       - document_active_content_rejected
       - svg_active_content_rejected
+      - markup_active_content_rejected
+      - markup_script_detected
+      - markup_iframe_detected
+      - markup_external_reference_detected
+      - xml_external_entity_detected
+      - xml_entity_expansion_limit_exceeded
   error:
     http_status: integer optional
     code: string optional
@@ -102,4 +108,5 @@ references:
   - policy:structural-validation-policy
   - policy:document-active-content-policy
   - policy:svg-security-policy
+  - policy:markup-active-content-policy
 ```

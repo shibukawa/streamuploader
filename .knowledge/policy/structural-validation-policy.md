@@ -37,6 +37,13 @@ rules:
     svg:
       - well-formed XML
       - parser limit compliance
+    html:
+      - parser tree construction completes within limits
+      - encoding declaration is coherent
+    xml:
+      - well-formed XML
+      - parser limit compliance
+      - no malformed entity declarations
   reject:
     - malformed structure
     - inconsistent directory or object metadata

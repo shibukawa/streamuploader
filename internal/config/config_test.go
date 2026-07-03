@@ -14,7 +14,6 @@ func TestLoadSecurityPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "security.yaml")
 	body := []byte(`
 mime_magic:
-  enabled: false
   prefix_bytes: 128
   reject_script_uploads: false
   allowed_script_types:
@@ -34,7 +33,6 @@ mime_magic:
   equivalent_mime_types:
     - [image/jpeg, image/pjpeg]
 archive_guard:
-  enabled: true
   strict: true
   allow_encrypted: false
   max_total_uncompressed_bytes: 2048
@@ -59,7 +57,6 @@ archive_guard:
 
 	body = []byte(`
 mime_magic:
-  enabled: false
   prefix_bytes: 512
   reject_script_uploads: false
   allowed_script_types:
@@ -79,7 +76,6 @@ mime_magic:
   equivalent_mime_types:
     - [image/jpeg, image/pjpeg]
 archive_guard:
-  enabled: true
   strict: true
   allow_encrypted: false
   max_total_uncompressed_bytes: 2048
@@ -100,9 +96,6 @@ archive_guard:
 	policy, err := LoadSecurityPolicy(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if policy.MimeMagic.Enabled {
-		t.Fatal("enabled should be false from YAML")
 	}
 	if policy.MimeMagic.PrefixBytes != 512 {
 		t.Fatalf("prefix bytes = %d", policy.MimeMagic.PrefixBytes)
@@ -195,12 +188,20 @@ mime_magic:
 
 func TestSecuritySchemaFileValidatesSampleConfig(t *testing.T) {
 	schema := loadSecuritySchemaFile(t)
-	body, err := os.ReadFile("../../config/security.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateYAMLWithSchema(body, schema); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{
+		"security.yaml",
+		"security.host-native.yaml",
+		"security.host-native-clamav.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("../../config", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateYAMLWithSchema(body, schema); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -213,6 +214,24 @@ mime_magic:
 `)
 	if err := validateYAMLWithSchema(body, schema); err == nil {
 		t.Fatal("expected schema file to reject typo")
+	}
+}
+
+func TestHostNativeSecurityConfigsLoad(t *testing.T) {
+	plain, err := LoadSecurityPolicy("../../config/security.host-native.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.ClamAV.Enabled {
+		t.Fatal("host-native config should leave ClamAV disabled")
+	}
+
+	withClamAV, err := LoadSecurityPolicy("../../config/security.host-native-clamav.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !withClamAV.ClamAV.Enabled || withClamAV.ClamAV.Address != "127.0.0.1:3310" {
+		t.Fatalf("clamav config = %+v", withClamAV.ClamAV)
 	}
 }
 
@@ -229,7 +248,6 @@ func TestThumbnailVideoCandidateKeyframesConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "security.yaml")
 	body := []byte(`
 thumbnails:
-  enabled: true
   video_candidate_keyframes: 24
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -245,7 +263,6 @@ thumbnails:
 
 	body = []byte(`
 thumbnails:
-  enabled: true
   video_candidate_keyframes: 60
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -325,6 +342,9 @@ func TestMIMEFileTypeExpandsCategoriesAndShortNames(t *testing.T) {
 		"jp2":    "image/jp2",
 		"psd":    "image/vnd.adobe.photoshop",
 		"tga":    "image/x-tga",
+		"html":   "text/html",
+		"xhtml":  "application/xhtml+xml",
+		"rtf":    "text/rtf",
 	}
 	for input, want := range tests {
 		if got := MIMEFileType(input); !containsString(got, want) {

@@ -1,6 +1,5 @@
 # yaml-language-server: $schema=./security.schema.json
 mime_magic:
-  enabled: true
   prefix_bytes: 3072
   reject_script_uploads: true
   allowed_script_types: {}
@@ -23,12 +22,15 @@ mime_magic:
   deny_mime_types:
     application/x-dosexec: true
     application/x-executable: true
+    application/x-mach-binary: true
     application/x-sharedlib: true
     application/x-msdownload: true
   equivalent_mime_types:
     - [application/xml, text/xml]
     - [image/jpeg, image/pjpeg]
     - [application/gzip, application/x-gzip]
+    - [application/rtf, text/rtf]
+    - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/x-ole-storage]
 archive_guard:
   enabled: true
   strict: true
@@ -85,11 +87,21 @@ file_sanitization:
       mode: reject_active_content
     image/svg+xml:
       mode: reject_active_or_external_content
+    text/markdown:
+      mode: reject_active_or_external_content
+    text/html:
+      mode: reject_active_or_external_content
+    application/xml:
+      mode: reject_active_or_external_content
     application/msword:
       mode: reject
     application/vnd.ms-excel:
       mode: reject
     application/vnd.ms-powerpoint:
+      mode: reject
+    text/rtf:
+      mode: reject
+    application/rtf:
       mode: reject
   image_video_metadata:
     default_mode: sanitize_metadata
@@ -102,10 +114,17 @@ file_sanitization:
     full_scan_required: true
   legacy_office:
     default_mode: reject
+  legacy_or_complex_documents:
+    default_mode: reject
   svg:
     default_mode: reject_active_or_external_content
     prefer_streaming_xml_parser: true
     allow_data_urls: false
+  markup:
+    default_mode: reject_active_or_external_content
+    markdown_raw_html_inspection: true
+    html_active_content_inspection: true
+    xml_external_entity_resolution: disabled
 upload_deadlines:
   enabled: true
   marker_prefix: .uploading/

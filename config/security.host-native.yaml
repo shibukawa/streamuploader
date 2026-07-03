@@ -1,0 +1,4 @@
+# Host-native development profile without ClamAV.
+clamav:
+  enabled: false
+

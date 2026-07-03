@@ -226,7 +226,17 @@ schema:
           mode: reject_active_content
         image/svg+xml:
           mode: reject_active_or_external_content
+        text/markdown:
+          mode: reject_active_or_external_content
+        text/html:
+          mode: reject_active_or_external_content
+        application/xml:
+          mode: reject_active_or_external_content
         application/msword:
+          mode: reject
+        text/rtf:
+          mode: reject
+        application/rtf:
           mode: reject
       mode_values:
         - sanitize_metadata
@@ -245,11 +255,19 @@ schema:
     office_pdf:
       default_mode: reject_active_content
       full_scan_required: true
-    legacy_office:
+    legacy_or_complex_documents:
       default_mode: reject
+      includes:
+        - legacy Office binary formats
+        - RTF
     svg:
       default_mode: reject_active_or_external_content
       prefer_streaming_xml_parser: true
+    markup:
+      default_mode: reject_active_or_external_content
+      markdown_raw_html_inspection: true
+      html_active_content_inspection: true
+      xml_external_entity_resolution: disabled
 example:
   mime_magic:
     enabled: true
@@ -326,11 +344,21 @@ example:
         mode: reject_active_content
       image/svg+xml:
         mode: reject_active_or_external_content
+      text/markdown:
+        mode: reject_active_or_external_content
+      text/html:
+        mode: reject_active_or_external_content
+      application/xml:
+        mode: reject_active_or_external_content
       application/msword:
         mode: reject
       application/vnd.ms-excel:
         mode: reject
       application/vnd.ms-powerpoint:
+        mode: reject
+      text/rtf:
+        mode: reject
+      application/rtf:
         mode: reject
     image_video_metadata:
       default_mode: sanitize_metadata
@@ -341,11 +369,19 @@ example:
     office_pdf:
       default_mode: reject_active_content
       full_scan_required: true
-    legacy_office:
+    legacy_or_complex_documents:
       default_mode: reject
+      includes:
+        - legacy Office binary formats
+        - RTF
     svg:
       default_mode: reject_active_or_external_content
       prefer_streaming_xml_parser: true
+    markup:
+      default_mode: reject_active_or_external_content
+      markdown_raw_html_inspection: true
+      html_active_content_inspection: true
+      xml_external_entity_resolution: disabled
 references:
   - policy:file-intake-security
   - system:clamav

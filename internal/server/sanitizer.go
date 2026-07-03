@@ -94,17 +94,29 @@ func applyFileSanitization(reader io.Reader, contentType, originalName string, p
 	}
 	out := body
 	switch {
-	case isLegacyOffice(contentType, originalName):
+	case isLegacyOrComplexDocument(contentType, originalName):
 		if mode == "accept_as_is" {
 			break
 		}
-		return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "legacy_office_rejected", message: "legacy Microsoft Office formats are rejected by policy"}
+		if isLegacyOffice(contentType, originalName) {
+			return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "legacy_office_rejected", message: "legacy Microsoft Office formats are rejected by policy"}
+		}
+		return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "legacy_document_rejected", message: "legacy or complex rich document formats are rejected by policy"}
 	case isSVG(contentType, originalName):
 		if mode == "sanitize_when_supported" {
 			return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "SVG sanitization is not supported"}
 		}
 		if mode == "reject_active_or_external_content" || mode == "secure_default" {
 			if err := inspectSVG(body, policy.ResourceLimits, policy.FileSanitization.SVG); err != nil {
+				return sanitizedBody{}, err
+			}
+		}
+	case isMarkup(contentType, originalName):
+		if mode == "sanitize_when_supported" {
+			return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "markup sanitization is not supported"}
+		}
+		if mode == "reject_active_or_external_content" || mode == "secure_default" {
+			if err := inspectMarkup(body, contentType, originalName, policy.ResourceLimits, policy.FileSanitization.Markup); err != nil {
 				return sanitizedBody{}, err
 			}
 		}
@@ -164,7 +176,7 @@ func uploadNeedsFullSanitization(contentType, originalName, mode string) bool {
 	if mode == "accept_as_is" {
 		return false
 	}
-	return isLegacyOffice(contentType, originalName) || isSVG(contentType, originalName) || isImage(contentType, originalName) || isVideo(contentType, originalName)
+	return isLegacyOrComplexDocument(contentType, originalName) || isSVG(contentType, originalName) || isMarkup(contentType, originalName) || isImage(contentType, originalName) || isVideo(contentType, originalName)
 }
 
 func fileRequiresPostUploadFullScan(contentType, originalName string, policy config.SecurityPolicy) bool {
@@ -236,12 +248,14 @@ func fileSanitizationMode(contentType, originalName string, policy config.FileSa
 	switch {
 	case isSVG(contentType, originalName):
 		return fallbackMode(policy.SVG.DefaultMode, "reject_active_or_external_content")
+	case isMarkup(contentType, originalName):
+		return fallbackMode(policy.Markup.DefaultMode, "reject_active_or_external_content")
 	case isImage(contentType, originalName), isVideo(contentType, originalName):
 		return fallbackMode(policy.ImageVideoMetadata.DefaultMode, "sanitize_metadata")
 	case isPDF(contentType, originalName), isOfficeOpenXML(contentType, originalName):
 		return fallbackMode(policy.OfficePDF.DefaultMode, "reject_active_content")
-	case isLegacyOffice(contentType, originalName):
-		return fallbackMode(policy.LegacyOffice.DefaultMode, "reject")
+	case isLegacyOrComplexDocument(contentType, originalName):
+		return fallbackMode(policy.LegacyOrComplexDocuments.DefaultMode, "reject")
 	default:
 		return fallbackMode(policy.DefaultMode, "secure_default")
 	}
@@ -739,6 +753,143 @@ func inspectSVG(body []byte, limits config.ResourceLimitPolicy, policy config.SV
 	}
 }
 
+func inspectMarkup(body []byte, contentType, originalName string, limits config.ResourceLimitPolicy, policy config.MarkupSanitizationPolicy) error {
+	if isXML(contentType, originalName) {
+		return inspectXMLMarkup(body, limits)
+	}
+	if isMarkdown(contentType, originalName) && !policy.MarkdownRawHTMLInspection {
+		return nil
+	}
+	if isHTML(contentType, originalName) && !policy.HTMLActiveContentInspection {
+		return nil
+	}
+	return inspectHTMLLikeMarkup(body, limits)
+}
+
+func inspectHTMLLikeMarkup(body []byte, limits config.ResourceLimitPolicy) error {
+	lower := bytes.ToLower(body)
+	objectCount := int64(bytes.Count(lower, []byte("<")))
+	if limits.MaxObjectCount > 0 && objectCount > limits.MaxObjectCount {
+		return markupReject(http.StatusRequestEntityTooLarge, "markup_parser_limit_exceeded", "markup object count exceeds configured limit")
+	}
+	if containsAnyBytes(lower, [][]byte{
+		[]byte("<script"),
+		[]byte("<iframe"),
+	}) {
+		if bytes.Contains(lower, []byte("<script")) {
+			return markupReject(http.StatusUnsupportedMediaType, "markup_script_detected", "markup script element is not allowed")
+		}
+		return markupReject(http.StatusUnsupportedMediaType, "markup_iframe_detected", "markup iframe element is not allowed")
+	}
+	if containsAnyBytes(lower, [][]byte{
+		[]byte("<object"), []byte("<embed"), []byte("<applet"), []byte("<frame"), []byte("<frameset"), []byte("<form"),
+	}) {
+		return markupReject(http.StatusUnsupportedMediaType, "markup_active_content_rejected", "markup active or embedded element is not allowed")
+	}
+	if bytes.Contains(lower, []byte("http-equiv")) && bytes.Contains(lower, []byte("refresh")) {
+		return markupReject(http.StatusUnsupportedMediaType, "markup_external_reference_detected", "markup meta refresh is not allowed")
+	}
+	if containsAnyBytes(lower, [][]byte{
+		[]byte(" onclick="), []byte(" onload="), []byte(" onerror="), []byte(" onmouseover="), []byte(" onfocus="), []byte(" onsubmit="),
+	}) || containsEventHandlerAttribute(lower) {
+		return markupReject(http.StatusUnsupportedMediaType, "markup_event_handler_detected", "markup event handler attribute is not allowed")
+	}
+	if bytes.Contains(lower, []byte("javascript:")) {
+		return markupReject(http.StatusUnsupportedMediaType, "markup_javascript_url_detected", "markup JavaScript URL is not allowed")
+	}
+	if containsAnyBytes(lower, [][]byte{
+		[]byte("<link"), []byte("@import"), []byte("url(http:"), []byte("url(https:"), []byte("url(//"), []byte(" src=\"http:"), []byte(" src='http:"), []byte(" src=\"https:"), []byte(" src='https:"),
+	}) {
+		return markupReject(http.StatusUnsupportedMediaType, "markup_external_reference_detected", "markup external reference is not allowed")
+	}
+	return nil
+}
+
+func containsEventHandlerAttribute(lower []byte) bool {
+	for i := 0; i+3 < len(lower); i++ {
+		if lower[i] != ' ' && lower[i] != '\n' && lower[i] != '\r' && lower[i] != '\t' {
+			continue
+		}
+		if lower[i+1] != 'o' || lower[i+2] != 'n' {
+			continue
+		}
+		j := i + 3
+		for ; j < len(lower); j++ {
+			c := lower[j]
+			if (c >= 'a' && c <= 'z') || c == '-' || c == ':' {
+				continue
+			}
+			break
+		}
+		if j > i+3 && j < len(lower) && lower[j] == '=' {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectXMLMarkup(body []byte, limits config.ResourceLimitPolicy) error {
+	lower := bytes.ToLower(body)
+	if bytes.Contains(lower, []byte("<!doctype")) {
+		if containsAnyBytes(lower, [][]byte{[]byte("system"), []byte("public"), []byte("<!entity")}) {
+			return markupReject(http.StatusUnsupportedMediaType, "xml_external_entity_detected", "XML external entity or DTD subset is not allowed")
+		}
+	}
+	if bytes.Contains(lower, []byte("<!entity")) {
+		return markupReject(http.StatusUnsupportedMediaType, "xml_external_entity_detected", "XML entity declaration is not allowed")
+	}
+	if bytes.Contains(lower, []byte("<xi:include")) || bytes.Contains(lower, []byte("<xinclude:include")) {
+		return markupReject(http.StatusUnsupportedMediaType, "xml_xinclude_detected", "XML XInclude is not allowed")
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	depth := 0
+	objects := int64(0)
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "XML is malformed"}
+		}
+		switch t := token.(type) {
+		case xml.Directive:
+			if bytes.Contains(bytes.ToLower([]byte(t)), []byte("doctype")) || bytes.Contains(bytes.ToLower([]byte(t)), []byte("entity")) {
+				return markupReject(http.StatusUnsupportedMediaType, "xml_external_entity_detected", "XML entity declaration is not allowed")
+			}
+		case xml.StartElement:
+			depth++
+			objects++
+			if limits.MaxXMLDepth > 0 && depth > limits.MaxXMLDepth {
+				return markupReject(http.StatusRequestEntityTooLarge, "markup_parser_limit_exceeded", "XML depth exceeds configured limit")
+			}
+			if limits.MaxObjectCount > 0 && objects > limits.MaxObjectCount {
+				return markupReject(http.StatusRequestEntityTooLarge, "markup_parser_limit_exceeded", "XML object count exceeds configured limit")
+			}
+			name := strings.ToLower(t.Name.Local)
+			space := strings.ToLower(t.Name.Space)
+			if name == "include" && (space == "http://www.w3.org/2001/xinclude" || strings.EqualFold(t.Name.Space, "xi")) {
+				return markupReject(http.StatusUnsupportedMediaType, "xml_xinclude_detected", "XML XInclude is not allowed")
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+}
+
+func containsAnyBytes(body []byte, needles [][]byte) bool {
+	for _, needle := range needles {
+		if bytes.Contains(body, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func markupReject(status int, code, message string) error {
+	return securityUploadError{status: status, code: code, message: message}
+}
+
 func svgElementHasExternalRef(el xml.StartElement, policy config.SVGSanitizationPolicy) bool {
 	for _, attr := range el.Attr {
 		if strings.EqualFold(attr.Name.Local, "href") && svgExternalReference(attr.Value, policy) {
@@ -939,6 +1090,40 @@ func isLegacyOffice(contentType, originalName string) bool {
 	default:
 		return hasAnyExtension(originalName, ".doc", ".xls", ".ppt")
 	}
+}
+
+func isLegacyOrComplexDocument(contentType, originalName string) bool {
+	return isLegacyOffice(contentType, originalName) || isRTF(contentType, originalName)
+}
+
+func isRTF(contentType, originalName string) bool {
+	switch contentType {
+	case "application/rtf", "text/rtf", "application/x-rtf", "text/richtext":
+		return true
+	default:
+		return hasAnyExtension(originalName, ".rtf")
+	}
+}
+
+func isMarkup(contentType, originalName string) bool {
+	return isMarkdown(contentType, originalName) || isHTML(contentType, originalName) || isXML(contentType, originalName)
+}
+
+func isMarkdown(contentType, originalName string) bool {
+	return contentType == "text/markdown" || hasAnyExtension(originalName, ".md", ".markdown")
+}
+
+func isHTML(contentType, originalName string) bool {
+	switch contentType {
+	case "text/html", "application/xhtml+xml":
+		return true
+	default:
+		return hasAnyExtension(originalName, ".html", ".htm", ".xhtml")
+	}
+}
+
+func isXML(contentType, originalName string) bool {
+	return contentType == "application/xml" || contentType == "text/xml" || strings.HasSuffix(contentType, "+xml") || hasAnyExtension(originalName, ".xml")
 }
 
 func hasAnyExtension(name string, extensions ...string) bool {

@@ -68,6 +68,7 @@ rules:
     - file exceeding policy:resource-limit-policy
     - file failing policy:structural-validation-policy
     - file rejected by policy:file-type-sanitization-policy
+    - Markdown, HTML, or XML rejected by policy:markup-active-content-policy
   references:
     - rule:prefix-replay
     - requirement:streaming-upload
@@ -81,5 +82,6 @@ rules:
     - policy:structural-validation-policy
     - policy:document-active-content-policy
     - policy:svg-security-policy
+    - policy:markup-active-content-policy
     - data:security-check-result
 ```

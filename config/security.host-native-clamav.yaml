@@ -1,0 +1,7 @@
+# Host-native development profile with ClamAV running on the host loopback.
+clamav:
+  enabled: true
+  address: 127.0.0.1:3310
+  scan_timeout_ms: 30000
+  stream_chunk_bytes: 131072
+

@@ -686,26 +686,24 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	body := io.Reader(limited)
 	var inspectedPrefix []byte
 	archiveKind := archiveKindFor(contentType, target.originalName)
-	if s.cfg.Security.MimeMagic.Enabled {
-		inspection, err := inspectUploadPrefix(limited, contentType, target.originalName, s.cfg.Security.MimeMagic)
-		if err != nil {
-			s.failUpload(uploadKey, err.Error())
-			status, code := securityErrorResponse(err)
-			writeError(w, status, code, err.Error())
-			return
-		}
-		inspectedPrefix = inspection.prefix
-		if archiveKind == archiveUnknown {
-			archiveKind = archiveKindFromMagic(inspectedPrefix)
-		}
-		body = io.MultiReader(bytes.NewReader(inspection.prefix), limited)
-		if inspection.detectedContentType != "" && contentType == "" {
-			contentType = inspection.detectedContentType
-			s.updateUpload(uploadKey, func(item *model.UploadItem) {
-				item.ContentType = contentType
-				item.UpdatedAt = time.Now().UTC()
-			})
-		}
+	inspection, err := inspectUploadPrefix(limited, contentType, target.originalName, s.cfg.Security.MimeMagic)
+	if err != nil {
+		s.failUpload(uploadKey, err.Error())
+		status, code := securityErrorResponse(err)
+		writeError(w, status, code, err.Error())
+		return
+	}
+	inspectedPrefix = inspection.prefix
+	if archiveKind == archiveUnknown {
+		archiveKind = archiveKindFromMagic(inspectedPrefix)
+	}
+	body = io.MultiReader(bytes.NewReader(inspection.prefix), limited)
+	if inspection.detectedContentType != "" && contentType == "" {
+		contentType = inspection.detectedContentType
+		s.updateUpload(uploadKey, func(item *model.UploadItem) {
+			item.ContentType = contentType
+			item.UpdatedAt = time.Now().UTC()
+		})
 	}
 	sanitized, err := applyFileSanitization(body, contentType, target.originalName, s.cfg.Security)
 	if err != nil {
@@ -1832,7 +1830,7 @@ func inspectUploadPrefix(reader io.Reader, declared, originalName string, policy
 			message: scriptRejectionMessage(script),
 		}
 	}
-	if declared != "" && detected != "" && !allowedScript && !mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) {
+	if declared != "" && detected != "" && detected != "application/octet-stream" && !allowedScript && !mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) {
 		return uploadInspection{}, securityUploadError{
 			status:  http.StatusUnsupportedMediaType,
 			code:    "content_type_mismatch",

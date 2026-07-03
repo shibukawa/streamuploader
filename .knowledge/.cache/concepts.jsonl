@@ -56,6 +56,7 @@
 {"category": "constraint", "id": "policy:frontend-upload-cancel-policy", "path": ".knowledge/policy/frontend-upload-cancel-policy.md", "role": "supporting", "title": "Frontend Upload Cancel Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:http-cors-header-policy", "path": ".knowledge/policy/http-cors-header-policy.md", "role": "supporting", "title": "HTTP CORS Header Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:jwt-claim-authorization", "path": ".knowledge/policy/jwt-claim-authorization.md", "role": "supporting", "title": "JWT Claim Authorization", "type": "policy"}
+{"category": "constraint", "id": "policy:markup-active-content-policy", "path": ".knowledge/policy/markup-active-content-policy.md", "role": "supporting", "title": "Markup Active Content Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:metadata-stripping-policy", "path": ".knowledge/policy/metadata-stripping-policy.md", "role": "supporting", "title": "Metadata Stripping Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:object-access-policy", "path": ".knowledge/policy/object-access-policy.md", "role": "supporting", "title": "Object Access Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:placeholder-serving-policy", "path": ".knowledge/policy/placeholder-serving-policy.md", "role": "supporting", "title": "Placeholder Serving Policy", "type": "policy"}

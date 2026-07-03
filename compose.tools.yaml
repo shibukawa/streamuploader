@@ -1,0 +1,93 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    command:
+      - /data
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_CONSOLE_ENABLE: true
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfs-tools-data:/data
+
+  demo-app:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    image: streamuploader-demo-app:local
+    environment:
+      SU_ADDR: :8081
+      SU_DEMO_DATA_PATH: /data/files.json
+      SU_UPLOAD_BASE_PATH: /api/upload
+      SU_DOWNLOAD_MODE: presigned
+      SU_DELETE_OBJECTS_ON_DELETE: "true"
+      SU_STREAMUPLOADER_PUBLIC_URL: http://localhost:8080
+      SU_STREAMUPLOADER_PROXY_URL: http://streamuploader:8080
+      SU_BACKEND_CONTROL_URL: http://streamuploader:8082
+      SU_S3_BUCKET: stream-upload
+      SU_S3_ENDPOINT: http://rustfs:9000
+      SU_S3_DOWNLOAD_ENDPOINT: http://localhost:9000
+      SU_S3_REGION: us-east-1
+      SU_S3_FORCE_PATH_STYLE: "true"
+      SU_S3_ACCESS_KEY_ID: rustfsadmin
+      SU_S3_SECRET_ACCESS_KEY: rustfsadmin
+    ports:
+      - "8081:8081"
+    volumes:
+      - demo-tools-data:/data
+
+  streamuploader:
+    image: ${STREAMUPLOADER_TOOLS_IMAGE:-streamuploader:tools}
+    command:
+      - server
+    depends_on:
+      - rustfs
+      - demo-app
+      - clamav
+    restart: on-failure
+    environment:
+      SU_ADDR: :8080
+      SU_BACKEND_ADDR: :8082
+      SU_MODE: simple_fronting_reverse_proxy
+      SU_PUBLIC_BASE_URL: http://localhost:8080
+      SU_UPLOAD_BASE_PATH: /api/upload
+      SU_APPLICATION_SERVER_URL: http://demo-app:8081
+      SU_ALLOWED_ORIGINS: "*"
+      SU_S3_BUCKET: stream-upload
+      SU_S3_ENDPOINT: http://rustfs:9000
+      SU_S3_PUBLIC_ENDPOINT: http://localhost:9000
+      SU_S3_REGION: us-east-1
+      SU_S3_FORCE_PATH_STYLE: "true"
+      SU_S3_PUBLIC_READ: "true"
+      SU_S3_ACCESS_KEY_ID: rustfsadmin
+      SU_S3_SECRET_ACCESS_KEY: rustfsadmin
+      SU_ALLOW_FRONTEND_FILE_ACCESS: "true"
+      SU_ENABLE_SHARED_KEY: "true"
+      SU_SHARED_KEY_BITS: "128"
+      SU_MAX_ARCHIVE_FILES: "100"
+      SU_MAX_ARCHIVE_BYTES: "1073741824"
+      SU_SECURITY_CONFIG: /etc/streamuploader/security.yaml
+      SU_CLAMAV_HOST: clamav:3310
+    ports:
+      - "8080:8080"
+      - "8082:8082"
+    volumes:
+      - ./config/security.yaml:/etc/streamuploader/security.yaml:ro
+
+  clamav:
+    image: clamav/clamav:stable_base-debian
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    environment:
+      FRESHCLAM_CHECKS: "24"
+    volumes:
+      - clamav-tools-db:/var/lib/clamav
+
+volumes:
+  rustfs-tools-data:
+  demo-tools-data:
+  clamav-tools-db:

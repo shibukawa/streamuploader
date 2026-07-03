@@ -1,3 +1,5 @@
 sbom-*.spdx.json
 .cache
-
+.DS_Store
+cmd/streamuploader/streamuploader
+cmd/streamuploader/streamuploader.exe

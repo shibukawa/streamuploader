@@ -132,6 +132,45 @@
           },
           "type": "object"
         },
+        "legacy_or_complex_documents": {
+          "additionalProperties": false,
+          "properties": {
+            "default_mode": {
+              "enum": [
+                "reject",
+                "accept_as_is"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "markup": {
+          "additionalProperties": false,
+          "properties": {
+            "default_mode": {
+              "enum": [
+                "reject_active_or_external_content",
+                "sanitize_when_supported",
+                "accept_as_is"
+              ],
+              "type": "string"
+            },
+            "html_active_content_inspection": {
+              "type": "boolean"
+            },
+            "markdown_raw_html_inspection": {
+              "type": "boolean"
+            },
+            "xml_external_entity_resolution": {
+              "enum": [
+                "disabled"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "office_pdf": {
           "additionalProperties": false,
           "properties": {
@@ -264,6 +303,9 @@
             "avif": {
               "type": "boolean"
             },
+            "bin": {
+              "type": "boolean"
+            },
             "bmp": {
               "type": "boolean"
             },
@@ -300,6 +342,24 @@
             "executable": {
               "type": "boolean"
             },
+            "mach-o": {
+              "type": "boolean"
+            },
+            "macho": {
+              "type": "boolean"
+            },
+            "markdown": {
+              "type": "boolean"
+            },
+            "md": {
+              "type": "boolean"
+            },
+            "octet": {
+              "type": "boolean"
+            },
+            "octet-stream": {
+              "type": "boolean"
+            },
             "gif": {
               "type": "boolean"
             },
@@ -307,6 +367,12 @@
               "type": "boolean"
             },
             "gzip": {
+              "type": "boolean"
+            },
+            "html": {
+              "type": "boolean"
+            },
+            "htm": {
               "type": "boolean"
             },
             "image": {
@@ -331,6 +397,9 @@
               "type": "boolean"
             },
             "png": {
+              "type": "boolean"
+            },
+            "rtf": {
               "type": "boolean"
             },
             "svg": {
@@ -358,6 +427,9 @@
               "type": "boolean"
             },
             "xml": {
+              "type": "boolean"
+            },
+            "xhtml": {
               "type": "boolean"
             },
             "xz": {
@@ -388,6 +460,9 @@
               "type": "boolean"
             },
             "application/msword": {
+              "type": "boolean"
+            },
+            "application/octet-stream": {
               "type": "boolean"
             },
             "application/pdf": {
@@ -426,6 +501,9 @@
             "application/x-executable": {
               "type": "boolean"
             },
+            "application/x-mach-binary": {
+              "type": "boolean"
+            },
             "application/x-gzip": {
               "type": "boolean"
             },
@@ -433,6 +511,9 @@
               "type": "boolean"
             },
             "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-ole-storage": {
               "type": "boolean"
             },
             "application/x-sharedlib": {
@@ -448,6 +529,9 @@
               "type": "boolean"
             },
             "application/xml": {
+              "type": "boolean"
+            },
+            "application/xhtml+xml": {
               "type": "boolean"
             },
             "application/zip": {
@@ -549,6 +633,9 @@
             "text/csv": {
               "type": "boolean"
             },
+            "text/html": {
+              "type": "boolean"
+            },
             "text/javascript": {
               "type": "boolean"
             },
@@ -556,6 +643,9 @@
               "type": "boolean"
             },
             "text/plain": {
+              "type": "boolean"
+            },
+            "text/rtf": {
               "type": "boolean"
             },
             "text/x-perl": {
@@ -675,6 +765,9 @@
             "avif": {
               "type": "boolean"
             },
+            "bin": {
+              "type": "boolean"
+            },
             "bmp": {
               "type": "boolean"
             },
@@ -711,6 +804,24 @@
             "executable": {
               "type": "boolean"
             },
+            "mach-o": {
+              "type": "boolean"
+            },
+            "macho": {
+              "type": "boolean"
+            },
+            "markdown": {
+              "type": "boolean"
+            },
+            "md": {
+              "type": "boolean"
+            },
+            "octet": {
+              "type": "boolean"
+            },
+            "octet-stream": {
+              "type": "boolean"
+            },
             "gif": {
               "type": "boolean"
             },
@@ -718,6 +829,12 @@
               "type": "boolean"
             },
             "gzip": {
+              "type": "boolean"
+            },
+            "html": {
+              "type": "boolean"
+            },
+            "htm": {
               "type": "boolean"
             },
             "image": {
@@ -742,6 +859,9 @@
               "type": "boolean"
             },
             "png": {
+              "type": "boolean"
+            },
+            "rtf": {
               "type": "boolean"
             },
             "svg": {
@@ -769,6 +889,9 @@
               "type": "boolean"
             },
             "xml": {
+              "type": "boolean"
+            },
+            "xhtml": {
               "type": "boolean"
             },
             "xz": {
@@ -799,6 +922,9 @@
               "type": "boolean"
             },
             "application/msword": {
+              "type": "boolean"
+            },
+            "application/octet-stream": {
               "type": "boolean"
             },
             "application/pdf": {
@@ -837,6 +963,9 @@
             "application/x-executable": {
               "type": "boolean"
             },
+            "application/x-mach-binary": {
+              "type": "boolean"
+            },
             "application/x-gzip": {
               "type": "boolean"
             },
@@ -844,6 +973,9 @@
               "type": "boolean"
             },
             "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-ole-storage": {
               "type": "boolean"
             },
             "application/x-sharedlib": {
@@ -859,6 +991,9 @@
               "type": "boolean"
             },
             "application/xml": {
+              "type": "boolean"
+            },
+            "application/xhtml+xml": {
               "type": "boolean"
             },
             "application/zip": {
@@ -960,6 +1095,9 @@
             "text/csv": {
               "type": "boolean"
             },
+            "text/html": {
+              "type": "boolean"
+            },
             "text/javascript": {
               "type": "boolean"
             },
@@ -967,6 +1105,9 @@
               "type": "boolean"
             },
             "text/plain": {
+              "type": "boolean"
+            },
+            "text/rtf": {
               "type": "boolean"
             },
             "text/x-perl": {
@@ -1020,6 +1161,7 @@
                 "text/x-python",
                 "application/x-msdownload",
                 "application/xml",
+                "application/xhtml+xml",
                 "audio/webm",
                 "audio/flac",
                 "application/x-httpd-php",
@@ -1027,13 +1169,17 @@
                 "application/gzip",
                 "application/x-tar",
                 "application/pdf",
+                "application/octet-stream",
                 "text/markdown",
+                "text/html",
                 "image/gif",
                 "application/x-7z-compressed",
                 "text/x-perl",
                 "application/rtf",
+                "text/rtf",
                 "audio/wav",
                 "application/x-executable",
+                "application/x-mach-binary",
                 "application/msword",
                 "application/vnd.ms-excel",
                 "application/x-zstd",
@@ -1058,6 +1204,7 @@
                 "image/avif",
                 "image/pjpeg",
                 "text/javascript",
+                "application/x-ole-storage",
                 "text/x-ruby",
                 "application/x-sharedlib",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

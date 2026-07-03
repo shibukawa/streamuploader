@@ -60,6 +60,12 @@ type Plan struct {
 	UnavailableNotes []string
 }
 
+type CandidateSummary struct {
+	Kind        string
+	Backend     string
+	ContentType string
+}
+
 type encoderCandidate struct {
 	contentType string
 	backend     string
@@ -140,6 +146,18 @@ func currentPlan(policy config.ThumbnailPolicy) Plan {
 		return plan
 	}
 	return Configure(policy)
+}
+
+func ToolCandidateSummaries(plan Plan) []CandidateSummary {
+	out := make([]CandidateSummary, 0, len(plan.ToolCandidates))
+	for _, candidate := range plan.ToolCandidates {
+		out = append(out, CandidateSummary{
+			Kind:        candidate.kind,
+			Backend:     candidate.backend,
+			ContentType: candidate.contentType,
+		})
+	}
+	return out
 }
 
 func Generate(ctx context.Context, store storage.Store, bucket, sourceKey string, policy config.ThumbnailPolicy) (Result, error) {

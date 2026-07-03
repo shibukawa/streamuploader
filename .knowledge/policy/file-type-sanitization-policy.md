@@ -56,13 +56,14 @@ rules:
       - optional sanitize only when implementation can remove feature without corrupting file
     references:
       - policy:document-active-content-policy
-  legacy_office:
+  legacy_or_complex_documents:
     scope:
       - doc
       - xls
       - ppt
+      - rtf
     default: reject
-    reason: legacy binary formats have larger attack surface and unreliable inspection
+    reason: legacy or complex rich document formats have larger attack surface and unreliable inspection
     optional_modes:
       accept_as_is: store without inspection or sanitization
   svg:
@@ -72,6 +73,20 @@ rules:
       - otherwise treat as full-scan format and inspect before final commit
     references:
       - policy:svg-security-policy
+  markup:
+    scope:
+      - markdown
+      - html
+      - xml
+    default: reject_active_or_external_content
+    behavior:
+      - reject Markdown raw HTML containing script, iframe, or other active HTML
+      - reject HTML script, iframe, embedded content, event handlers, JavaScript URLs, and external loads
+      - reject XML external entity, external DTD subset, XInclude, and unsafe entity expansion features
+      - disable XML external entity resolution in parser configuration
+      - treat as full-scan text formats before final commit when default mode applies
+    references:
+      - policy:markup-active-content-policy
   reject:
     - configured maximum file size exceeded
     - resource parser limit exceeded
@@ -91,5 +106,6 @@ references:
   - policy:structural-validation-policy
   - policy:document-active-content-policy
   - policy:svg-security-policy
+  - policy:markup-active-content-policy
   - system:s3-storage
 ```

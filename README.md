@@ -38,10 +38,10 @@ Security configuration:
 
 - Runtime environment variables use the `SU_` prefix. Existing unprefixed names are still read as compatibility fallbacks.
 - `SU_SECURITY_CONFIG` points to a YAML policy file. See `config/security.yaml`.
-- MIME/magic-header checking is on by default. Set `SU_MIME_MAGIC_CHECK=false` or `mime_magic.enabled: false` to opt out.
+- MIME/magic-header checking is always enabled and cannot be disabled by configuration.
 - Use `mime_magic.allow_file_types` as bool switches such as `images: true`, `png: true`, `jpeg: true`, and `pdf: true`; use `allow_mime_types` with exact MIME keys such as `application/pdf: true`.
 - Browsers and operating systems do not reliably set script MIME types for selected files, so script-like uploads are detected from shebangs and known script extensions. Use `allowed_script_types` or `allowed_script_extensions` to opt in.
-- `file_sanitization` is on by default. JPEG/PNG metadata is stripped without re-encoding, SVG active/external content is rejected, Office/PDF active content is scanned before publish, and legacy `.doc/.xls/.ppt` files are rejected unless a per-type `accept_as_is` override is configured.
+- `file_sanitization` is on by default. JPEG/PNG metadata is stripped without re-encoding, SVG and markup active/external content is rejected, Office/PDF active content is scanned before publish, and legacy `.doc/.xls/.ppt` plus RTF files are rejected unless a per-type `accept_as_is` override is configured.
 - `resource_limits` and `structural_validation` enforce parser limits and basic format validity before files are published.
 - The YAML security config is validated against the built-in JSON Schema at startup, so unknown file type or MIME keys fail fast. The editor-facing schema is `config/security.schema.json`.
 - ClamAV scanning is optional and enabled by setting `SU_CLAMAV_HOST` to a clamd TCP address such as `clamav:3310`; when enabled, uploads are streamed to ClamAV and S3 in parallel and only published after the scan passes.
@@ -65,6 +65,53 @@ curl http://localhost:8082/healthz
 ```
 
 Open `http://localhost:8080/` for the demo app through streamuploader. This starts `streamuploader` public upload/proxy traffic on `localhost:8080`, backend control on `localhost:8082`, the demo app on `localhost:8081`, and RustFS on `localhost:9000`.
+
+## Tools Image Compose
+
+Use this when you want streamuploader to run from the tools image that already contains the extra conversion tools. Build the tools image first, then start the alternate compose file:
+
+```bash
+./scripts/build-tools-image.sh streamuploader:tools
+docker compose -f compose.tools.yaml up --build
+```
+
+Set `STREAMUPLOADER_TOOLS_IMAGE` to use a different prebuilt tools image tag:
+
+```bash
+STREAMUPLOADER_TOOLS_IMAGE=streamuploader:tools docker compose -f compose.tools.yaml up --build
+```
+
+This starts the same local stack as `compose.yaml`: streamuploader on `localhost:8080`, backend control on `localhost:8082`, the demo app on `localhost:8081`, RustFS on `localhost:9000`, and ClamAV on `localhost:3310`.
+
+## Host-Native Run
+
+These scripts compile the Go binaries on the host, run streamuploader and the demo app as local processes, and run RustFS in a container. They write binaries, logs, and local data under `.cache/native/`.
+
+Without ClamAV:
+
+```bash
+./scripts/run-host-native.sh
+```
+
+This uses `config/security.host-native.yaml`, where ClamAV is disabled.
+
+With ClamAV:
+
+```bash
+./scripts/run-host-native-clamav.sh
+```
+
+This starts an additional ClamAV container on `127.0.0.1:3310` and uses `config/security.host-native-clamav.yaml`, where ClamAV is enabled. The first ClamAV startup can take a while while its database initializes.
+
+Both scripts expose:
+
+- demo through streamuploader: `http://localhost:8080/`
+- streamuploader backend control: `http://localhost:8082`
+- demo app directly: `http://localhost:8081`
+- RustFS API: `http://localhost:9000`
+- RustFS console: `http://localhost:9001`
+
+Press `Ctrl+C` to stop. Set `KEEP_CONTAINERS=1` to keep helper containers running after the script exits, and set `CONTAINER_RUNTIME=podman` to use Podman instead of Docker.
 
 ## Kubernetes
 

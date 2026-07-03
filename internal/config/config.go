@@ -65,7 +65,6 @@ type SecurityPolicy struct {
 }
 
 type MimeMagicPolicy struct {
-	Enabled                 bool            `yaml:"enabled"`
 	PrefixBytes             int64           `yaml:"prefix_bytes"`
 	RejectScriptUploads     bool            `yaml:"reject_script_uploads"`
 	AllowFileTypes          map[string]bool `yaml:"allow_file_types"`
@@ -124,13 +123,15 @@ type StructuralValidationPolicy struct {
 }
 
 type FileSanitizationPolicy struct {
-	Enabled            bool                           `yaml:"enabled"`
-	DefaultMode        string                         `yaml:"default_mode"`
-	PerFileType        map[string]FileTypePolicy      `yaml:"per_file_type"`
-	ImageVideoMetadata ImageVideoMetadataPolicy       `yaml:"image_video_metadata"`
-	OfficePDF          OfficePDFSanitizationPolicy    `yaml:"office_pdf"`
-	LegacyOffice       LegacyOfficeSanitizationPolicy `yaml:"legacy_office"`
-	SVG                SVGSanitizationPolicy          `yaml:"svg"`
+	Enabled                  bool                           `yaml:"enabled"`
+	DefaultMode              string                         `yaml:"default_mode"`
+	PerFileType              map[string]FileTypePolicy      `yaml:"per_file_type"`
+	ImageVideoMetadata       ImageVideoMetadataPolicy       `yaml:"image_video_metadata"`
+	OfficePDF                OfficePDFSanitizationPolicy    `yaml:"office_pdf"`
+	LegacyOffice             LegacyOfficeSanitizationPolicy `yaml:"legacy_office"`
+	LegacyOrComplexDocuments LegacyOfficeSanitizationPolicy `yaml:"legacy_or_complex_documents"`
+	SVG                      SVGSanitizationPolicy          `yaml:"svg"`
+	Markup                   MarkupSanitizationPolicy       `yaml:"markup"`
 }
 
 type FileTypePolicy struct {
@@ -156,6 +157,13 @@ type SVGSanitizationPolicy struct {
 	DefaultMode              string `yaml:"default_mode"`
 	PreferStreamingXMLParser bool   `yaml:"prefer_streaming_xml_parser"`
 	AllowDataURLs            bool   `yaml:"allow_data_urls"`
+}
+
+type MarkupSanitizationPolicy struct {
+	DefaultMode                 string `yaml:"default_mode"`
+	MarkdownRawHTMLInspection   bool   `yaml:"markdown_raw_html_inspection"`
+	HTMLActiveContentInspection bool   `yaml:"html_active_content_inspection"`
+	XMLExternalEntityResolution string `yaml:"xml_external_entity_resolution"`
 }
 
 type UploadDeadlinePolicy struct {
@@ -342,8 +350,6 @@ func Load() Config {
 	if err != nil {
 		log.Fatalf("load security config: %v", err)
 	}
-	security.MimeMagic.Enabled = envBool("MIME_MIGAIC_CHECK", security.MimeMagic.Enabled)
-	security.MimeMagic.Enabled = envBool("MIME_MAGIC_CHECK", security.MimeMagic.Enabled)
 	clamAVHost := env("CLAMAV_HOST", env("CLAMAV_ADDR", ""))
 	if clamAVHost != "" {
 		security.ClamAV.Enabled = true
@@ -421,13 +427,14 @@ func Load() Config {
 func DefaultSecurityPolicy() SecurityPolicy {
 	return SecurityPolicy{
 		MimeMagic: MimeMagicPolicy{
-			Enabled:             true,
 			PrefixBytes:         3072,
 			RejectScriptUploads: true,
 			EquivalentMIMETypes: [][]string{
 				{"application/xml", "text/xml"},
 				{"image/jpeg", "image/pjpeg"},
 				{"application/gzip", "application/x-gzip"},
+				{"application/rtf", "text/rtf"},
+				{"application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/x-ole-storage"},
 			},
 			AllowFileTypes:          map[string]bool{},
 			DenyFileTypes:           map[string]bool{},
@@ -435,10 +442,11 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			AllowedScriptTypes:      map[string]bool{},
 			AllowedScriptExtensions: map[string]bool{},
 			DenyMIMETypes: map[string]bool{
-				"application/x-dosexec":    true,
-				"application/x-executable": true,
-				"application/x-sharedlib":  true,
-				"application/x-msdownload": true,
+				"application/x-dosexec":     true,
+				"application/x-executable":  true,
+				"application/x-mach-binary": true,
+				"application/x-sharedlib":   true,
+				"application/x-msdownload":  true,
 			},
 		},
 		ArchiveGuard: ArchiveGuardPolicy{
@@ -497,10 +505,19 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			LegacyOffice: LegacyOfficeSanitizationPolicy{
 				DefaultMode: "reject",
 			},
+			LegacyOrComplexDocuments: LegacyOfficeSanitizationPolicy{
+				DefaultMode: "reject",
+			},
 			SVG: SVGSanitizationPolicy{
 				DefaultMode:              "reject_active_or_external_content",
 				PreferStreamingXMLParser: true,
 				AllowDataURLs:            false,
+			},
+			Markup: MarkupSanitizationPolicy{
+				DefaultMode:                 "reject_active_or_external_content",
+				MarkdownRawHTMLInspection:   true,
+				HTMLActiveContentInspection: true,
+				XMLExternalEntityResolution: "disabled",
 			},
 		},
 		UploadDeadlines: UploadDeadlinePolicy{
@@ -820,7 +837,7 @@ func normalizeStructuralValidationPolicy(policy *StructuralValidationPolicy) {
 
 func normalizeFileSanitizationPolicy(policy *FileSanitizationPolicy) {
 	defaults := DefaultSecurityPolicy().FileSanitization
-	if policy.DefaultMode == "" && policy.ImageVideoMetadata.DefaultMode == "" && policy.OfficePDF.DefaultMode == "" && policy.LegacyOffice.DefaultMode == "" && policy.SVG.DefaultMode == "" && policy.PerFileType == nil {
+	if policy.DefaultMode == "" && policy.ImageVideoMetadata.DefaultMode == "" && policy.OfficePDF.DefaultMode == "" && policy.LegacyOffice.DefaultMode == "" && policy.LegacyOrComplexDocuments.DefaultMode == "" && policy.SVG.DefaultMode == "" && policy.Markup.DefaultMode == "" && policy.PerFileType == nil {
 		*policy = defaults
 		return
 	}
@@ -861,12 +878,30 @@ func normalizeFileSanitizationPolicy(policy *FileSanitizationPolicy) {
 	if policy.LegacyOffice.DefaultMode == "" {
 		policy.LegacyOffice.DefaultMode = defaults.LegacyOffice.DefaultMode
 	}
+	policy.LegacyOrComplexDocuments.DefaultMode = normalizeSanitizationMode(policy.LegacyOrComplexDocuments.DefaultMode)
+	if policy.LegacyOrComplexDocuments.DefaultMode == "" {
+		policy.LegacyOrComplexDocuments.DefaultMode = policy.LegacyOffice.DefaultMode
+	}
 	policy.SVG.DefaultMode = normalizeSanitizationMode(policy.SVG.DefaultMode)
 	if policy.SVG.DefaultMode == "" {
 		policy.SVG.DefaultMode = defaults.SVG.DefaultMode
 	}
 	if !policy.SVG.PreferStreamingXMLParser {
 		policy.SVG.PreferStreamingXMLParser = defaults.SVG.PreferStreamingXMLParser
+	}
+	policy.Markup.DefaultMode = normalizeSanitizationMode(policy.Markup.DefaultMode)
+	if policy.Markup.DefaultMode == "" {
+		policy.Markup.DefaultMode = defaults.Markup.DefaultMode
+	}
+	if !policy.Markup.MarkdownRawHTMLInspection {
+		policy.Markup.MarkdownRawHTMLInspection = defaults.Markup.MarkdownRawHTMLInspection
+	}
+	if !policy.Markup.HTMLActiveContentInspection {
+		policy.Markup.HTMLActiveContentInspection = defaults.Markup.HTMLActiveContentInspection
+	}
+	policy.Markup.XMLExternalEntityResolution = strings.ToLower(strings.TrimSpace(policy.Markup.XMLExternalEntityResolution))
+	if policy.Markup.XMLExternalEntityResolution == "" {
+		policy.Markup.XMLExternalEntityResolution = defaults.Markup.XMLExternalEntityResolution
 	}
 }
 
@@ -993,59 +1028,70 @@ func normalizeFileType(value string) string {
 }
 
 var mimeFileTypes = map[string][]string{
-	"images":     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
-	"image":      {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
-	"documents":  {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-	"document":   {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-	"archives":   {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
-	"archive":    {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
-	"audio":      {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/flac", "audio/aac"},
-	"videos":     {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
-	"video":      {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
-	"text":       {"text/plain", "text/csv", "text/markdown", "application/json", "application/xml", "text/xml"},
-	"png":        {"image/png"},
-	"jpeg":       {"image/jpeg", "image/pjpeg"},
-	"jpg":        {"image/jpeg", "image/pjpeg"},
-	"gif":        {"image/gif"},
-	"webp":       {"image/webp"},
-	"avif":       {"image/avif"},
-	"tiff":       {"image/tiff", "image/x-tiff"},
-	"tif":        {"image/tiff", "image/x-tiff"},
-	"bmp":        {"image/bmp"},
-	"svg":        {"image/svg+xml"},
-	"heif":       {"image/heif", "image/heif-sequence"},
-	"heic":       {"image/heic", "image/heic-sequence"},
-	"jxl":        {"image/jxl"},
-	"jpegxl":     {"image/jxl"},
-	"jp2":        {"image/jp2"},
-	"jpx":        {"image/jpx"},
-	"jpm":        {"image/jpm"},
-	"jpf":        {"image/jpf"},
-	"jpeg2000":   {"image/jp2", "image/jpx"},
-	"psd":        {"image/vnd.adobe.photoshop", "image/x-photoshop"},
-	"photoshop":  {"image/vnd.adobe.photoshop", "image/x-photoshop"},
-	"tga":        {"image/x-tga", "image/tga"},
-	"pdf":        {"application/pdf"},
-	"txt":        {"text/plain"},
-	"plain":      {"text/plain"},
-	"csv":        {"text/csv"},
-	"json":       {"application/json"},
-	"xml":        {"application/xml", "text/xml"},
-	"zip":        {"application/zip"},
-	"gzip":       {"application/gzip", "application/x-gzip"},
-	"gz":         {"application/gzip", "application/x-gzip"},
-	"zstd":       {"application/zstd", "application/x-zstd"},
-	"zst":        {"application/zstd", "application/x-zstd"},
-	"brotli":     {"application/x-brotli", "application/br"},
-	"br":         {"application/x-brotli", "application/br"},
-	"bzip2":      {"application/x-bzip2"},
-	"bz2":        {"application/x-bzip2"},
-	"xz":         {"application/x-xz"},
-	"7z":         {"application/x-7z-compressed"},
-	"exe":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
-	"dll":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
-	"elf":        {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
-	"executable": {"application/x-dosexec", "application/x-executable", "application/x-sharedlib", "application/x-msdownload"},
+	"images":       {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
+	"image":        {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
+	"documents":    {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"document":     {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"archives":     {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"archive":      {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
+	"audio":        {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/flac", "audio/aac"},
+	"videos":       {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
+	"video":        {"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska"},
+	"text":         {"text/plain", "text/csv", "text/markdown", "text/html", "application/json", "application/xml", "text/xml"},
+	"png":          {"image/png"},
+	"jpeg":         {"image/jpeg", "image/pjpeg"},
+	"jpg":          {"image/jpeg", "image/pjpeg"},
+	"gif":          {"image/gif"},
+	"webp":         {"image/webp"},
+	"avif":         {"image/avif"},
+	"tiff":         {"image/tiff", "image/x-tiff"},
+	"tif":          {"image/tiff", "image/x-tiff"},
+	"bmp":          {"image/bmp"},
+	"svg":          {"image/svg+xml"},
+	"heif":         {"image/heif", "image/heif-sequence"},
+	"heic":         {"image/heic", "image/heic-sequence"},
+	"jxl":          {"image/jxl"},
+	"jpegxl":       {"image/jxl"},
+	"jp2":          {"image/jp2"},
+	"jpx":          {"image/jpx"},
+	"jpm":          {"image/jpm"},
+	"jpf":          {"image/jpf"},
+	"jpeg2000":     {"image/jp2", "image/jpx"},
+	"psd":          {"image/vnd.adobe.photoshop", "image/x-photoshop"},
+	"photoshop":    {"image/vnd.adobe.photoshop", "image/x-photoshop"},
+	"tga":          {"image/x-tga", "image/tga"},
+	"pdf":          {"application/pdf"},
+	"txt":          {"text/plain"},
+	"plain":        {"text/plain"},
+	"csv":          {"text/csv"},
+	"md":           {"text/markdown"},
+	"markdown":     {"text/markdown"},
+	"html":         {"text/html", "application/xhtml+xml"},
+	"htm":          {"text/html", "application/xhtml+xml"},
+	"xhtml":        {"application/xhtml+xml"},
+	"rtf":          {"application/rtf", "text/rtf"},
+	"json":         {"application/json"},
+	"xml":          {"application/xml", "text/xml"},
+	"bin":          {"application/octet-stream"},
+	"octet":        {"application/octet-stream"},
+	"octet-stream": {"application/octet-stream"},
+	"zip":          {"application/zip"},
+	"gzip":         {"application/gzip", "application/x-gzip"},
+	"gz":           {"application/gzip", "application/x-gzip"},
+	"zstd":         {"application/zstd", "application/x-zstd"},
+	"zst":          {"application/zstd", "application/x-zstd"},
+	"brotli":       {"application/x-brotli", "application/br"},
+	"br":           {"application/x-brotli", "application/br"},
+	"bzip2":        {"application/x-bzip2"},
+	"bz2":          {"application/x-bzip2"},
+	"xz":           {"application/x-xz"},
+	"7z":           {"application/x-7z-compressed"},
+	"exe":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
+	"dll":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
+	"elf":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
+	"mach-o":       {"application/x-mach-binary"},
+	"macho":        {"application/x-mach-binary"},
+	"executable":   {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
 }
 
 func ValidateSecurityPolicyYAML(body []byte) error {
@@ -1112,7 +1158,6 @@ func SecurityPolicyJSONSchema() string {
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"enabled":                   map[string]any{"type": "boolean"},
 					"prefix_bytes":              map[string]any{"type": "integer", "minimum": 512, "maximum": 1048576},
 					"reject_script_uploads":     map[string]any{"type": "boolean"},
 					"allow_file_types":          boolSwitchSchema(knownFileTypeNames()),
@@ -1203,10 +1248,19 @@ func SecurityPolicyJSONSchema() string {
 				"legacy_office": policyObjectSchema(map[string]any{
 					"default_mode": sanitizationModeSchema("reject", "accept_as_is"),
 				}),
+				"legacy_or_complex_documents": policyObjectSchema(map[string]any{
+					"default_mode": sanitizationModeSchema("reject", "accept_as_is"),
+				}),
 				"svg": policyObjectSchema(map[string]any{
 					"default_mode":                sanitizationModeSchema("reject_active_or_external_content", "sanitize_when_supported", "accept_as_is"),
 					"prefer_streaming_xml_parser": map[string]any{"type": "boolean"},
 					"allow_data_urls":             map[string]any{"type": "boolean"},
+				}),
+				"markup": policyObjectSchema(map[string]any{
+					"default_mode":                   sanitizationModeSchema("reject_active_or_external_content", "sanitize_when_supported", "accept_as_is"),
+					"markdown_raw_html_inspection":   map[string]any{"type": "boolean"},
+					"html_active_content_inspection": map[string]any{"type": "boolean"},
+					"xml_external_entity_resolution": map[string]any{"type": "string", "enum": []string{"disabled"}},
 				}),
 			}),
 			"upload_deadlines": policyObjectSchema(map[string]any{
