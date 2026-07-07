@@ -48,6 +48,7 @@ type Config struct {
 	HTTPCache               HTTPCachePolicy
 	Logging                 LoggingPolicy
 	Thumbnails              ThumbnailPolicy
+	TextExtraction          TextExtractionPolicy
 }
 
 type SecurityPolicy struct {
@@ -62,6 +63,7 @@ type SecurityPolicy struct {
 	HTTPCache            HTTPCachePolicy            `yaml:"http_cache"`
 	Logging              LoggingPolicy              `yaml:"logging"`
 	Thumbnails           ThumbnailPolicy            `yaml:"thumbnails"`
+	TextExtraction       TextExtractionPolicy       `yaml:"text_extraction"`
 }
 
 type MimeMagicPolicy struct {
@@ -296,6 +298,58 @@ type ThumbnailPolicy struct {
 	VideoCandidateKeyframes int           `yaml:"video_candidate_keyframes"`
 }
 
+type TextExtractionPolicy struct {
+	Enabled          bool          `yaml:"enabled"`
+	ExecutionMode    string        `yaml:"execution_mode"`
+	ObjectKeySuffix  string        `yaml:"object_key_suffix"`
+	MaxInputBytes    int64         `yaml:"max_input_bytes"`
+	MaxOutputBytes   int64         `yaml:"max_output_bytes"`
+	ExternalCommand  string        `yaml:"external_command"`
+	ExternalTimeout  time.Duration `yaml:"external_timeout"`
+	EnableOCR        bool          `yaml:"enable_ocr"`
+	OCRCommand       string        `yaml:"ocr_command"`
+	ExtractMetadata  bool          `yaml:"extract_metadata"`
+	IncludePlainText bool          `yaml:"include_plain_text"`
+}
+
+func (p *TextExtractionPolicy) UnmarshalYAML(value *yaml.Node) error {
+	type rawPolicy struct {
+		Enabled          bool   `yaml:"enabled"`
+		ExecutionMode    string `yaml:"execution_mode"`
+		ObjectKeySuffix  string `yaml:"object_key_suffix"`
+		MaxInputBytes    int64  `yaml:"max_input_bytes"`
+		MaxOutputBytes   int64  `yaml:"max_output_bytes"`
+		ExternalCommand  string `yaml:"external_command"`
+		ExternalTimeout  string `yaml:"external_timeout"`
+		EnableOCR        bool   `yaml:"enable_ocr"`
+		OCRCommand       string `yaml:"ocr_command"`
+		ExtractMetadata  bool   `yaml:"extract_metadata"`
+		IncludePlainText bool   `yaml:"include_plain_text"`
+	}
+	var raw rawPolicy
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	timeout, err := parseOptionalDuration(raw.ExternalTimeout)
+	if err != nil {
+		return err
+	}
+	*p = TextExtractionPolicy{
+		Enabled:          raw.Enabled,
+		ExecutionMode:    raw.ExecutionMode,
+		ObjectKeySuffix:  raw.ObjectKeySuffix,
+		MaxInputBytes:    raw.MaxInputBytes,
+		MaxOutputBytes:   raw.MaxOutputBytes,
+		ExternalCommand:  raw.ExternalCommand,
+		ExternalTimeout:  timeout,
+		EnableOCR:        raw.EnableOCR,
+		OCRCommand:       raw.OCRCommand,
+		ExtractMetadata:  raw.ExtractMetadata,
+		IncludePlainText: raw.IncludePlainText,
+	}
+	return nil
+}
+
 func (p *ThumbnailPolicy) UnmarshalYAML(value *yaml.Node) error {
 	type rawPolicy struct {
 		Enabled                 bool   `yaml:"enabled"`
@@ -383,6 +437,17 @@ func Load() Config {
 	security.Thumbnails.ExternalWebhookURL = env("THUMBNAIL_WEBHOOK_URL", env("THUMBNAILS_EXTERNAL_WEBHOOK_URL", security.Thumbnails.ExternalWebhookURL))
 	security.Thumbnails.ExternalTimeout = envDuration("THUMBNAILS_EXTERNAL_TIMEOUT", security.Thumbnails.ExternalTimeout)
 	security.Thumbnails.VideoCandidateKeyframes = envInt("THUMBNAILS_VIDEO_CANDIDATE_KEYFRAMES", security.Thumbnails.VideoCandidateKeyframes)
+	security.TextExtraction.Enabled = envBool("TEXT_EXTRACTION_ENABLED", security.TextExtraction.Enabled)
+	security.TextExtraction.ExecutionMode = env("TEXT_EXTRACTION_EXECUTION_MODE", security.TextExtraction.ExecutionMode)
+	security.TextExtraction.ObjectKeySuffix = env("TEXT_EXTRACTION_OBJECT_KEY_SUFFIX", security.TextExtraction.ObjectKeySuffix)
+	security.TextExtraction.MaxInputBytes = envInt64("TEXT_EXTRACTION_MAX_INPUT_BYTES", security.TextExtraction.MaxInputBytes)
+	security.TextExtraction.MaxOutputBytes = envInt64("TEXT_EXTRACTION_MAX_OUTPUT_BYTES", security.TextExtraction.MaxOutputBytes)
+	security.TextExtraction.ExternalCommand = env("TEXT_EXTRACTION_EXTERNAL_COMMAND", security.TextExtraction.ExternalCommand)
+	security.TextExtraction.ExternalTimeout = envDuration("TEXT_EXTRACTION_EXTERNAL_TIMEOUT", security.TextExtraction.ExternalTimeout)
+	security.TextExtraction.EnableOCR = envBool("TEXT_EXTRACTION_ENABLE_OCR", security.TextExtraction.EnableOCR)
+	security.TextExtraction.OCRCommand = env("TEXT_EXTRACTION_OCR_COMMAND", security.TextExtraction.OCRCommand)
+	security.TextExtraction.ExtractMetadata = envBool("TEXT_EXTRACTION_EXTRACT_METADATA", security.TextExtraction.ExtractMetadata)
+	security.TextExtraction.IncludePlainText = envBool("TEXT_EXTRACTION_INCLUDE_PLAIN_TEXT", security.TextExtraction.IncludePlainText)
 	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
@@ -421,6 +486,7 @@ func Load() Config {
 		HTTPCache:               security.HTTPCache,
 		Logging:                 security.Logging,
 		Thumbnails:              security.Thumbnails,
+		TextExtraction:          security.TextExtraction,
 	}
 }
 
@@ -432,6 +498,7 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			EquivalentMIMETypes: [][]string{
 				{"application/xml", "text/xml"},
 				{"image/jpeg", "image/pjpeg"},
+				{"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"},
 				{"application/gzip", "application/x-gzip"},
 				{"application/rtf", "text/rtf"},
 				{"application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/x-ole-storage"},
@@ -557,6 +624,16 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			ExternalTimeout:         30 * time.Second,
 			VideoCandidateKeyframes: 10,
 		},
+		TextExtraction: TextExtractionPolicy{
+			Enabled:          false,
+			ExecutionMode:    "async",
+			ObjectKeySuffix:  ".text.json",
+			MaxInputBytes:    64 << 20,
+			MaxOutputBytes:   16 << 20,
+			ExternalTimeout:  30 * time.Second,
+			ExtractMetadata:  true,
+			IncludePlainText: true,
+		},
 	}
 }
 
@@ -663,6 +740,7 @@ func normalizeExtendedPolicies(policy *SecurityPolicy) {
 		policy.Logging.Level = defaults.Logging.Level
 	}
 	normalizeThumbnailPolicy(&policy.Thumbnails)
+	normalizeTextExtractionPolicy(&policy.TextExtraction)
 }
 
 func normalizeThumbnailPolicy(policy *ThumbnailPolicy) {
@@ -734,6 +812,40 @@ func normalizeThumbnailPolicy(policy *ThumbnailPolicy) {
 	if policy.VideoCandidateKeyframes > 60 {
 		policy.VideoCandidateKeyframes = 60
 	}
+}
+
+func normalizeTextExtractionPolicy(policy *TextExtractionPolicy) {
+	defaults := DefaultSecurityPolicy().TextExtraction
+	policy.ExecutionMode = strings.ToLower(strings.TrimSpace(policy.ExecutionMode))
+	if policy.ExecutionMode == "" {
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	switch policy.ExecutionMode {
+	case "async", "sequential":
+	default:
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	policy.ObjectKeySuffix = strings.TrimSpace(policy.ObjectKeySuffix)
+	if policy.ObjectKeySuffix == "" {
+		policy.ObjectKeySuffix = defaults.ObjectKeySuffix
+	}
+	if policy.MaxInputBytes <= 0 {
+		policy.MaxInputBytes = defaults.MaxInputBytes
+	}
+	if policy.MaxInputBytes > 512<<20 {
+		policy.MaxInputBytes = 512 << 20
+	}
+	if policy.MaxOutputBytes <= 0 {
+		policy.MaxOutputBytes = defaults.MaxOutputBytes
+	}
+	if policy.MaxOutputBytes > 128<<20 {
+		policy.MaxOutputBytes = 128 << 20
+	}
+	if policy.ExternalTimeout <= 0 {
+		policy.ExternalTimeout = defaults.ExternalTimeout
+	}
+	policy.ExternalCommand = strings.TrimSpace(policy.ExternalCommand)
+	policy.OCRCommand = strings.TrimSpace(policy.OCRCommand)
 }
 
 func normalizeArchiveGuardPolicy(policy *ArchiveGuardPolicy) {
@@ -1065,6 +1177,9 @@ var mimeFileTypes = map[string][]string{
 	"photoshop":    {"image/vnd.adobe.photoshop", "image/x-photoshop"},
 	"tga":          {"image/x-tga", "image/tga"},
 	"pdf":          {"application/pdf"},
+	"docx":         {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+	"xlsx":         {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+	"pptx":         {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
 	"txt":          {"text/plain"},
 	"plain":        {"text/plain"},
 	"csv":          {"text/csv"},
@@ -1080,6 +1195,7 @@ var mimeFileTypes = map[string][]string{
 	"octet":        {"application/octet-stream"},
 	"octet-stream": {"application/octet-stream"},
 	"zip":          {"application/zip"},
+	"tar":          {"application/x-tar"},
 	"gzip":         {"application/gzip", "application/x-gzip"},
 	"gz":           {"application/gzip", "application/x-gzip"},
 	"zstd":         {"application/zstd", "application/x-zstd"},
@@ -1309,6 +1425,19 @@ func SecurityPolicyJSONSchema() string {
 					"minimum": 1,
 					"maximum": 60,
 				},
+			}),
+			"text_extraction": policyObjectSchema(map[string]any{
+				"enabled":            map[string]any{"type": "boolean"},
+				"execution_mode":     map[string]any{"type": "string", "enum": []string{"async", "sequential"}},
+				"object_key_suffix":  map[string]any{"type": "string"},
+				"max_input_bytes":    map[string]any{"type": "integer", "minimum": 1, "maximum": 536870912},
+				"max_output_bytes":   map[string]any{"type": "integer", "minimum": 1, "maximum": 134217728},
+				"external_command":   map[string]any{"type": "string"},
+				"external_timeout":   durationSchema(),
+				"enable_ocr":         map[string]any{"type": "boolean"},
+				"ocr_command":        map[string]any{"type": "string"},
+				"extract_metadata":   map[string]any{"type": "boolean"},
+				"include_plain_text": map[string]any{"type": "boolean"},
 			}),
 		},
 	}

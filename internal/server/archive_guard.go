@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"path"
 	"strings"
@@ -145,6 +146,9 @@ func inspectZipArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize
 		if entry.FileInfo().IsDir() {
 			continue
 		}
+		if archiveEntryIsLink(entry.FileInfo()) {
+			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
+		}
 		size := int64(entry.UncompressedSize64)
 		if size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
@@ -226,6 +230,9 @@ func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize 
 		if entry.FileInfo().IsDir() {
 			continue
 		}
+		if archiveEntryIsLink(entry.FileInfo()) {
+			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
+		}
 		size := int64(entry.UncompressedSize)
 		if size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
@@ -281,6 +288,9 @@ func inspectTarArchive(ctx context.Context, reader io.Reader, policy config.Arch
 		if _, err := safeArchivePath(header.Name); err != nil {
 			return archiveSecurityError("archive_path_unsafe", err.Error())
 		}
+		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
+			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
+		}
 		if header.Size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
 		}
@@ -289,6 +299,13 @@ func inspectTarArchive(ctx context.Context, reader io.Reader, policy config.Arch
 			return archiveSecurityError("archive_too_large", "archive exceeds max total uncompressed bytes")
 		}
 	}
+}
+
+func archiveEntryIsLink(info fs.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	return info.Mode()&fs.ModeSymlink != 0
 }
 
 func countArchiveStream(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {

@@ -24,6 +24,7 @@ fields:
   object_key: S3 object key for generated asset
   object_key_convention:
     image_thumbnail_default: source object key plus /thumbnail
+    extracted_content_default: source object key plus .text.json
   content_type: generated media type
   content_encoding: optional HTTP content encoding such as zstd
   replaces_original: boolean optional

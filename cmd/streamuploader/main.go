@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"streamuploader/internal/config"
+	"streamuploader/internal/extraction"
 	"streamuploader/internal/server"
 	"streamuploader/internal/storage"
 	"streamuploader/internal/thumbnail"
@@ -159,7 +160,30 @@ func logStartupConfig(cfg config.Config) {
 		"object_key_suffix", cfg.Thumbnails.ObjectKeySuffix,
 		"external_webhook_enabled", cfg.Thumbnails.ExternalWebhookURL != "",
 	)
-	logStartupFileTypePolicies(cfg.Security, cfg.Thumbnails, thumbnailPlan)
+	extractionPlan := extraction.Configure(cfg.TextExtraction)
+	slog.Info("text_extraction_config",
+		"enabled", cfg.TextExtraction.Enabled,
+		"execution_mode", cfg.TextExtraction.ExecutionMode,
+		"object_key_suffix", cfg.TextExtraction.ObjectKeySuffix,
+		"max_input_bytes", cfg.TextExtraction.MaxInputBytes,
+		"max_output_bytes", cfg.TextExtraction.MaxOutputBytes,
+		"extract_metadata", cfg.TextExtraction.ExtractMetadata,
+		"include_plain_text", cfg.TextExtraction.IncludePlainText,
+		"ocr_enabled", cfg.TextExtraction.EnableOCR,
+		"summary", extractionPlan.Summary,
+	)
+	for _, tool := range extraction.ToolSummaries(extractionPlan) {
+		slog.Info("text_extraction_tool",
+			"kind", tool.Kind,
+			"backend", tool.Backend,
+			"available", tool.Available,
+			"path", tool.Path,
+		)
+	}
+	for _, note := range extractionPlan.UnavailableNotes {
+		slog.Info("text_extraction_tool_unavailable", "note", note)
+	}
+	logStartupFileTypePolicies(cfg.Security, cfg.Thumbnails, thumbnailPlan, cfg.TextExtraction, extractionPlan)
 }
 
 type fileTypePolicyLog struct {
@@ -170,13 +194,16 @@ type fileTypePolicyLog struct {
 	ScriptType  string
 }
 
-func logStartupFileTypePolicies(policy config.SecurityPolicy, thumbnails config.ThumbnailPolicy, plan thumbnail.Plan) {
+func logStartupFileTypePolicies(policy config.SecurityPolicy, thumbnails config.ThumbnailPolicy, plan thumbnail.Plan, textExtraction config.TextExtractionPolicy, extractionPlan extraction.Plan) {
 	for _, entry := range startupFileTypes() {
 		mode := resolvedSanitizationMode(entry, policy.FileSanitization)
 		act := policyAction(policy, mode, entry)
 		args := []any{"type", entry.Type, "act", act}
 		if backend := thumbnailBackend(entry, thumbnails, plan); backend != "" {
 			args = append(args, "thumbnail", backend)
+		}
+		if backend := extractionBackend(entry, textExtraction, extractionPlan); backend != "" {
+			args = append(args, "text_extraction", backend)
 		}
 		slog.Info("policy", args...)
 	}
@@ -371,6 +398,39 @@ func thumbnailBackend(entry fileTypePolicyLog, policy config.ThumbnailPolicy, pl
 		if plan.FFmpegPath != "" {
 			return "ffmpeg"
 		}
+	}
+	return ""
+}
+
+func extractionBackend(entry fileTypePolicyLog, policy config.TextExtractionPolicy, plan extraction.Plan) string {
+	if !policy.Enabled {
+		return ""
+	}
+	switch entry.Group {
+	case "text", "markup", "script":
+		return "direct"
+	case "ooxml":
+		return "ooxml"
+	case "office_pdf":
+		if entry.Type == "pdf" {
+			if plan.PDFToTextPath != "" {
+				return "pdftotext"
+			}
+			return "pdf_literal"
+		}
+	case "image":
+		if policy.ExtractMetadata && policy.EnableOCR && plan.OCRAvailable {
+			return "metadata+ocr"
+		}
+		if policy.ExtractMetadata {
+			return "metadata"
+		}
+		if policy.EnableOCR {
+			return "ocr_unavailable"
+		}
+	}
+	if plan.ExternalAvailable {
+		return "external"
 	}
 	return ""
 }

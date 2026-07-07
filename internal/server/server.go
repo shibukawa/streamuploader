@@ -30,6 +30,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"streamuploader/internal/config"
+	"streamuploader/internal/extraction"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
 	"streamuploader/internal/thumbnail"
@@ -98,7 +99,24 @@ func New(cfg config.Config, store storage.Store) *Server {
 	if cfg.HTTPCache.Mode == "" {
 		cfg.HTTPCache = config.DefaultSecurityPolicy().HTTPCache
 	}
+	defaultTextExtraction := config.DefaultSecurityPolicy().TextExtraction
+	if cfg.TextExtraction.ExecutionMode == "" {
+		cfg.TextExtraction.ExecutionMode = defaultTextExtraction.ExecutionMode
+	}
+	if cfg.TextExtraction.ObjectKeySuffix == "" {
+		cfg.TextExtraction.ObjectKeySuffix = defaultTextExtraction.ObjectKeySuffix
+	}
+	if cfg.TextExtraction.MaxInputBytes <= 0 {
+		cfg.TextExtraction.MaxInputBytes = defaultTextExtraction.MaxInputBytes
+	}
+	if cfg.TextExtraction.MaxOutputBytes <= 0 {
+		cfg.TextExtraction.MaxOutputBytes = defaultTextExtraction.MaxOutputBytes
+	}
+	if cfg.TextExtraction.ExternalTimeout <= 0 {
+		cfg.TextExtraction.ExternalTimeout = defaultTextExtraction.ExternalTimeout
+	}
 	thumbnail.Configure(cfg.Thumbnails)
+	extraction.Configure(cfg.TextExtraction)
 	var proxy *httputil.ReverseProxy
 	if cfg.ApplicationServerURL != "" {
 		if target, err := url.Parse(cfg.ApplicationServerURL); err == nil {
@@ -220,6 +238,11 @@ func (s *Server) handleBackendAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	objectsPrefix := base + "/objects/"
+	if strings.HasPrefix(escapedPath, objectsPrefix) {
+		if s.handleBackendObjectAPI(w, r, strings.TrimPrefix(escapedPath, objectsPrefix)) {
+			return
+		}
+	}
 	if strings.HasPrefix(escapedPath, objectsPrefix) && r.Method == http.MethodDelete {
 		escapedKey := strings.TrimPrefix(escapedPath, objectsPrefix)
 		if strings.Contains(escapedKey, "/") {
@@ -268,6 +291,36 @@ type sharedKeyRecord struct {
 	CreatedBy       string `json:"created_by,omitempty"`
 	ExpiresAt       string `json:"expires_at,omitempty"`
 	Revoked         bool   `json:"revoked,omitempty"`
+}
+
+type extractedContentResponse struct {
+	ObjectKey         string                      `json:"object_key"`
+	ArtifactObjectKey string                      `json:"artifact_object_key"`
+	Status            string                      `json:"status"`
+	Content           *extraction.Content         `json:"content,omitempty"`
+	Tasks             []model.WaitAsyncTaskStatus `json:"tasks,omitempty"`
+	ErrorCode         string                      `json:"error_code,omitempty"`
+}
+
+type extractedContentPresignRequest struct {
+	TTLSeconds           int  `json:"ttl_seconds,omitempty"`
+	Wait                 bool `json:"wait,omitempty"`
+	IncludePendingStatus bool `json:"include_pending_status,omitempty"`
+}
+
+func (s *Server) handleBackendObjectAPI(w http.ResponseWriter, r *http.Request, escapedRel string) bool {
+	const extractedSuffix = "/extracted-content"
+	const extractedPresignSuffix = "/extracted-content/presigned-url"
+	switch {
+	case strings.HasSuffix(escapedRel, extractedPresignSuffix) && r.Method == http.MethodPost:
+		s.createExtractedContentPresignedURL(w, r, strings.TrimSuffix(escapedRel, extractedPresignSuffix))
+		return true
+	case strings.HasSuffix(escapedRel, extractedSuffix) && r.Method == http.MethodGet:
+		s.getExtractedContent(w, r, strings.TrimSuffix(escapedRel, extractedSuffix))
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleBackendFileAPI(w http.ResponseWriter, r *http.Request, escapedRel string) {
@@ -336,6 +389,148 @@ func (s *Server) createPresignedURL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url":        out.URL,
 		"expires_at": out.ExpiresAt,
+	})
+}
+
+func (s *Server) getExtractedContent(w http.ResponseWriter, r *http.Request, escapedKey string) {
+	objectKey, ok := backendObjectKeyFromEscaped(w, escapedKey)
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	kinds := []string{"text_extraction", "metadata_extraction", "ocr_extraction"}
+	if queryBool(query.Get("wait")) {
+		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, query.Get("timeout_seconds"), query.Get("poll_millis"))
+		if !ready {
+			writeJSON(w, http.StatusAccepted, extractedContentResponse{
+				ObjectKey:         objectKey,
+				ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+				Status:            "pending",
+				Tasks:             tasks,
+			})
+			return
+		}
+	}
+	tasks, ready := s.asyncTaskStatuses(r.Context(), []string{objectKey}, kinds)
+	if !ready {
+		writeJSON(w, http.StatusAccepted, extractedContentResponse{
+			ObjectKey:         objectKey,
+			ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+			Status:            "pending",
+			Tasks:             tasks,
+		})
+		return
+	}
+	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
+	out, err := s.store.GetObject(r.Context(), storage.GetInput{Bucket: s.cfg.Bucket, Key: artifactKey})
+	if err != nil {
+		status := "not_scheduled"
+		if s.cfg.TextExtraction.Enabled {
+			status = "skipped"
+		}
+		if queryBool(query.Get("status_only")) {
+			writeJSON(w, http.StatusOK, extractedContentResponse{
+				ObjectKey:         objectKey,
+				ArtifactObjectKey: artifactKey,
+				Status:            status,
+				Tasks:             tasks,
+			})
+			return
+		}
+		writeJSON(w, http.StatusNotFound, extractedContentResponse{
+			ObjectKey:         objectKey,
+			ArtifactObjectKey: artifactKey,
+			Status:            status,
+			Tasks:             tasks,
+			ErrorCode:         "artifact_not_found",
+		})
+		return
+	}
+	defer out.Body.Close()
+	var content extraction.Content
+	body, err := io.ReadAll(io.LimitReader(out.Body, s.cfg.TextExtraction.MaxOutputBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		return
+	}
+	if s.cfg.TextExtraction.MaxOutputBytes > 0 && int64(len(body)) > s.cfg.TextExtraction.MaxOutputBytes {
+		writeError(w, http.StatusBadGateway, "artifact_too_large", "extracted content artifact exceeds configured maximum")
+		return
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &content); err != nil {
+			writeError(w, http.StatusBadGateway, "invalid_artifact", "extracted content artifact is not valid JSON")
+			return
+		}
+	}
+	if include := includeSet(query["include"]); len(include) > 0 {
+		content = extraction.Filter(content, include)
+	}
+	resp := extractedContentResponse{
+		ObjectKey:         objectKey,
+		ArtifactObjectKey: artifactKey,
+		Status:            "generated",
+		Tasks:             tasks,
+	}
+	if !queryBool(query.Get("status_only")) {
+		resp.Content = &content
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) createExtractedContentPresignedURL(w http.ResponseWriter, r *http.Request, escapedKey string) {
+	objectKey, ok := backendObjectKeyFromEscaped(w, escapedKey)
+	if !ok {
+		return
+	}
+	var req extractedContentPresignRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+			return
+		}
+	}
+	kinds := []string{"text_extraction", "metadata_extraction", "ocr_extraction"}
+	if req.Wait {
+		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, "", "")
+		if !ready {
+			writeJSON(w, http.StatusAccepted, extractedContentResponse{
+				ObjectKey:         objectKey,
+				ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+				Status:            "pending",
+				Tasks:             tasks,
+			})
+			return
+		}
+	}
+	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
+	if _, err := s.store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: artifactKey}); err != nil {
+		writeJSON(w, http.StatusNotFound, extractedContentResponse{
+			ObjectKey:         objectKey,
+			ArtifactObjectKey: artifactKey,
+			Status:            "not_scheduled",
+			ErrorCode:         "artifact_not_found",
+		})
+		return
+	}
+	ttl := s.cfg.PresignTTL
+	if req.TTLSeconds > 0 {
+		ttl = time.Duration(req.TTLSeconds) * time.Second
+	}
+	out, err := s.store.PresignGetObject(r.Context(), storage.PresignGetInput{
+		Bucket:  s.cfg.Bucket,
+		Key:     artifactKey,
+		Expires: ttl,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "presign_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifact_object_key": artifactKey,
+		"url":                 out.URL,
+		"expires_at":          out.ExpiresAt,
+		"status":              "generated",
 	})
 }
 
@@ -736,14 +931,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		reader: body,
 		hash:   sha256.New(),
 		notify: func(n int64) {
+			displayedBytes := displayedUploadBytes(n, target.sizeBytes, securityStagedUpload)
 			s.updateUpload(uploadKey, func(item *model.UploadItem) {
-				item.UploadedBytes = n
+				item.UploadedBytes = displayedBytes
 				item.UpdatedAt = time.Now().UTC()
 			})
 			s.broadcast(model.WatchServerMessage{
 				Type:          "progress",
 				UploadKey:     uploadKey,
-				UploadedBytes: n,
+				UploadedBytes: displayedBytes,
 				SizeBytes:     target.sizeBytes,
 				Status:        model.UploadUploading,
 			})
@@ -850,6 +1046,14 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 				Status:    "pending",
 			}
 		}
+		if extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
+			item.ExtractedContent = &model.DerivedAsset{
+				Kind:        "extracted_content",
+				ObjectKey:   extraction.ArtifactObjectKey(item.ObjectKey, s.cfg.TextExtraction),
+				ContentType: "application/json; charset=utf-8",
+				Status:      "pending",
+			}
+		}
 		uploaded = cloneUpload(item)
 	})
 	if s.thumbnailEligible(contentType) {
@@ -864,6 +1068,22 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 				slog.Warn("async_task_marker_create_failed", "upload_key", uploadKey, "object_key", target.objectKey, "kind", "image_thumbnail", "error", err)
 			}
 			go s.finishThumbnailUpload(uploadKey, thumbnailJob, context.Background(), contentType)
+		}
+	}
+	if extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
+		if s.cfg.TextExtraction.ExecutionMode == "sequential" {
+			uploaded = s.finishTextExtraction(uploadKey, uploadCtx, contentType)
+		} else {
+			for _, kind := range extraction.TaskKindsForContentType(contentType, s.cfg.TextExtraction) {
+				if err := s.putAsyncTaskMarker(context.Background(), asyncTaskMarker{
+					ObjectKey: target.objectKey,
+					Kind:      kind,
+					Status:    "running",
+				}); err != nil {
+					slog.Warn("async_task_marker_create_failed", "upload_key", uploadKey, "object_key", target.objectKey, "kind", kind, "error", err)
+				}
+			}
+			go s.finishTextExtraction(uploadKey, context.Background(), contentType)
 		}
 	}
 	w.Header().Set("ETag", result.ETag)
@@ -970,6 +1190,54 @@ func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) waitForAsyncTaskKinds(ctx context.Context, objectKeys, kinds []string, timeoutValue, pollValue string) ([]model.WaitAsyncTaskStatus, bool) {
+	timeout := 60 * time.Second
+	if timeoutSeconds := positiveQueryInt(timeoutValue); timeoutSeconds > 0 {
+		timeout = time.Duration(timeoutSeconds) * time.Second
+	}
+	poll := 200 * time.Millisecond
+	if pollMillis := positiveQueryInt(pollValue); pollMillis > 0 {
+		poll = time.Duration(pollMillis) * time.Millisecond
+	}
+	if poll < 50*time.Millisecond {
+		poll = 50 * time.Millisecond
+	}
+	if poll > 5*time.Second {
+		poll = 5 * time.Second
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		tasks, ready := s.asyncTaskStatuses(ctx, objectKeys, kinds)
+		if ready {
+			return tasks, true
+		}
+		select {
+		case <-ctx.Done():
+			return tasks, false
+		case <-deadline.C:
+			tasks, _ = s.asyncTaskStatuses(context.Background(), objectKeys, kinds)
+			return tasks, false
+		case <-ticker.C:
+		}
+	}
+}
+
+func backendObjectKeyFromEscaped(w http.ResponseWriter, escapedKey string) (string, bool) {
+	if strings.Contains(escapedKey, "/") {
+		writeError(w, http.StatusNotFound, "not_found", "backend route not found")
+		return "", false
+	}
+	objectKey, err := url.PathUnescape(escapedKey)
+	if err != nil || strings.TrimSpace(objectKey) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is required")
+		return "", false
+	}
+	return objectKey, true
 }
 
 func (s *Server) watchUploads(w http.ResponseWriter, r *http.Request) {
@@ -1516,6 +1784,9 @@ func (s *Server) uploadsForKeys(keys []string) ([]*model.UploadItem, bool) {
 		if s.cfg.Thumbnails.Enabled && s.cfg.Thumbnails.ExecutionMode == "sequential" && item.Thumbnail != nil && item.Thumbnail.Status == "pending" {
 			ready = false
 		}
+		if s.cfg.TextExtraction.Enabled && s.cfg.TextExtraction.ExecutionMode == "sequential" && item.ExtractedContent != nil && item.ExtractedContent.Status == "pending" {
+			ready = false
+		}
 		items = append(items, item)
 	}
 	return items, ready
@@ -1626,6 +1897,91 @@ func (s *Server) updateThumbnailForUpload(uploadKey string, result thumbnail.Res
 		slog.Warn("thumbnail_generation_failed", "upload_key", uploadKey, "object_key", item.ObjectKey, "error", err)
 	} else {
 		slog.Info("thumbnail_generated", "upload_key", uploadKey, "object_key", result.ObjectKey, "content_type", result.ContentType, "backend", result.Backend)
+	}
+	if updated != nil {
+		s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: updated.Status, Item: updated})
+	}
+	return updated
+}
+
+func (s *Server) finishTextExtraction(uploadKey string, ctx context.Context, sourceContentType string) *model.UploadItem {
+	item, ok := s.upload(uploadKey)
+	if !ok || item == nil {
+		return item
+	}
+	kinds := extraction.TaskKindsForContentType(sourceContentType, s.cfg.TextExtraction)
+	if s.cfg.TextExtraction.ExecutionMode == "async" {
+		defer func() {
+			for _, kind := range kinds {
+				s.deleteAsyncTaskMarker(context.Background(), item.ObjectKey, kind)
+			}
+		}()
+	}
+	out, err := s.store.GetObject(ctx, storage.GetInput{Bucket: s.cfg.Bucket, Key: item.ObjectKey})
+	if err != nil {
+		return s.updateTextExtractionForUpload(uploadKey, extraction.Result{Status: "failed", ErrorCode: "source_read_failed"}, err)
+	}
+	defer out.Body.Close()
+	result, err := extraction.Generate(ctx, item.ObjectKey, sourceContentType, out.Body, s.cfg.TextExtraction)
+	if err == nil && result.Status == "generated" {
+		body, marshalErr := extraction.Marshal(result.Content, s.cfg.TextExtraction)
+		if marshalErr != nil {
+			err = marshalErr
+			result.Status = "failed"
+			result.ErrorCode = "output_too_large"
+		} else {
+			artifactKey := extraction.ArtifactObjectKey(item.ObjectKey, s.cfg.TextExtraction)
+			_, err = s.store.PutObject(ctx, storage.PutInput{
+				Bucket:      s.cfg.Bucket,
+				Key:         artifactKey,
+				Body:        bytes.NewReader(body),
+				ContentType: "application/json; charset=utf-8",
+				Metadata: map[string]string{
+					"source-object-key": item.ObjectKey,
+					"kind":              "extracted_content",
+				},
+			})
+			if err == nil {
+				result.ObjectKey = artifactKey
+				result.SizeBytes = int64(len(body))
+			}
+		}
+	}
+	return s.updateTextExtractionForUpload(uploadKey, result, err)
+}
+
+func (s *Server) updateTextExtractionForUpload(uploadKey string, result extraction.Result, err error) *model.UploadItem {
+	item, ok := s.upload(uploadKey)
+	if !ok {
+		return nil
+	}
+	var updated *model.UploadItem
+	s.updateUpload(uploadKey, func(current *model.UploadItem) {
+		if current.ExtractedContent == nil {
+			current.ExtractedContent = &model.DerivedAsset{
+				Kind:        "extracted_content",
+				ObjectKey:   extraction.ArtifactObjectKey(current.ObjectKey, s.cfg.TextExtraction),
+				ContentType: "application/json; charset=utf-8",
+			}
+		}
+		current.UpdatedAt = time.Now().UTC()
+		current.ExtractedContent.ObjectKey = extraction.ArtifactObjectKey(current.ObjectKey, s.cfg.TextExtraction)
+		current.ExtractedContent.ContentType = "application/json; charset=utf-8"
+		current.ExtractedContent.SizeBytes = result.SizeBytes
+		if err != nil {
+			current.ExtractedContent.Status = "failed"
+			current.ExtractedContent.Error = err.Error()
+			updated = cloneUpload(current)
+			return
+		}
+		current.ExtractedContent.Status = result.Status
+		current.ExtractedContent.Error = ""
+		updated = cloneUpload(current)
+	})
+	if err != nil {
+		slog.Warn("text_extraction_failed", "upload_key", uploadKey, "object_key", item.ObjectKey, "error", err)
+	} else {
+		slog.Info("text_extraction_finished", "upload_key", uploadKey, "object_key", item.ObjectKey, "status", result.Status)
 	}
 	if updated != nil {
 		s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: updated.Status, Item: updated})
@@ -1837,6 +2193,9 @@ func inspectUploadPrefix(reader io.Reader, declared, originalName string, policy
 			message: fmt.Sprintf("declared content type %s does not match detected content type %s", declared, detected),
 		}
 	}
+	if err := validateExtensionContentType(originalName, declared, detected, policy); err != nil {
+		return uploadInspection{}, err
+	}
 	denyMIMETypes := policy.ExpandedDenyMIMETypes
 	if denyMIMETypes == nil {
 		denyMIMETypes = enabledMIMETypes(policy.DenyMIMETypes)
@@ -1860,6 +2219,43 @@ func inspectUploadPrefix(reader io.Reader, declared, originalName string, policy
 		}
 	}
 	return uploadInspection{prefix: prefix, detectedContentType: detected}, nil
+}
+
+func validateExtensionContentType(originalName, declared, detected string, policy config.MimeMagicPolicy) error {
+	ext := normalizedExtension(originalName)
+	if ext == "" {
+		return nil
+	}
+	expected := config.MIMEFileType(ext)
+	if len(expected) == 0 {
+		return nil
+	}
+	if extensionMatchesMIME(detected, expected, policy.EquivalentMIMETypes) {
+		return nil
+	}
+	if extensionMatchesMIME(declared, expected, policy.EquivalentMIMETypes) {
+		if detected == "" || detected == "application/octet-stream" || mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) || declaredCompatibleWithDetected(declared, detected, originalName) {
+			return nil
+		}
+	}
+	return securityUploadError{
+		status:  http.StatusUnsupportedMediaType,
+		code:    "file_extension_mismatch",
+		message: fmt.Sprintf("file extension .%s does not match detected or declared content type", ext),
+	}
+}
+
+func extensionMatchesMIME(value string, expected []string, equivalents [][]string) bool {
+	value = normalizeContentType(value)
+	if value == "" {
+		return false
+	}
+	for _, candidate := range expected {
+		if mimeEquivalent(value, candidate, equivalents) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectContentType(prefix []byte) string {
@@ -2318,6 +2714,20 @@ func temporaryUploadObjectKey(objectKey, uploadKey string) string {
 	return path.Join(path.Dir(objectKey), ".tmp", uploadKey+"-"+path.Base(objectKey))
 }
 
+func displayedUploadBytes(actual, size int64, holdForPostUploadCheck bool) int64 {
+	if !holdForPostUploadCheck || size <= 0 {
+		return actual
+	}
+	capBytes := size * 98 / 100
+	if capBytes < 0 {
+		capBytes = 0
+	}
+	if actual > capBytes {
+		return capBytes
+	}
+	return actual
+}
+
 func contains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -2367,6 +2777,26 @@ func splitQueryValues(values []string) []string {
 	return out
 }
 
+func queryBool(value string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && parsed
+}
+
+func includeSet(values []string) map[string]bool {
+	parts := splitQueryValues(values)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, part := range parts {
+		switch part {
+		case "text", "extracted", "title", "description", "ocr", "metadata", "sources":
+			out[part] = true
+		}
+	}
+	return out
+}
+
 func positiveQueryInt(value string) int {
 	if strings.TrimSpace(value) == "" {
 		return 0
@@ -2390,6 +2820,10 @@ func cloneUpload(item *model.UploadItem) *model.UploadItem {
 	if item.Thumbnail != nil {
 		thumbnailCopy := *item.Thumbnail
 		copyItem.Thumbnail = &thumbnailCopy
+	}
+	if item.ExtractedContent != nil {
+		extractedCopy := *item.ExtractedContent
+		copyItem.ExtractedContent = &extractedCopy
 	}
 	return &copyItem
 }

@@ -54,6 +54,19 @@ endpoints:
     behavior:
       - mark thumbnails, previews, extracted text, OCR, and variants stale
       - enqueue regeneration when requested
+  get_extracted_content:
+    method: GET
+    path: /internal/objects/{object_key}/extracted-content
+    behavior:
+      - read data:extracted-content artifact for backend caller
+      - support pending status and optional wait through api:extracted-content-api
+      - return text map keys such as text, extracted, title, description, and ocr
+  create_extracted_content_presigned_url:
+    method: POST
+    path: /internal/objects/{object_key}/extracted-content/presigned-url
+    behavior:
+      - return a bounded S3 presigned GET URL for source object key plus .text.json
+      - require extracted-content read authorization
   wait_async_tasks:
     method: GET
     path: /internal/tasks/wait
@@ -73,5 +86,6 @@ references:
   - system:s3-storage
   - policy:audit-log-policy
   - api:async-task-wait-api
+  - api:extracted-content-api
   - data:async-task-marker
 ```

@@ -1484,6 +1484,54 @@
       },
       "type": "object"
     },
+    "text_extraction": {
+      "additionalProperties": false,
+      "properties": {
+        "enable_ocr": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "execution_mode": {
+          "enum": [
+            "async",
+            "sequential"
+          ],
+          "type": "string"
+        },
+        "external_command": {
+          "type": "string"
+        },
+        "external_timeout": {
+          "pattern": "^$|^[0-9]+(ns|us|µs|ms|s|m|h)$",
+          "type": "string"
+        },
+        "extract_metadata": {
+          "type": "boolean"
+        },
+        "include_plain_text": {
+          "type": "boolean"
+        },
+        "max_input_bytes": {
+          "maximum": 536870912,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "maximum": 134217728,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "object_key_suffix": {
+          "type": "string"
+        },
+        "ocr_command": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "upload_deadlines": {
       "additionalProperties": false,
       "properties": {

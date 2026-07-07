@@ -618,8 +618,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .invalid-results { display: grid; gap: 10px; margin-top: 14px; }
     .invalid-result { border: 1px solid #e3e7ee; background: #fafbfc; border-radius: 6px; padding: 10px; }
     .toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 10px; width: min(420px, calc(100vw - 36px)); z-index: 20; }
-    .toast { border-radius: 6px; padding: 12px 14px; background: #111827; color: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.22); font-size: 14px; }
+    .toast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; border-radius: 6px; padding: 12px 14px; background: #111827; color: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.22); font-size: 14px; }
     .toast.error { background: #b42318; }
+    .toast-message { white-space: pre-wrap; word-break: break-word; }
+    .toast-copy { min-height: 28px; padding: 4px 8px; border: 1px solid rgba(255,255,255,.5); border-radius: 6px; background: rgba(255,255,255,.12); color: #fff; font-size: 12px; }
+    .toast-copy:hover { background: rgba(255,255,255,.2); }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12px; background: #111827; color: #f9fafb; border-radius: 6px; padding: 10px; }
   </style>
 </head>
@@ -680,6 +683,7 @@ const invalidResults = document.querySelector("#invalidResults");
 const toasts = document.querySelector("#toasts");
 const pending = new Map();
 const selected = new Set();
+const activeToastMessages = new Set();
 let ws;
 
 document.querySelectorAll(".tab-button").forEach(button => {
@@ -757,10 +761,10 @@ async function startUpload(file) {
     renderUploads();
     updateSaveState();
   } catch (err) {
-    if (uploadKey) pending.delete(uploadKey);
+    const message = file.name + ": " + errorMessage(err);
+    if (!uploadKey || pending.delete(uploadKey)) showToast(message);
     renderUploads();
     updateSaveState();
-    showToast(file.name + ": " + errorMessage(err));
   }
 }
 
@@ -930,11 +934,36 @@ function errorMessage(err) {
 }
 
 function showToast(message, kind = "error") {
+  const text = String(message || "request failed");
+  const key = kind + "\n" + text;
+  if (activeToastMessages.has(key)) return;
+  activeToastMessages.add(key);
   const toast = document.createElement("div");
   toast.className = "toast " + kind;
-  toast.textContent = message;
+  const body = document.createElement("div");
+  body.className = "toast-message";
+  body.textContent = text;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "toast-copy";
+  copy.textContent = "Copy";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      copy.textContent = "Copied";
+    } catch {
+      copy.textContent = "Copy failed";
+    }
+    setTimeout(() => {
+      copy.textContent = "Copy";
+    }, 1400);
+  });
+  toast.append(body, copy);
   toasts.appendChild(toast);
-  setTimeout(() => toast.remove(), 7000);
+  setTimeout(() => {
+    activeToastMessages.delete(key);
+    toast.remove();
+  }, 14000);
 }
 
 refreshButton.addEventListener("click", loadFiles);

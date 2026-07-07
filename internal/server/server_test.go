@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
@@ -14,6 +15,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -174,6 +176,18 @@ func parseTestRange(value string, size int64) (int64, int64, bool) {
 	return start, end, true
 }
 
+func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
+}
+
 func TestUploadKeyFlow(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := config.Config{
@@ -228,6 +242,142 @@ func TestUploadKeyFlow(t *testing.T) {
 	decode(t, waitResp, &wait)
 	if !wait.Ready || len(wait.Items) != 1 || wait.Items[0].Status != "uploaded" {
 		t.Fatalf("wait response = %+v", wait)
+	}
+}
+
+func TestTextExtractionAsyncAndBackendAPI(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		TextExtraction: config.TextExtractionPolicy{
+			Enabled:          true,
+			ExecutionMode:    "async",
+			ObjectKeySuffix:  ".text.json",
+			MaxInputBytes:    1024,
+			MaxOutputBytes:   1024,
+			IncludePlainText: true,
+			ExtractMetadata:  true,
+		},
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"note.txt","content_type":"text/plain"}`)
+	if keyResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create key status = %d", keyResp.StatusCode)
+	}
+	var key struct {
+		UploadKey string `json:"upload_key"`
+		ObjectKey string `json:"object_key"`
+	}
+	decode(t, keyResp, &key)
+
+	uploadReq, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", bytes.NewBufferString("hello\nworld\n"))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp := do(t, uploadReq)
+	if uploadResp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d", uploadResp.StatusCode)
+	}
+	var uploaded struct {
+		ExtractedContent struct {
+			ObjectKey string `json:"object_key"`
+			Status    string `json:"status"`
+		} `json:"extracted_content"`
+	}
+	decode(t, uploadResp, &uploaded)
+	if uploaded.ExtractedContent.ObjectKey != key.ObjectKey+".text.json" {
+		t.Fatalf("extracted object key = %q", uploaded.ExtractedContent.ObjectKey)
+	}
+
+	waitForCondition(t, time.Second, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		_, ok := store.objects[key.ObjectKey+".text.json"]
+		return ok
+	})
+
+	resp, err := http.Get(app.URL + "/internal/objects/" + url.PathEscape(key.ObjectKey) + "/extracted-content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("extracted content status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var got struct {
+		ObjectKey         string `json:"object_key"`
+		ArtifactObjectKey string `json:"artifact_object_key"`
+		Status            string `json:"status"`
+		Content           struct {
+			Texts map[string]string `json:"texts"`
+		} `json:"content"`
+	}
+	decode(t, resp, &got)
+	if got.Status != "generated" || got.ArtifactObjectKey != key.ObjectKey+".text.json" || got.Content.Texts["text"] != "hello\nworld" {
+		t.Fatalf("extracted response = %+v", got)
+	}
+
+	presignResp := postJSON(t, app.URL+"/internal/objects/"+url.PathEscape(key.ObjectKey)+"/extracted-content/presigned-url", `{}`)
+	if presignResp.StatusCode != http.StatusOK {
+		t.Fatalf("presign status = %d", presignResp.StatusCode)
+	}
+	var presigned struct {
+		ArtifactObjectKey string `json:"artifact_object_key"`
+		URL               string `json:"url"`
+		Status            string `json:"status"`
+	}
+	decode(t, presignResp, &presigned)
+	if presigned.ArtifactObjectKey != key.ObjectKey+".text.json" || !strings.Contains(presigned.URL, url.PathEscape(key.ObjectKey+".text.json")) || presigned.Status != "generated" {
+		t.Fatalf("presign response = %+v", presigned)
+	}
+}
+
+func TestExtractedContentAPIReportsPending(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		TextExtraction: config.TextExtractionPolicy{Enabled: true, ObjectKeySuffix: ".text.json", MaxOutputBytes: 1024},
+	}
+	srv := New(cfg, store)
+	objectKey := "uploads/test/pending.txt"
+	if err := srv.putAsyncTaskMarker(context.Background(), asyncTaskMarker{ObjectKey: objectKey, Kind: "text_extraction", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	app := httptest.NewServer(srv.Handler())
+	defer app.Close()
+
+	resp, err := http.Get(app.URL + "/internal/objects/" + url.PathEscape(objectKey) + "/extracted-content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("pending status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var got struct {
+		Status string `json:"status"`
+		Tasks  []struct {
+			Kind    string `json:"kind"`
+			Pending bool   `json:"pending"`
+		} `json:"tasks"`
+	}
+	decode(t, resp, &got)
+	if got.Status != "pending" || len(got.Tasks) == 0 || !got.Tasks[0].Pending {
+		t.Fatalf("pending response = %+v", got)
 	}
 }
 
@@ -835,6 +985,24 @@ func TestDeclaredCompatibleWithDetectedExtensionFallback(t *testing.T) {
 	}
 }
 
+func TestDefaultMIMEMagicTreatsHEICAndHEIFAsEquivalent(t *testing.T) {
+	groups := config.DefaultSecurityPolicy().MimeMagic.EquivalentMIMETypes
+	tests := []struct {
+		declared string
+		detected string
+	}{
+		{declared: "image/heic", detected: "image/heif"},
+		{declared: "image/heic-sequence", detected: "image/heif-sequence"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.declared+"_as_"+tt.detected, func(t *testing.T) {
+			if !mimeEquivalent(tt.declared, tt.detected, groups) {
+				t.Fatalf("%q and %q are not equivalent in default MIME magic policy", tt.declared, tt.detected)
+			}
+		})
+	}
+}
+
 func TestInspectUploadPrefixAllowsDeclaredYAMLDetectedAsPlainText(t *testing.T) {
 	policy := config.DefaultSecurityPolicy()
 	body := strings.NewReader("name: example\nitems:\n  - one\n")
@@ -934,6 +1102,49 @@ func TestUploadMimeMagicCheckAlwaysRejectsMismatch(t *testing.T) {
 	store.mu.Unlock()
 	if stored {
 		t.Fatal("mismatched upload was stored")
+	}
+}
+
+func TestUploadRejectsExtensionContentTypeMismatch(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.FileSanitization.Enabled = false
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	png := makeTestPNG(t, 1, 1)
+	resp, key := uploadTestObject(t, app.URL, "photo.jpg", "image/png", png)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(body))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "file_extension_mismatch" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("extension-mismatched upload was stored")
+	}
+}
+
+func TestInspectUploadPrefixAllowsGenericTextDetectedForJSONExtension(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	body := []byte(`{"ok":true}`)
+
+	inspection, err := inspectUploadPrefix(bytes.NewReader(body), "application/json", "payload.json", policy.MimeMagic)
+	if err != nil {
+		t.Fatalf("inspect upload prefix returned error: %v", err)
+	}
+	if inspection.detectedContentType != "text/plain" && inspection.detectedContentType != "application/json" {
+		t.Fatalf("detected content type = %q", inspection.detectedContentType)
 	}
 }
 
@@ -1129,6 +1340,75 @@ func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
 		t.Fatal("stored brotli body changed")
 	}
 	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsZipSymlink(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZipSymlink(t, "link", "target.txt")
+	resp, key := uploadTestObject(t, app.URL, "links.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_link_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with symlink was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarLinks(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeflag byte
+	}{
+		{name: "symlink", typeflag: tar.TypeSymlink},
+		{name: "hardlink", typeflag: tar.TypeLink},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{objects: map[string][]byte{}}
+			cfg := testUploadConfig(config.DefaultSecurityPolicy())
+			app := httptest.NewServer(New(cfg, store).Handler())
+			defer app.Close()
+
+			body := makeTarLink(t, tt.name, "target.txt", tt.typeflag)
+			resp, key := uploadTestObject(t, app.URL, "links.tar", "application/x-tar", body)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusUnsupportedMediaType {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+			}
+			var errorBody map[string]string
+			if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+				t.Fatal(err)
+			}
+			if errorBody["error"] != "archive_link_rejected" {
+				t.Fatalf("error body = %+v", errorBody)
+			}
+			store.mu.Lock()
+			_, stored := store.objects[key.ObjectKey]
+			store.mu.Unlock()
+			if stored {
+				t.Fatal("tar with link was stored")
+			}
+			assertNoTmpObjects(t, store)
+		})
+	}
 }
 
 func TestUploadWithClamAVScansTmpThenPublishes(t *testing.T) {
@@ -1427,6 +1707,21 @@ func TestUploadRejectsPDFJavaScript(t *testing.T) {
 	store.mu.Unlock()
 	if stored {
 		t.Fatal("rejected PDF was stored")
+	}
+}
+
+func TestDisplayedUploadBytesHoldsAtNinetyEightPercentDuringPostUploadCheck(t *testing.T) {
+	if got := displayedUploadBytes(100, 100, true); got != 98 {
+		t.Fatalf("held progress = %d, want 98", got)
+	}
+	if got := displayedUploadBytes(50, 100, true); got != 50 {
+		t.Fatalf("in-flight progress = %d, want 50", got)
+	}
+	if got := displayedUploadBytes(100, 100, false); got != 100 {
+		t.Fatalf("direct progress = %d, want 100", got)
+	}
+	if got := displayedUploadBytes(100, 0, true); got != 100 {
+		t.Fatalf("unknown size progress = %d, want 100", got)
 	}
 }
 
@@ -2175,6 +2470,43 @@ func makeZipWithEntries(t *testing.T, entries map[string][]byte) []byte {
 		}
 	}
 	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeZipSymlink(t *testing.T, name, target string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	header := &zip.FileHeader{Name: name}
+	header.SetMode(fs.ModeSymlink | 0777)
+	w, err := zw.CreateHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(target)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeTarLink(t *testing.T, name, target string, typeflag byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     name,
+		Linkname: target,
+		Typeflag: typeflag,
+		Mode:     0777,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()

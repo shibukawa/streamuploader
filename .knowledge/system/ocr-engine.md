@@ -8,7 +8,8 @@ OCR engine extracts text from raster images and image-only document pages.
 ```yaml
 backends:
   tesseract:
-    command: tesseract --version
+    startup_probe: configured OCR command or tesseract-like command path
+    execution: resolved command path from startup extraction plan
     capabilities:
       - image OCR
       - PDF page OCR after rasterization
@@ -27,9 +28,12 @@ backends:
 constraints:
   - opt-in because OCR is CPU intensive and may expose private content to index systems
   - run in isolated worker
+  - resolve OCR command availability at startup, not per extraction request
   - require configured languages
   - cap pages, pixels, wall time, CPU, memory, and output size
   - store confidence and language when backend provides them
+startup_logging:
+  - report OCR command availability in text_extraction_tool logs
 references:
   - flow:ocr-extraction-generation
   - data:extracted-content

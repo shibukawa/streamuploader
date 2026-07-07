@@ -16,25 +16,35 @@ outputs:
   extracted_text:
     mode: optional
     flow: flow:text-extraction-generation
+    artifact_key: texts.extracted or texts.text in data:extracted-content
   extracted_metadata:
     mode: optional
     flow: flow:text-extraction-generation
+    artifact_key: texts.title, texts.description, or metadata in data:extracted-content
   ocr_text:
     mode: opt_in
     flow: flow:ocr-extraction-generation
+    artifact_key: texts.ocr in data:extracted-content
 data_type_rules:
   text_like:
     extract_text: true
     ocr: false
+    output_text_key: text
   pdf:
     extract_text: true
     ocr: when no embedded text or policy requests
+    output_text_key: extracted
   office_document:
     extract_text: true
     ocr: false unless rendered pages need OCR
+    output_text_key: extracted
   image:
     extract_metadata: true
     ocr: opt_in
+    output_text_keys:
+      - title
+      - description
+      - ocr
   video_audio:
     extract_metadata: true
     ocr: false
@@ -45,6 +55,7 @@ privacy:
   - support do_not_index classification
 index_handoff:
   - store extracted artifact in S3 first
+  - use source object key plus .text.json by default
   - send object key, checksum, language, and chunk descriptors to search pipeline when configured
   - do not block upload acceptance unless product policy requires indexing before metadata submit
 external_delegation:

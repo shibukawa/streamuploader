@@ -38,6 +38,7 @@ mime_magic:
   equivalent_mime_types:
     - [application/xml, text/xml]
     - [image/jpeg, image/pjpeg]
+    - [image/heic, image/heif, image/heic-sequence, image/heif-sequence]
     - [application/gzip, application/x-gzip]
     - [application/rtf, text/rtf]
     - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/x-ole-storage]
@@ -169,3 +170,15 @@ thumbnails:
   external_webhook_url: ""
   external_timeout: 30s
   video_candidate_keyframes: 10
+text_extraction:
+  enabled: true
+  execution_mode: async
+  object_key_suffix: .text.json
+  max_input_bytes: 67108864
+  max_output_bytes: 16777216
+  external_command: ""
+  external_timeout: 30s
+  enable_ocr: false
+  ocr_command: ""
+  extract_metadata: true
+  include_plain_text: true
