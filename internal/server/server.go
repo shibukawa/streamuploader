@@ -1830,7 +1830,7 @@ func inspectUploadPrefix(reader io.Reader, declared, originalName string, policy
 			message: scriptRejectionMessage(script),
 		}
 	}
-	if declared != "" && detected != "" && detected != "application/octet-stream" && !allowedScript && !mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) {
+	if declared != "" && detected != "" && detected != "application/octet-stream" && !allowedScript && !mimeEquivalent(declared, detected, policy.EquivalentMIMETypes) && !declaredCompatibleWithDetected(declared, detected, originalName) {
 		return uploadInspection{}, securityUploadError{
 			status:  http.StatusUnsupportedMediaType,
 			code:    "content_type_mismatch",
@@ -1898,7 +1898,7 @@ type scriptDetection struct {
 }
 
 func detectScript(prefix []byte, originalName string) scriptDetection {
-	out := scriptDetection{extension: strings.TrimPrefix(strings.ToLower(path.Ext(originalName)), ".")}
+	out := scriptDetection{extension: normalizedScriptExtension(originalName)}
 	if mimeType := scriptMIMEForExtension(out.extension); mimeType != "" {
 		out.detected = true
 		out.scriptType = scriptTypeForExtension(out.extension)
@@ -1977,6 +1977,12 @@ func scriptTypeForExtension(ext string) string {
 		return "perl"
 	case "php":
 		return "php"
+	case "ps1", "psm1", "psd1":
+		return "powershell"
+	case "bat", "cmd":
+		return "batch"
+	case "makefile", "gnumakefile":
+		return "make"
 	default:
 		return ""
 	}
@@ -2000,8 +2006,24 @@ func scriptMIMEForType(scriptType string) string {
 		return "text/x-perl"
 	case "php":
 		return "application/x-httpd-php"
+	case "powershell":
+		return "text/x-powershell"
+	case "batch":
+		return "application/x-bat"
+	case "make":
+		return "text/x-makefile"
 	default:
 		return ""
+	}
+}
+
+func normalizedScriptExtension(name string) string {
+	base := strings.ToLower(path.Base(name))
+	switch base {
+	case "makefile", "gnumakefile":
+		return base
+	default:
+		return normalizedExtension(name)
 	}
 }
 
@@ -2049,6 +2071,112 @@ func mimeEquivalent(a, b string, equivalents [][]string) bool {
 		}
 	}
 	return false
+}
+
+func declaredCompatibleWithDetected(declared, detected, originalName string) bool {
+	declared = normalizeContentType(declared)
+	detected = normalizeContentType(detected)
+	if declared == "" || detected == "" {
+		return false
+	}
+	compatible := map[string][]string{
+		"text/plain": {
+			"application/json",
+			"application/x-python",
+			"application/x-ndjson",
+			"application/yaml",
+			"application/x-yaml",
+			"text/yaml",
+			"text/x-yaml",
+			"text/x-python",
+			"text/x-script.python",
+		},
+		"text/markdown": {
+			"text/plain",
+			"text/html",
+		},
+		"application/octet-stream": {
+			"text/plain",
+			"application/vnd.microsoft.portable-executable",
+			"application/x-coredump",
+			"application/x-dosexec",
+			"application/x-elf",
+			"application/x-executable",
+			"application/x-mach-binary",
+			"application/x-msdownload",
+			"application/x-object",
+			"application/x-sharedlib",
+		},
+	}
+	if declared == "text/plain" && strings.HasSuffix(detected, "+json") {
+		return true
+	}
+	if detected == "text/plain" && declaredTextDerivedMIME(declared) {
+		return true
+	}
+	if extensionCompatibleWithDetected(declared, detected, originalName) {
+		return true
+	}
+	for _, candidate := range compatible[declared] {
+		if detected == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func declaredTextDerivedMIME(declared string) bool {
+	if strings.HasSuffix(declared, "+json") || strings.HasSuffix(declared, "+xml") {
+		return true
+	}
+	switch declared {
+	case "text/plain",
+		"text/csv",
+		"text/markdown",
+		"text/html",
+		"text/xml",
+		"text/yaml",
+		"text/x-yaml",
+		"application/json",
+		"application/x-ndjson",
+		"application/yaml",
+		"application/x-yaml",
+		"application/xml",
+		"application/xhtml+xml",
+		"text/x-python",
+		"application/x-python",
+		"text/x-script.python",
+		"text/javascript",
+		"application/javascript",
+		"text/x-shellscript",
+		"text/x-ruby",
+		"text/x-perl",
+		"application/x-httpd-php",
+		"text/x-powershell",
+		"text/x-makefile",
+		"application/x-bat":
+		return true
+	default:
+		return false
+	}
+}
+
+func extensionCompatibleWithDetected(declared, detected, originalName string) bool {
+	ext := normalizedExtension(originalName)
+	switch ext {
+	case "md", "markdown":
+		return declared == "text/markdown" && (detected == "text/plain" || detected == "text/html")
+	case "rst", "rest":
+		return (declared == "application/octet-stream" || declared == "text/plain") && detected == "text/plain"
+	case "txt", "text":
+		return declared == "application/octet-stream" && detected == "text/plain"
+	default:
+		return false
+	}
+}
+
+func normalizedExtension(name string) string {
+	return strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
 }
 
 func securityErrorResponse(err error) (int, string) {

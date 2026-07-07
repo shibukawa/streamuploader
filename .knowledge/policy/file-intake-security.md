@@ -31,6 +31,39 @@ rules:
       - parse media type and ignore parameters such as charset
       - compare canonical MIME essence values
       - allow configured equivalent groups for common aliases
+      - allow built-in browser generic MIME compatibility before mismatch rejection:
+          text/plain:
+            includes: JSON, JSON suffix MIME, NDJSON, YAML, Python source MIME and Python MIME aliases
+          text/markdown:
+            includes: text/plain and text/html for Markdown files whose prefix looks like HTML
+          detected_text_plain:
+            includes: declared known text-derived MIME such as JSON, YAML, CSV, Markdown, HTML/XML, source text
+            excludes: image, PDF, Office, archive, executable, opaque binary declarations
+          application/octet-stream:
+            includes: generic text fallback for text extensions plus Mach-O, ELF, ELF object/core/shared library, PE/MS portable executable and download MIME
+          scope: MIME mismatch suppression only
+          parser_policy: do not require parser validation during MIME consistency; downstream processors may parse strictly when they need structured semantics
+      - allow extension fallback before mismatch rejection:
+          markdown:
+            extensions: [.md, .markdown]
+            declared_detected_pairs:
+              - [text/markdown, text/plain]
+              - [text/markdown, text/html]
+            required_followup: policy:markup-active-content-policy markdown inspection
+          restructuredtext:
+            extensions: [.rst, .rest]
+            declared_detected_pairs:
+              - [application/octet-stream, text/plain]
+              - [text/plain, text/plain]
+          makefile:
+            basenames: [Makefile, GNUmakefile]
+            script_family: make
+          windows_script:
+            extensions: [.bat, .cmd, .ps1, .psm1, .psd1]
+            script_family:
+              bat_cmd: batch
+              ps: powershell
+            required_followup: reject_script_uploads unless matching script family or extension is explicitly allowed
     filtering:
       config_source: data:security-policy-config
       allow_mime_types: optional whitelist, empty means no whitelist
@@ -38,6 +71,8 @@ rules:
       deny_mime_types: explicit reject list
       deny_file_types: category or short-name deny list expanded to MIME types
       equivalent_mime_types: configured alias groups
+      generic_mime_compatibility: built-in mismatch-only mapping, not used for allow or deny matching
+      extension_fallback: built-in mismatch-only and script-family mapping, not used for allow or deny matching
     reject_when:
       - declared MIME exists and detected MIME conflicts
       - detected or declared MIME matches deny list

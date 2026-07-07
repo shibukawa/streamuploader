@@ -348,6 +348,9 @@
             "macho": {
               "type": "boolean"
             },
+            "pe": {
+              "type": "boolean"
+            },
             "markdown": {
               "type": "boolean"
             },
@@ -486,6 +489,9 @@
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
               "type": "boolean"
             },
+            "application/vnd.microsoft.portable-executable": {
+              "type": "boolean"
+            },
             "application/x-7z-compressed": {
               "type": "boolean"
             },
@@ -495,7 +501,13 @@
             "application/x-bzip2": {
               "type": "boolean"
             },
+            "application/x-coredump": {
+              "type": "boolean"
+            },
             "application/x-dosexec": {
+              "type": "boolean"
+            },
+            "application/x-elf": {
               "type": "boolean"
             },
             "application/x-executable": {
@@ -510,7 +522,13 @@
             "application/x-httpd-php": {
               "type": "boolean"
             },
+            "application/x-bat": {
+              "type": "boolean"
+            },
             "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-object": {
               "type": "boolean"
             },
             "application/x-ole-storage": {
@@ -654,10 +672,16 @@
             "text/x-python": {
               "type": "boolean"
             },
+            "text/x-powershell": {
+              "type": "boolean"
+            },
             "text/x-ruby": {
               "type": "boolean"
             },
             "text/x-shellscript": {
+              "type": "boolean"
+            },
+            "text/x-makefile": {
               "type": "boolean"
             },
             "text/xml": {
@@ -690,7 +714,16 @@
             "bash": {
               "type": "boolean"
             },
+            "bat": {
+              "type": "boolean"
+            },
             "cjs": {
+              "type": "boolean"
+            },
+            "cmd": {
+              "type": "boolean"
+            },
+            "gnumakefile": {
               "type": "boolean"
             },
             "js": {
@@ -702,10 +735,22 @@
             "mjs": {
               "type": "boolean"
             },
+            "makefile": {
+              "type": "boolean"
+            },
             "php": {
               "type": "boolean"
             },
             "pl": {
+              "type": "boolean"
+            },
+            "ps1": {
+              "type": "boolean"
+            },
+            "psd1": {
+              "type": "boolean"
+            },
+            "psm1": {
               "type": "boolean"
             },
             "py": {
@@ -726,6 +771,12 @@
         "allowed_script_types": {
           "additionalProperties": false,
           "properties": {
+            "batch": {
+              "type": "boolean"
+            },
+            "make": {
+              "type": "boolean"
+            },
             "node": {
               "type": "boolean"
             },
@@ -733,6 +784,9 @@
               "type": "boolean"
             },
             "php": {
+              "type": "boolean"
+            },
+            "powershell": {
               "type": "boolean"
             },
             "python": {
@@ -808,6 +862,9 @@
               "type": "boolean"
             },
             "macho": {
+              "type": "boolean"
+            },
+            "pe": {
               "type": "boolean"
             },
             "markdown": {
@@ -948,6 +1005,9 @@
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
               "type": "boolean"
             },
+            "application/vnd.microsoft.portable-executable": {
+              "type": "boolean"
+            },
             "application/x-7z-compressed": {
               "type": "boolean"
             },
@@ -957,7 +1017,13 @@
             "application/x-bzip2": {
               "type": "boolean"
             },
+            "application/x-coredump": {
+              "type": "boolean"
+            },
             "application/x-dosexec": {
+              "type": "boolean"
+            },
+            "application/x-elf": {
               "type": "boolean"
             },
             "application/x-executable": {
@@ -972,7 +1038,13 @@
             "application/x-httpd-php": {
               "type": "boolean"
             },
+            "application/x-bat": {
+              "type": "boolean"
+            },
             "application/x-msdownload": {
+              "type": "boolean"
+            },
+            "application/x-object": {
               "type": "boolean"
             },
             "application/x-ole-storage": {
@@ -1116,10 +1188,16 @@
             "text/x-python": {
               "type": "boolean"
             },
+            "text/x-powershell": {
+              "type": "boolean"
+            },
             "text/x-ruby": {
               "type": "boolean"
             },
             "text/x-shellscript": {
+              "type": "boolean"
+            },
+            "text/x-makefile": {
               "type": "boolean"
             },
             "text/xml": {
@@ -1156,16 +1234,21 @@
                 "text/plain",
                 "text/csv",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.microsoft.portable-executable",
                 "audio/aac",
                 "application/x-bzip2",
                 "text/x-python",
+                "text/x-powershell",
                 "application/x-msdownload",
                 "application/xml",
                 "application/xhtml+xml",
                 "audio/webm",
                 "audio/flac",
                 "application/x-httpd-php",
+                "application/x-bat",
+                "application/x-coredump",
                 "application/x-dosexec",
+                "application/x-elf",
                 "application/gzip",
                 "application/x-tar",
                 "application/pdf",
@@ -1180,12 +1263,14 @@
                 "audio/wav",
                 "application/x-executable",
                 "application/x-mach-binary",
+                "application/x-object",
                 "application/msword",
                 "application/vnd.ms-excel",
                 "application/x-zstd",
                 "audio/mp4",
                 "audio/ogg",
                 "text/x-shellscript",
+                "text/x-makefile",
                 "application/x-gzip",
                 "application/json",
                 "image/tiff",

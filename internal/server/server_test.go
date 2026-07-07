@@ -687,6 +687,215 @@ func TestUploadAllowsConfiguredScriptType(t *testing.T) {
 	}
 }
 
+func TestInspectUploadPrefixAllowsBrowserGenericTextForJSON(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	body := strings.NewReader(`{"message":"browser sent text/plain"}`)
+
+	inspection, err := inspectUploadPrefix(body, "text/plain", "data.json", policy.MimeMagic)
+	if err != nil {
+		t.Fatalf("inspect upload prefix returned error: %v", err)
+	}
+	if inspection.detectedContentType != "application/json" {
+		t.Fatalf("detected content type = %q", inspection.detectedContentType)
+	}
+}
+
+func TestInspectUploadPrefixAllowsConfiguredPythonScriptDeclaredAsText(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	policy.MimeMagic.AllowedScriptTypes = map[string]bool{"python": true}
+	body := strings.NewReader("print('browser sent text/plain')\n")
+
+	inspection, err := inspectUploadPrefix(body, "text/plain", "tool.py", policy.MimeMagic)
+	if err != nil {
+		t.Fatalf("inspect upload prefix returned error: %v", err)
+	}
+	if inspection.detectedContentType == "" {
+		t.Fatal("detected content type is empty")
+	}
+}
+
+func TestDetectScriptFromExtensionFallback(t *testing.T) {
+	tests := []struct {
+		name         string
+		originalName string
+		wantType     string
+		wantMIME     string
+	}{
+		{name: "makefile", originalName: "Makefile", wantType: "make", wantMIME: "text/x-makefile"},
+		{name: "gnumakefile", originalName: "GNUmakefile", wantType: "make", wantMIME: "text/x-makefile"},
+		{name: "batch", originalName: "build.bat", wantType: "batch", wantMIME: "application/x-bat"},
+		{name: "cmd", originalName: "build.cmd", wantType: "batch", wantMIME: "application/x-bat"},
+		{name: "powershell", originalName: "deploy.ps1", wantType: "powershell", wantMIME: "text/x-powershell"},
+		{name: "powershell_module", originalName: "module.psm1", wantType: "powershell", wantMIME: "text/x-powershell"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectScript([]byte("echo hello\n"), tt.originalName)
+			if !got.detected || got.scriptType != tt.wantType || got.expectedMIME != tt.wantMIME {
+				t.Fatalf("detectScript = %+v, want type=%q MIME=%q", got, tt.wantType, tt.wantMIME)
+			}
+		})
+	}
+}
+
+func TestInspectUploadPrefixRejectsExtensionFallbackScriptsByDefault(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	tests := []string{"Makefile", "build.bat", "deploy.ps1"}
+	for _, originalName := range tests {
+		t.Run(originalName, func(t *testing.T) {
+			_, err := inspectUploadPrefix(strings.NewReader("echo hello\n"), "text/plain", originalName, policy.MimeMagic)
+			var uploadErr securityUploadError
+			if !errors.As(err, &uploadErr) {
+				t.Fatalf("expected security upload error, got %v", err)
+			}
+			if uploadErr.code != "script_upload_rejected" {
+				t.Fatalf("error code = %q", uploadErr.code)
+			}
+		})
+	}
+}
+
+func TestInspectUploadPrefixAllowsConfiguredExtensionFallbackScripts(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	policy.MimeMagic.AllowedScriptTypes = map[string]bool{"make": true, "batch": true, "powershell": true}
+	tests := []string{"Makefile", "build.bat", "deploy.ps1"}
+	for _, originalName := range tests {
+		t.Run(originalName, func(t *testing.T) {
+			if _, err := inspectUploadPrefix(strings.NewReader("echo hello\n"), "text/plain", originalName, policy.MimeMagic); err != nil {
+				t.Fatalf("inspect upload prefix returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeclaredCompatibleWithDetectedBrowserGenericMIMEs(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared string
+		detected string
+		want     bool
+	}{
+		{name: "json_as_text", declared: "text/plain", detected: "application/json", want: true},
+		{name: "json_suffix_as_text", declared: "text/plain", detected: "application/geo+json", want: true},
+		{name: "ndjson_as_text", declared: "text/plain", detected: "application/x-ndjson", want: true},
+		{name: "yaml_as_text", declared: "text/plain", detected: "application/yaml", want: true},
+		{name: "python_as_text", declared: "text/plain", detected: "text/x-python", want: true},
+		{name: "python_alias_as_text", declared: "text/plain", detected: "application/x-python", want: true},
+		{name: "markdown_html", declared: "text/markdown", detected: "text/html", want: true},
+		{name: "markdown_plain", declared: "text/markdown", detected: "text/plain", want: true},
+		{name: "yaml_declared_detected_plain", declared: "application/x-yaml", detected: "text/plain", want: true},
+		{name: "yaml_text_declared_detected_plain", declared: "text/yaml", detected: "text/plain", want: true},
+		{name: "json_declared_detected_plain", declared: "application/json", detected: "text/plain", want: true},
+		{name: "json_suffix_declared_detected_plain", declared: "application/geo+json", detected: "text/plain", want: true},
+		{name: "csv_declared_detected_plain", declared: "text/csv", detected: "text/plain", want: true},
+		{name: "pdf_declared_detected_plain_rejected", declared: "application/pdf", detected: "text/plain", want: false},
+		{name: "image_declared_detected_plain_rejected", declared: "image/png", detected: "text/plain", want: false},
+		{name: "rst_as_octet_stream", declared: "application/octet-stream", detected: "text/plain", want: true},
+		{name: "txt_as_octet_stream", declared: "application/octet-stream", detected: "text/plain", want: true},
+		{name: "mach_o_as_octet_stream", declared: "application/octet-stream", detected: "application/x-mach-binary", want: true},
+		{name: "elf_as_octet_stream", declared: "application/octet-stream", detected: "application/x-elf", want: true},
+		{name: "elf_object_as_octet_stream", declared: "application/octet-stream", detected: "application/x-object", want: true},
+		{name: "pe_as_octet_stream", declared: "application/octet-stream", detected: "application/vnd.microsoft.portable-executable", want: true},
+		{name: "octet_stream_does_not_match_json_suffix", declared: "application/octet-stream", detected: "application/geo+json", want: false},
+		{name: "text_does_not_match_mach_o", declared: "text/plain", detected: "application/x-mach-binary", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := declaredCompatibleWithDetected(tt.declared, tt.detected, "")
+			if got != tt.want {
+				t.Fatalf("declaredCompatibleWithDetected(%q, %q) = %v, want %v", tt.declared, tt.detected, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeclaredCompatibleWithDetectedExtensionFallback(t *testing.T) {
+	tests := []struct {
+		name         string
+		declared     string
+		detected     string
+		originalName string
+		want         bool
+	}{
+		{name: "markdown_html_by_extension", declared: "text/markdown", detected: "text/html", originalName: "README.md", want: true},
+		{name: "markdown_plain_by_extension", declared: "text/markdown", detected: "text/plain", originalName: "README.markdown", want: true},
+		{name: "rst_octet_plain", declared: "application/octet-stream", detected: "text/plain", originalName: "README.rst", want: true},
+		{name: "rest_octet_plain", declared: "application/octet-stream", detected: "text/plain", originalName: "README.rest", want: true},
+		{name: "txt_octet_plain", declared: "application/octet-stream", detected: "text/plain", originalName: "note.txt", want: true},
+		{name: "rst_does_not_match_html", declared: "application/octet-stream", detected: "text/html", originalName: "README.rst", want: false},
+		{name: "md_does_not_match_executable", declared: "text/markdown", detected: "application/x-mach-binary", originalName: "README.md", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := declaredCompatibleWithDetected(tt.declared, tt.detected, tt.originalName)
+			if got != tt.want {
+				t.Fatalf("declaredCompatibleWithDetected(%q, %q, %q) = %v, want %v", tt.declared, tt.detected, tt.originalName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInspectUploadPrefixAllowsDeclaredYAMLDetectedAsPlainText(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	body := strings.NewReader("name: example\nitems:\n  - one\n")
+
+	inspection, err := inspectUploadPrefix(body, "application/x-yaml", "config.yaml", policy.MimeMagic)
+	if err != nil {
+		t.Fatalf("inspect upload prefix returned error: %v", err)
+	}
+	if inspection.detectedContentType != "text/plain" {
+		t.Fatalf("detected content type = %q", inspection.detectedContentType)
+	}
+}
+
+func TestInspectUploadPrefixAllowsBrowserGenericOctetStreamForExecutableWhenPolicyAllows(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	policy.MimeMagic.DenyMIMETypes = map[string]bool{}
+	policy.MimeMagic.DenyFileTypes = map[string]bool{}
+	policy.MimeMagic.ExpandedDenyMIMETypes = []string{}
+	tests := []struct {
+		name         string
+		body         []byte
+		wantDetected string
+	}{
+		{
+			name:         "elf",
+			body:         append([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0}, bytes.Repeat([]byte{0}, 128)...),
+			wantDetected: "application/x-elf",
+		},
+		{
+			name:         "pe",
+			body:         append([]byte{'M', 'Z'}, bytes.Repeat([]byte{0}, 128)...),
+			wantDetected: "application/vnd.microsoft.portable-executable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inspection, err := inspectUploadPrefix(bytes.NewReader(tt.body), "application/octet-stream", "program", policy.MimeMagic)
+			if err != nil {
+				t.Fatalf("inspect upload prefix returned error: %v", err)
+			}
+			if inspection.detectedContentType != tt.wantDetected {
+				t.Fatalf("detected content type = %q, want %q", inspection.detectedContentType, tt.wantDetected)
+			}
+		})
+	}
+}
+
+func TestInspectUploadPrefixDeniesOctetStreamExecutableAfterCompatibility(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	elf := append([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0}, bytes.Repeat([]byte{0}, 128)...)
+
+	_, err := inspectUploadPrefix(bytes.NewReader(elf), "application/octet-stream", "program", policy.MimeMagic)
+	var uploadErr securityUploadError
+	if !errors.As(err, &uploadErr) {
+		t.Fatalf("expected security upload error, got %v", err)
+	}
+	if uploadErr.code != "content_type_denied" {
+		t.Fatalf("error code = %q", uploadErr.code)
+	}
+}
+
 func TestUploadMimeMagicCheckAlwaysRejectsMismatch(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()

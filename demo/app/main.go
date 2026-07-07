@@ -617,6 +617,9 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     .status { font-size: 12px; color: #475467; }
     .invalid-results { display: grid; gap: 10px; margin-top: 14px; }
     .invalid-result { border: 1px solid #e3e7ee; background: #fafbfc; border-radius: 6px; padding: 10px; }
+    .toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 10px; width: min(420px, calc(100vw - 36px)); z-index: 20; }
+    .toast { border-radius: 6px; padding: 12px 14px; background: #111827; color: #fff; box-shadow: 0 14px 34px rgba(15,23,42,.22); font-size: 14px; }
+    .toast.error { background: #b42318; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12px; background: #111827; color: #f9fafb; border-radius: 6px; padding: 10px; }
   </style>
 </head>
@@ -662,6 +665,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
     <div class="invalid-results" id="invalidResults"></div>
   </section>
 </main>
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="true"></div>
 <script>
 const uploadBase = "{{.UploadBasePath}}";
 const uploadsEl = document.querySelector("#uploads");
@@ -673,6 +677,7 @@ const selectAll = document.querySelector("#selectAll");
 const rows = document.querySelector("#fileRows");
 const invalidButton = document.querySelector("#runInvalidUploads");
 const invalidResults = document.querySelector("#invalidResults");
+const toasts = document.querySelector("#toasts");
 const pending = new Map();
 const selected = new Set();
 let ws;
@@ -697,7 +702,13 @@ function connectWatch() {
     const item = pending.get(msg.upload_key);
     if (msg.item) item.fact = msg.item;
     if (msg.status) item.status = msg.status;
+    if (msg.error) item.error = msg.message || msg.error;
+    if (msg.item && msg.item.error) item.error = msg.item.error;
     if (msg.uploaded_bytes) item.uploadedBytes = msg.uploaded_bytes;
+    if (item.status === "failed" || item.status === "canceled" || item.status === "expired") {
+      pending.delete(msg.upload_key);
+      showToast(item.name + ": " + (item.error || item.status));
+    }
     renderUploads();
     updateSaveState();
   };
@@ -711,41 +722,46 @@ function watchKey(key) {
 }
 
 fileInput.addEventListener("change", async () => {
-  for (const file of fileInput.files) {
+  for (const file of Array.from(fileInput.files || [])) {
     await startUpload(file);
   }
 });
 
 async function startUpload(file) {
-  const keyResp = await fetch(uploadEndpoint("/keys"), {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({file_name: file.name, content_type: file.type, size_bytes: file.size})
-  });
-  if (!keyResp.ok) throw new Error(await keyResp.text());
-  const key = await keyResp.json();
-  pending.set(key.upload_key, {name: file.name, size: file.size, status: "key_created", uploadedBytes: 0, fact: key});
-  renderUploads();
-  watchKey(key.upload_key);
-  const putResp = await fetch(uploadContentEndpoint(key), {
-    method: "PUT",
-    headers: {"Content-Type": file.type || "application/octet-stream"},
-    body: file
-  });
-  if (!putResp.ok) {
-    const item = pending.get(key.upload_key);
-    item.status = "failed";
-    item.error = await putResp.text();
+  let uploadKey = "";
+  try {
+    const keyResp = await fetch(uploadEndpoint("/keys"), {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({file_name: file.name, content_type: file.type, size_bytes: file.size})
+    });
+    const key = await readJSONOrText(keyResp);
+    if (!keyResp.ok) throw new Error(formatResponseError(key));
+    if (!key || typeof key.upload_key !== "string") throw new Error("upload key response is missing upload_key");
+    uploadKey = key.upload_key;
+    pending.set(uploadKey, {name: file.name, size: file.size, status: "key_created", uploadedBytes: 0, fact: key});
     renderUploads();
-    return;
+    watchKey(uploadKey);
+    const putResp = await fetch(uploadContentEndpoint(key), {
+      method: "PUT",
+      headers: {"Content-Type": file.type || "application/octet-stream"},
+      body: file
+    });
+    const uploaded = await readJSONOrText(putResp);
+    if (!putResp.ok) throw new Error(formatResponseError(uploaded));
+    const item = pending.get(uploadKey);
+    if (!item || !uploaded || typeof uploaded !== "object") throw new Error("upload response is invalid");
+    item.status = uploaded.status;
+    item.fact = uploaded;
+    item.uploadedBytes = uploaded.uploaded_bytes || uploaded.size_bytes || file.size;
+    renderUploads();
+    updateSaveState();
+  } catch (err) {
+    if (uploadKey) pending.delete(uploadKey);
+    renderUploads();
+    updateSaveState();
+    showToast(file.name + ": " + errorMessage(err));
   }
-  const uploaded = await putResp.json();
-  const item = pending.get(key.upload_key);
-  item.status = uploaded.status;
-  item.fact = uploaded;
-  item.uploadedBytes = uploaded.uploaded_bytes || uploaded.size_bytes || file.size;
-  renderUploads();
-  updateSaveState();
 }
 
 function renderUploads() {
@@ -768,18 +784,26 @@ function updateSaveState() {
 }
 
 saveButton.addEventListener("click", async () => {
-  const files = [...pending.values()].map(item => item.fact);
-  const resp = await fetch("/demo/api/files", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({title: document.querySelector("#title").value, note: document.querySelector("#note").value, files})
-  });
-  if (!resp.ok) throw new Error(await resp.text());
-  pending.clear();
-  fileInput.value = "";
-  renderUploads();
-  updateSaveState();
-  await loadFiles();
+  const files = [...pending.values()].filter(item => item.status === "uploaded" && item.fact && item.fact.object_key).map(item => item.fact);
+  if (!files.length) return;
+  saveButton.disabled = true;
+  try {
+    const resp = await fetch("/demo/api/files", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({title: document.querySelector("#title").value, note: document.querySelector("#note").value, files})
+    });
+    const body = await readJSONOrText(resp);
+    if (!resp.ok) throw new Error(formatResponseError(body));
+    pending.clear();
+    fileInput.value = "";
+    renderUploads();
+    updateSaveState();
+    await loadFiles();
+  } catch (err) {
+    showToast("Save failed: " + errorMessage(err));
+    updateSaveState();
+  }
 });
 
 invalidButton.addEventListener("click", async () => {
@@ -892,6 +916,27 @@ async function readJSONOrText(resp) {
   }
 }
 
+function formatResponseError(value) {
+  if (!value) return "request failed";
+  if (typeof value === "string") return value.trim() || "request failed";
+  if (value.message) return value.message;
+  if (value.error) return value.error;
+  return JSON.stringify(value);
+}
+
+function errorMessage(err) {
+  if (!err) return "request failed";
+  return err.message || String(err);
+}
+
+function showToast(message, kind = "error") {
+  const toast = document.createElement("div");
+  toast.className = "toast " + kind;
+  toast.textContent = message;
+  toasts.appendChild(toast);
+  setTimeout(() => toast.remove(), 7000);
+}
+
 refreshButton.addEventListener("click", loadFiles);
 zipSelectedButton.addEventListener("click", () => {
   const ids = [...selected];
@@ -909,8 +954,15 @@ selectAll.addEventListener("change", () => {
 });
 
 async function loadFiles() {
-  const resp = await fetch("/demo/api/files");
-  const files = await resp.json();
+  let files = [];
+  try {
+    const resp = await fetch("/demo/api/files");
+    const body = await readJSONOrText(resp);
+    if (!resp.ok) throw new Error(formatResponseError(body));
+    files = Array.isArray(body) ? body : (body && Array.isArray(body.files) ? body.files : []);
+  } catch (err) {
+    showToast("Load files failed: " + errorMessage(err));
+  }
   rows.innerHTML = "";
   selected.clear();
   selectAll.checked = false;

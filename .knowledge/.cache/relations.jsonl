@@ -162,6 +162,7 @@
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:document-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:svg-security-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:resource-limit-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:structural-validation-policy", "target_category": "constraint", "target_type": "policy"}
@@ -380,12 +381,12 @@
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "system:content-detector", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "rule:prefix-replay", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "system:clamav", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:resource-limit-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:structural-validation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:file-type-sanitization-policy", "target_category": "constraint", "target_type": "policy"}
-{"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "requirement:streaming-upload", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/policy/file-intake-security.md", "source": "policy:file-intake-security", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
@@ -559,6 +560,7 @@
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "data:security-policy-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
+{"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/requirement/mime-magic-consistency.md", "source": "requirement:mime-magic-consistency", "target": "rule:prefix-replay", "target_category": "constraint", "target_type": "rule"}

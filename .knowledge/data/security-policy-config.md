@@ -48,6 +48,9 @@ schema:
       example:
         shell: true
         python: true
+        powershell: true
+        batch: true
+        make: true
     allowed_script_extensions:
       type: map string bool
       default: {}
@@ -55,6 +58,9 @@ schema:
       example:
         sh: true
         py: true
+        ps1: true
+        bat: true
+        makefile: true
     allow_mime_types:
       type: map string bool
       default: {}
@@ -100,6 +106,114 @@ schema:
         - [application/xml, text/xml]
         - [image/jpeg, image/pjpeg]
         - [application/gzip, application/x-gzip]
+        - [application/rtf, text/rtf]
+        - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/x-ole-storage]
+      meaning: MIME essence aliases used for mismatch, allow, and deny matching
+    builtin_generic_mime_compatibility:
+      meaning: browser generic input MIME values accepted only for declared-versus-detected mismatch suppression
+      security_note: not used for allow or deny matching; does not bypass reject_script_uploads
+      parser_note: parser validation is not required for MIME consistency; structured parsers run only in later processing or validation stages
+      browser_context:
+        basis:
+          - W3C File API allows empty string when file type cannot be determined
+          - MDN documents that browsers usually infer File.type from extension and client configuration, not file bytes
+        browser_families:
+          chromium_based: Chrome, Edge, Chromium
+          gecko_based: Firefox
+          webkit_based: Safari
+        expected_variance:
+          - common image/audio/video/document extensions usually get specific MIME
+          - developer text formats may arrive as text/plain or empty despite server detection as JSON/YAML/Python-specific MIME
+          - Safari may send reStructuredText as application/octet-stream while prefix detector reports text/plain
+          - Safari may send Markdown as text/markdown while prefix detector reports text/html when the prefix starts with HTML-like markup
+          - executables and opaque binaries may arrive as application/octet-stream or empty despite server detection as Mach-O/ELF/PE MIME
+      text/plain:
+        - application/json
+        - application/*+json
+        - application/x-python
+        - application/x-ndjson
+        - application/yaml
+        - application/x-yaml
+        - text/yaml
+        - text/x-yaml
+        - text/x-python
+        - text/x-script.python
+      detected_text_plain_accepts_declared:
+        - application/json
+        - application/*+json
+        - application/yaml
+        - application/x-yaml
+        - text/yaml
+        - text/x-yaml
+        - text/csv
+        - text/markdown
+        - text/html
+        - application/xhtml+xml
+        - application/xml
+        - text/xml
+        - application/*+xml
+        - text/x-python
+        - application/x-python
+        - text/x-script.python
+        - text/javascript
+        - application/javascript
+        - text/x-shellscript
+        - text/x-ruby
+        - text/x-perl
+        - application/x-httpd-php
+        - text/x-powershell
+        - text/x-makefile
+        - application/x-bat
+      detected_text_plain_excludes_declared:
+        - image/*
+        - audio/*
+        - video/*
+        - application/pdf
+        - Office document MIME
+        - archive MIME
+        - executable MIME
+        - application/octet-stream except extension fallback cases
+      text/markdown:
+        - text/plain
+        - text/html
+      application/octet-stream:
+        - text/plain
+        - application/vnd.microsoft.portable-executable
+        - application/x-coredump
+        - application/x-dosexec
+        - application/x-elf
+        - application/x-executable
+        - application/x-mach-binary
+        - application/x-msdownload
+        - application/x-object
+        - application/x-sharedlib
+    builtin_extension_fallback:
+      meaning: filename extension or well-known basename may suppress content_type_mismatch for generic text formats and classify script family
+      security_note:
+        - not used for allow or deny matching
+        - not used to accept executable magic signatures
+        - markup fallback still requires policy:markup-active-content-policy
+        - script fallback still requires reject_script_uploads opt-in through allowed_script_types or allowed_script_extensions
+      markdown:
+        extensions: [md, markdown]
+        compatible:
+          text/markdown: [text/plain, text/html]
+      restructuredtext:
+        extensions: [rst, rest]
+        compatible:
+          application/octet-stream: [text/plain]
+          text/plain: [text/plain]
+      plain_text:
+        extensions: [txt, text]
+        compatible:
+          application/octet-stream: [text/plain]
+      script_family_extensions:
+        make:
+          basenames: [makefile, gnumakefile]
+        batch:
+          extensions: [bat, cmd]
+        powershell:
+          extensions: [ps1, psm1, psd1]
   archive_guard:
     enabled:
       type: bool
@@ -287,9 +401,15 @@ example:
     deny_file_types:
       exe: true
     deny_mime_types:
+      application/vnd.microsoft.portable-executable: true
+      application/x-coredump: true
+      application/x-dosexec: true
+      application/x-elf: true
       application/x-executable: true
-      application/x-sharedlib: true
+      application/x-mach-binary: true
       application/x-msdownload: true
+      application/x-object: true
+      application/x-sharedlib: true
     equivalent_mime_types:
       - [image/jpeg, image/pjpeg]
       - [application/gzip, application/x-gzip]

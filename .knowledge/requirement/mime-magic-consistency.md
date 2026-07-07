@@ -43,17 +43,180 @@ requirements:
       allow_mime_types: optional accept list for large future policy sets
       deny_file_types: bool switch map for aliases such as exe or archives
       deny_mime_types: optional reject list checked before allow
-      allowed_script_types: opt-in bool switch map for shell, python, node, ruby, perl, php
-      allowed_script_extensions: opt-in bool switch map for sh, py, js, rb, pl, php
+      allowed_script_types: opt-in bool switch map for shell, python, node, ruby, perl, php, powershell, batch, make
+      allowed_script_extensions: opt-in bool switch map for sh, py, js, rb, pl, php, ps1, bat, cmd, Makefile
       equivalent_mime_types: alias groups for MIME comparison
   detection:
     primary: decision:mime-detector-library
     fallback: Go net/http DetectContentType for unknown primary result
     compare: normalized MIME essence, without parameters
+  browser_declared_mime_context:
+    standard:
+      file_api:
+        rule: File.type may be a parsable MIME string or empty string when type cannot be determined
+        limits:
+          - user agents must return lower-case MIME essence
+          - text/plain must not include charset parameter
+          - exact extension-to-MIME map is implementation and OS dependent
+        source: https://w3c.github.io/FileAPI/#file-type-guidelines
+      mdn_observation:
+        rule: browsers generally do not read file bytes for File.type; they infer from extension and client configuration
+        examples:
+          renamed_png_to_txt: text/plain, not image/png
+          uncommon_extension: empty string is common
+          windows_registry: may change even common type results
+        source: https://developer.mozilla.org/en-US/docs/Web/API/Blob/type
+    browser_families:
+      chromium_based:
+        examples: Chrome, Edge, Chromium
+        likely_behavior:
+          - extension or platform MIME database determines File.type
+          - source/code files with common text extensions may be text/plain or empty instead of language-specific MIME
+          - unknown binary files may be empty or application/octet-stream depending on construction/upload path
+      gecko_based:
+        examples: Firefox
+        likely_behavior:
+          - extension or platform MIME database determines File.type
+          - uncommon developer files may be empty, text/plain, or a platform-specific MIME
+      webkit_based:
+        examples: Safari
+        likely_behavior:
+          - extension or platform MIME database determines File.type
+          - macOS UTI mapping may influence text and executable file types
+          - Markdown may be declared text/markdown while prefix detector returns text/html when leading HTML-like markup exists
+          - reStructuredText may be declared application/octet-stream while prefix detector returns text/plain
+    product_policy:
+      assumption: client-declared MIME is a hint, not authoritative validation input
+      reason: browser-specific and OS-specific declared MIME variance must not fail otherwise valid uploads before server-side prefix detection
+  extension_fallback:
+    purpose: recover declared-versus-detected compatibility for text formats whose bytes are intentionally generic
+    precedence:
+      - never override executable magic signatures
+      - never bypass deny_mime_types or deny_file_types
+      - never bypass policy:markup-active-content-policy
+      - never bypass reject_script_uploads; extension script fallback feeds script detection
+    normalized_name:
+      extension: lowercase last filename extension without leading dot
+      basename: lowercase path base for extensionless well-known names
+    text_markup:
+      markdown:
+        extensions: [md, markdown]
+        declared: [text/markdown]
+        compatible_detected: [text/plain, text/html]
+        reason: Markdown may begin with HTML blocks and be detected as text/html
+        required_followup: policy:markup-active-content-policy markdown inspection still required
+      restructuredtext:
+        extensions: [rst, rest]
+        declared: [application/octet-stream, text/plain]
+        compatible_detected: [text/plain]
+        reason: Safari may send rst as application/octet-stream while prefix detector reports generic text
+        required_followup: treat as text document; no active HTML bypass
+      plain_text:
+        extensions: [txt, text]
+        declared: [application/octet-stream]
+        compatible_detected: [text/plain]
+        reason: opaque browser declaration can still be generic plain text
+    script_like:
+      makefile:
+        basenames: [makefile, gnumakefile]
+        compatible_detected: [text/plain]
+        script_family: make
+        detection_note: content detector need not prove make syntax from bytes
+      windows_batch:
+        extensions: [bat, cmd]
+        compatible_detected: [text/plain]
+        script_family: batch
+        detection_note: extension may classify script family before content detector proves batch syntax
+      powershell:
+        extensions: [ps1, psm1, psd1]
+        compatible_detected: [text/plain]
+        script_family: powershell
+        detection_note: extension may classify script family before content detector proves PowerShell syntax
+    accept_condition: extension fallback may suppress content_type_mismatch only when declared and detected MIME are in the format-specific compatible sets
+  generic_text_detected_fallback:
+    purpose: accept browser-declared structured text when bounded prefix detection can only prove generic text/plain
+    rule: if detected MIME is text/plain and declared MIME is known text-derived MIME, suppress content_type_mismatch
+    no_parser_on_upload:
+      reason: MIME consistency check should not require full parser validation for JSON, YAML, CSV, Markdown, or source text
+      parser_validation_scope: only later processing, extraction, preview, or structural validation may parse strictly when needed
+    allowed_declared_mime:
+      structured_data:
+        - application/json
+        - application/*+json
+        - application/yaml
+        - application/x-yaml
+        - text/yaml
+        - text/x-yaml
+        - text/csv
+      markup_text:
+        - text/markdown
+        - text/html
+        - application/xhtml+xml
+        - application/xml
+        - text/xml
+        - application/*+xml
+      source_text:
+        - text/x-python
+        - application/x-python
+        - text/x-script.python
+        - text/javascript
+        - application/javascript
+        - text/x-shellscript
+        - text/x-ruby
+        - text/x-perl
+        - application/x-httpd-php
+        - text/x-powershell
+        - text/x-makefile
+        - application/x-bat
+      generic_text:
+        - text/plain
+    exclusions:
+      - do not treat text/plain detection as compatible with image, audio, video, PDF, Office, archive, executable, or opaque binary declarations
+      - do not bypass policy:markup-active-content-policy for Markdown, HTML, XML, XHTML, or XML suffix types
+      - do not bypass reject_script_uploads for script family MIME or extension-detected scripts
   accept:
     - declared MIME missing and detected MIME allowed by policy:file-intake-security
     - declared MIME equals detected MIME
     - declared MIME belongs to configured equivalent group for detected MIME
+    - declared browser generic MIME is input-compatible with detected specific MIME by built-in mismatch-only compatibility:
+        text/plain:
+          - application/json
+          - application/*+json
+          - application/x-python
+          - application/x-ndjson
+          - application/yaml
+          - application/x-yaml
+          - text/yaml
+          - text/x-yaml
+          - text/x-python
+          - text/x-script.python
+        text/markdown:
+          - text/plain
+          - text/html
+        application/json:
+          - text/plain
+        application/*+json:
+          - text/plain
+        application/yaml:
+          - text/plain
+        application/x-yaml:
+          - text/plain
+        text/yaml:
+          - text/plain
+        text/x-yaml:
+          - text/plain
+        application/octet-stream:
+          - text/plain
+          - application/vnd.microsoft.portable-executable
+          - application/x-coredump
+          - application/x-dosexec
+          - application/x-elf
+          - application/x-executable
+          - application/x-mach-binary
+          - application/x-msdownload
+          - application/x-object
+          - application/x-sharedlib
+      note: compatibility suppresses content_type_mismatch only; deny lists and script rejection still apply.
   reject:
     - declared MIME conflicts with detected MIME
     - detected or declared MIME is denied by data:security-policy-config

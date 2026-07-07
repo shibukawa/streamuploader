@@ -442,11 +442,15 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			AllowedScriptTypes:      map[string]bool{},
 			AllowedScriptExtensions: map[string]bool{},
 			DenyMIMETypes: map[string]bool{
-				"application/x-dosexec":     true,
-				"application/x-executable":  true,
-				"application/x-mach-binary": true,
-				"application/x-sharedlib":   true,
-				"application/x-msdownload":  true,
+				"application/vnd.microsoft.portable-executable": true,
+				"application/x-coredump":                        true,
+				"application/x-dosexec":                         true,
+				"application/x-elf":                             true,
+				"application/x-executable":                      true,
+				"application/x-mach-binary":                     true,
+				"application/x-msdownload":                      true,
+				"application/x-object":                          true,
+				"application/x-sharedlib":                       true,
 			},
 		},
 		ArchiveGuard: ArchiveGuardPolicy{
@@ -1086,12 +1090,13 @@ var mimeFileTypes = map[string][]string{
 	"bz2":          {"application/x-bzip2"},
 	"xz":           {"application/x-xz"},
 	"7z":           {"application/x-7z-compressed"},
-	"exe":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
-	"dll":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
-	"elf":          {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
+	"exe":          {"application/vnd.microsoft.portable-executable", "application/x-dosexec", "application/x-elf", "application/x-executable", "application/x-mach-binary", "application/x-msdownload", "application/x-object", "application/x-sharedlib"},
+	"dll":          {"application/vnd.microsoft.portable-executable", "application/x-dosexec", "application/x-elf", "application/x-executable", "application/x-mach-binary", "application/x-msdownload", "application/x-object", "application/x-sharedlib"},
+	"elf":          {"application/x-coredump", "application/x-elf", "application/x-executable", "application/x-object", "application/x-sharedlib"},
 	"mach-o":       {"application/x-mach-binary"},
 	"macho":        {"application/x-mach-binary"},
-	"executable":   {"application/x-dosexec", "application/x-executable", "application/x-mach-binary", "application/x-sharedlib", "application/x-msdownload"},
+	"pe":           {"application/vnd.microsoft.portable-executable", "application/x-dosexec", "application/x-msdownload"},
+	"executable":   {"application/vnd.microsoft.portable-executable", "application/x-coredump", "application/x-dosexec", "application/x-elf", "application/x-executable", "application/x-mach-binary", "application/x-msdownload", "application/x-object", "application/x-sharedlib"},
 }
 
 func ValidateSecurityPolicyYAML(body []byte) error {
@@ -1331,11 +1336,11 @@ func policyObjectSchema(properties map[string]any) map[string]any {
 }
 
 func knownScriptTypes() []string {
-	return []string{"shell", "python", "node", "ruby", "perl", "php"}
+	return []string{"shell", "python", "node", "ruby", "perl", "php", "powershell", "batch", "make"}
 }
 
 func knownScriptExtensions() []string {
-	return []string{"sh", "bash", "zsh", "ksh", "py", "js", "mjs", "cjs", "rb", "pl", "php"}
+	return []string{"sh", "bash", "zsh", "ksh", "py", "js", "mjs", "cjs", "rb", "pl", "php", "ps1", "psm1", "psd1", "bat", "cmd", "makefile", "gnumakefile"}
 }
 
 func boolSwitchSchema(keys []string) map[string]any {
@@ -1370,7 +1375,7 @@ func knownMIMETypes() []string {
 			seen[value] = struct{}{}
 		}
 	}
-	for _, value := range []string{"text/x-shellscript", "text/x-python", "text/javascript", "text/x-ruby", "text/x-perl", "application/x-httpd-php"} {
+	for _, value := range []string{"text/x-shellscript", "text/x-python", "text/javascript", "text/x-ruby", "text/x-perl", "application/x-httpd-php", "text/x-powershell", "application/x-bat", "text/x-makefile"} {
 		seen[value] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))

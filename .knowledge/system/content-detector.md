@@ -21,6 +21,7 @@ checks:
   - file extension versus detected type
   - executable magic signatures
   - shebang such as sh, bash, python, node, perl, ruby
+  - script family fallback from filename for Makefile, GNUmakefile, .bat, .cmd, .ps1, .psm1, .psd1
   - script-like text uploaded as media
   - polyglot or ambiguous signatures
   - archive metadata for policy:archive-bomb-protection
