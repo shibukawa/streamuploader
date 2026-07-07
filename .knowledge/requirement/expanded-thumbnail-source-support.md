@@ -49,7 +49,9 @@ requirement:
       - otherwise select representative keyframe from early candidates
       - overlay play indicator on stored still thumbnail
     office_document:
-      - use OOXML package thumbnail or legacy Office summary thumbnail when present and safe
+      - use OOXML package thumbnail from formats such as .xlsx before LibreOffice conversion when present and safe
+      - use legacy Office summary thumbnail before LibreOffice conversion when extractor supports it
+      - re-encode accepted embedded Office thumbnail to AVIF or WebP per policy:preview-format-policy
       - otherwise convert through system:document-converter
   image_format_priority:
     add_first:
@@ -79,7 +81,8 @@ requirement:
     pdf:
       - use flow:document-preview-generation with system:document-converter
       - validate PDF safety first
-      - render first configured page through Poppler or MuPDF
+      - render first configured page through MuPDF as first external-tool choice
+      - use Poppler only as explicit fallback when installed
       - use sips or Quick Look as optional macOS fallback for simple thumbnails after validation
   acceptance:
     - unsupported decode never rejects otherwise accepted original upload unless policy marks thumbnail required

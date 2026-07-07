@@ -46,11 +46,17 @@ startup_probe:
         - office_to_pdf
         - office_text_export fallback
     pdf_renderer:
+      preferred: mutool
       candidates:
-        - pdftoppm
         - mutool
+        - pdftoppm explicit fallback
       capabilities:
         - pdf_page_render
+    mutool:
+      command: mutool -v
+      capabilities:
+        - pdf_page_render
+        - pdf_metadata_inspection fallback
     pdftotext:
       command: pdftotext -v
       capabilities:

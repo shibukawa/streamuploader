@@ -17,11 +17,19 @@ features:
     fallback: none
     missing_behavior: disable HLS
   office_preview:
-    preferred: libreoffice plus pdf_renderer
+    preferred: embedded Office thumbnail, else libreoffice plus MuPDF pdf_renderer
     fallback:
+      - Poppler only when explicitly installed
       - qlmanage on macOS for simple thumbnail fallback after validation when configured
       - sips on macOS for first-page PDF thumbnail fallback after validation when configured and probed
     missing_behavior: skip document preview
+  pdf_preview:
+    preferred: MuPDF mutool after PDF validation
+    fallback:
+      - Poppler only when explicitly installed
+      - qlmanage on macOS for simple thumbnail fallback after validation when configured
+      - sips on macOS for first-page PDF thumbnail fallback after validation when configured and probed
+    missing_behavior: skip PDF preview
   svg_preview:
     preferred: resvg
     fallback:

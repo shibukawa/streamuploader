@@ -76,8 +76,10 @@ func TestProbePlanFiltersUnavailableFFmpegEncoders(t *testing.T) {
 	policy.LosslessPolicy = "force_avif_reduction"
 	plan := ProbePlan(policy)
 	if _, ok := findTool("ffmpeg"); !ok {
-		if len(plan.ToolCandidates) != 0 {
-			t.Fatalf("tool candidates without ffmpeg = %+v", plan.ToolCandidates)
+		for _, candidate := range plan.ToolCandidates {
+			if candidate.kind == "ffmpeg" {
+				t.Fatalf("ffmpeg candidate without ffmpeg = %+v", candidate)
+			}
 		}
 		return
 	}

@@ -55,6 +55,10 @@ fields:
         - decode extracted bytes with same safety limits as generated thumbnails
         - ignore tiny, corrupted, unsupported, or metadata-only thumbnails
         - re-encode through policy:preview-format-policy before storage
+      office_priority:
+        - inspect OOXML packages such as .docx, .xlsx, and .pptx for embedded thumbnail parts before document rendering
+        - inspect legacy Office summary thumbnail when supported by configured extractor
+        - store only normalized AVIF or WebP output, never raw embedded bytes
     generated_fallback:
       image: decode full image or first safe frame/page when embedded thumbnail is absent or rejected
       video: use representative keyframe selection from flow:video-preview-generation
@@ -131,8 +135,8 @@ fields:
       primary: system:svg-renderer using resvg or rsvg-convert after SVG sanitization
       fallback: sips on macOS after sanitization when configured and probed
     pdf:
-      primary: system:document-converter using PDF validation plus Poppler or MuPDF render
-      fallback: qlmanage or sips thumbnail after validation when configured and policy allows
+      primary: system:document-converter using PDF validation plus MuPDF render
+      fallback: Poppler only when explicitly installed, otherwise qlmanage or sips thumbnail after validation when configured and policy allows
   storage:
     object_key_suffix: /thumbnail
     preset_default: default

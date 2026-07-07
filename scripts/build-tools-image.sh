@@ -9,6 +9,7 @@ GO_IMAGE=${GO_IMAGE:-cgr.dev/chainguard/go:latest-dev}
 RUST_IMAGE=${RUST_IMAGE:-cgr.dev/chainguard/rust:latest-dev}
 DOCKER=${DOCKER:-docker}
 WORK_DIR=${WORK_DIR:-"$ROOT_DIR/.cache/tools-image"}
+APKO_CONFIG=${APKO_CONFIG:-tools.apko.yaml}
 BASE_REF=streamuploader-tools-apko:local
 BASE_IMAGE=$BASE_REF-$ARCH
 CID=
@@ -46,7 +47,7 @@ echo "==> building apko base rootfs"
 "$DOCKER" run --rm \
   -v "$ROOT_DIR:/work" \
   "$APKO_IMAGE" \
-  build /work/tools.apko.yaml "$BASE_REF" /work/.cache/tools-image/apko-base.tar --arch "$ARCH"
+  build "/work/$APKO_CONFIG" "$BASE_REF" /work/.cache/tools-image/apko-base.tar --arch "$ARCH"
 
 echo "==> loading apko base image"
 "$DOCKER" load -i "$WORK_DIR/apko-base.tar" >/dev/null

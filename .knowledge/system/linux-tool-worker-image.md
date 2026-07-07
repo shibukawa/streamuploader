@@ -17,6 +17,8 @@ image_roles:
     description: Go service and worker run in same image for small deployments
   worker_only:
     description: API service stays slim; background worker uses tool image
+  tools_nooffice:
+    description: tool worker image excluding LibreOffice for faster pull/start when Office conversion is not required
 packages:
   required_base:
     - ca-certificates
@@ -27,9 +29,13 @@ packages:
     - ffmpeg
   office_preview:
     - libreoffice
-    - poppler-utils
+    - poppler-utils when MuPDF package is unavailable in base distro
+  pdf_preview:
+    - MuPDF when package exists in base distro
+    - poppler-utils acceptable in tool Docker when MuPDF package is unavailable
   text_extraction:
-    - poppler-utils for pdftotext
+    - mutool for PDF text or metadata fallback when supported
+    - poppler-utils for pdftotext when tool Docker uses Poppler fallback
     - libimage-exiftool-perl
     - Apache Tika optional
     - pandoc optional
@@ -49,6 +55,25 @@ packages:
     - zstd
   metadata_strip:
     - libimage-exiftool-perl optional
+variants:
+  default:
+    includes:
+      - LibreOffice
+      - Poppler when MuPDF package is unavailable
+    excludes:
+      - MuPDF package when unavailable in selected base distro
+  nooffice:
+    includes:
+      - Poppler when MuPDF package is unavailable
+      - media, SVG, OCR, metadata, and download variant tools
+    excludes:
+      - LibreOffice
+      - soffice and libreoffice symlinks
+      - MuPDF package when unavailable in selected base distro
+pdf_tool_install_order:
+  - remove lower-priority PDF renderer packages before installing MuPDF when the base distro provides a MuPDF package
+  - keep Poppler in tool Docker when MuPDF package is unavailable
+  - probe mutool before any fallback renderer at startup
 clamav:
   - do not install ClamAV in this tool worker image
   - run ClamAV as a separate clamd container or managed scanner endpoint

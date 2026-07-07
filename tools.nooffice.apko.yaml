@@ -1,0 +1,57 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - ca-certificates-bundle
+    - coreutils
+    - ffmpeg
+    - file
+    - ttf-dejavu
+    - font-liberation
+    - font-noto-cjk
+    - poppler-utils
+    - tesseract
+    - tesseract-eng
+    - tesseract-jpn
+    - zstd
+
+accounts:
+  groups:
+    - groupname: worker
+      gid: 65532
+  users:
+    - username: worker
+      uid: 65532
+      gid: 65532
+      homedir: /home/worker
+  run-as: worker
+
+entrypoint:
+  command: /usr/local/bin/streamuploader
+
+cmd: thumbnail-convert -h
+
+work-dir: /work
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+paths:
+  - path: /work
+    type: directory
+    uid: 65532
+    gid: 65532
+    permissions: 0o755
+  - path: /home/worker
+    type: directory
+    uid: 65532
+    gid: 65532
+    permissions: 0o755
+  - path: /usr/local/bin
+    type: directory
+    permissions: 0o755
+
+archs:
+  - aarch64

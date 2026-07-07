@@ -386,6 +386,11 @@ func internalThumbnailInput(fileType string) bool {
 
 func toolThumbnailBackend(plan thumbnail.Plan) string {
 	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
+		if strings.HasPrefix(candidate.Backend, "mutool:") {
+			return "mutool"
+		}
+	}
+	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
 		if strings.HasPrefix(candidate.Backend, "ffmpeg:") {
 			return "ffmpeg"
 		}

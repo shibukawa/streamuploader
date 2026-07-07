@@ -27,7 +27,7 @@ flow:
         - extract package thumbnail from Office Open XML documents when available
         - extract legacy Office summary thumbnail when supported by configured tools
         - validate extracted thumbnail under same image safety limits
-        - re-encode through policy:preview-format-policy
+        - re-encode to AVIF or WebP through policy:preview-format-policy
         - skip LibreOffice conversion when embedded thumbnail satisfies requested preview
     - name: normalize_to_pdf
       actions:
@@ -36,7 +36,8 @@ flow:
         - reject macros or unsafe active content by policy
     - name: render_preview
       actions:
-        - render configured pages, usually first page, with Poppler or MuPDF through system:document-converter
+        - render configured pages, usually first page, with MuPDF through system:document-converter
+        - fall back to Poppler only when MuPDF is unavailable and Poppler is explicitly installed
         - on macOS optionally use qlmanage or sips as simple thumbnail fallback after PDF validation when configured
         - generate thumbnail image variants
         - strip document metadata from generated images

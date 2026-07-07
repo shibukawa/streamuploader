@@ -52,6 +52,7 @@ type Plan struct {
 	CGOEnabled       bool
 	GoCandidates     []encoderCandidate
 	ToolCandidates   []toolCandidate
+	MutoolPath       string
 	FFmpegPath       string
 	FFmpegEncoders   map[string]bool
 	SipsPath         string
@@ -113,6 +114,12 @@ func ProbePlan(policy config.ThumbnailPolicy) Plan {
 		return plan
 	}
 	plan.GoCandidates = goEncoderCandidates(policy)
+	plan.MutoolPath = probeMutool()
+	if plan.MutoolPath != "" {
+		plan.ToolCandidates = append(plan.ToolCandidates, toolCandidate{kind: "mutool", contentType: "image/png", backend: "mutool:draw"})
+	} else {
+		plan.UnavailableNotes = append(plan.UnavailableNotes, "mutool unavailable")
+	}
 	plan.FFmpegPath, plan.FFmpegEncoders = probeFFmpegEncoders()
 	if plan.FFmpegPath == "" {
 		plan.UnavailableNotes = append(plan.UnavailableNotes, "ffmpeg unavailable")
@@ -373,6 +380,13 @@ func convertWithTools(input []byte, sourceContentType string, policy config.Thum
 	var lastErr error
 	for _, candidate := range plan.ToolCandidates {
 		switch candidate.kind {
+		case "mutool":
+			body, err := runMutoolThumbnail(ctx, plan.MutoolPath, input, policy, sourceContentType)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return convertImageBytes(body, "image/png", policy, plan, "mutool")
 		case "ffmpeg":
 			body, err := runFFmpegThumbnail(ctx, plan.FFmpegPath, input, filter, candidate.ffmpeg)
 			if err != nil {
@@ -457,6 +471,14 @@ func sipsOutputCandidates(policy config.ThumbnailPolicy, formats map[string]bool
 		add(jpeg)
 	}
 	return candidates
+}
+
+func probeMutool() string {
+	path, err := exec.LookPath("mutool")
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func probeFFmpegEncoders() (string, map[string]bool) {
@@ -754,6 +776,42 @@ func runSipsThumbnail(ctx context.Context, sipsPath string, input []byte, policy
 	if err := cmd.Run(); err != nil {
 		if stderr.Len() > 0 {
 			return nil, fmt.Errorf("sips:%s: %w: %s", format, err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	return os.ReadFile(dst)
+}
+
+func runMutoolThumbnail(ctx context.Context, mutoolPath string, input []byte, policy config.ThumbnailPolicy, sourceContentType string) ([]byte, error) {
+	if mutoolPath == "" {
+		return nil, fmt.Errorf("mutool unavailable")
+	}
+	dir, err := os.MkdirTemp("", "streamuploader-mutool-thumb-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	src := filepath.Join(dir, "source"+extensionForContentType(sourceContentType))
+	dst := filepath.Join(dir, "page.png")
+	if err := os.WriteFile(src, input, 0600); err != nil {
+		return nil, err
+	}
+	args := []string{
+		"draw",
+		"-q",
+		"-F", "png",
+		"-o", dst,
+		"-w", strconv.Itoa(max(1, policy.Width)),
+		"-h", strconv.Itoa(max(1, policy.Height)),
+		src,
+		"1",
+	}
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, mutoolPath, args...)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("mutool draw: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
 		return nil, err
 	}

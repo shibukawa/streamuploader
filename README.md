@@ -75,10 +75,23 @@ Use this when you want streamuploader to run from the tools image that already c
 docker compose -f compose.tools.yaml up --build
 ```
 
+Build the smaller tools image without LibreOffice when Office-to-PDF conversion is not needed:
+
+```bash
+./scripts/build-tools-nooffice-image.sh streamuploader:tools-nooffice
+docker compose -f compose.tools.nooffice.yaml up --build
+```
+
 Set `STREAMUPLOADER_TOOLS_IMAGE` to use a different prebuilt tools image tag:
 
 ```bash
 STREAMUPLOADER_TOOLS_IMAGE=streamuploader:tools docker compose -f compose.tools.yaml up --build
+```
+
+Set `STREAMUPLOADER_TOOLS_NOOFFICE_IMAGE` to use a different prebuilt nooffice tools image tag:
+
+```bash
+STREAMUPLOADER_TOOLS_NOOFFICE_IMAGE=streamuploader:tools-nooffice docker compose -f compose.tools.nooffice.yaml up --build
 ```
 
 This starts the same local stack as `compose.yaml`: streamuploader on `localhost:8080`, backend control on `localhost:8082`, the demo app on `localhost:8081`, RustFS on `localhost:9000`, and ClamAV on `localhost:3310`.
