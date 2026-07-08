@@ -1,0 +1,26 @@
+Stream Uploader Authentication Middleware Additional Permission
+
+This project is distributed under the GNU Affero General Public License version
+3.0, as provided in LICENSE.
+
+As an additional permission under GNU AGPLv3 section 7, the copyright holders
+grant permission to write, link, and distribute independent authentication
+middleware that uses the public streamuploader/auth package without requiring
+that independent authentication middleware itself be licensed under the GNU
+AGPL, provided that:
+
+1. The independent authentication middleware interacts with Stream Uploader only
+   through the public streamuploader/auth API or equivalent documented
+   authentication middleware function signatures.
+2. The independent authentication middleware is limited to authentication,
+   identity provider integration, token validation, gateway assertion
+   validation, tenant/role/scope/permission mapping, and secret loading needed
+   for those authentication decisions.
+3. Any modifications to Stream Uploader outside this authentication middleware
+   boundary remain governed by the GNU AGPLv3.
+4. Copying Stream Uploader core logic into independent authentication
+   middleware is outside this additional permission.
+
+This additional permission does not limit any rights already granted by the GNU
+AGPLv3. It also does not provide a security guarantee for any custom
+authentication middleware or deployment network boundary.

@@ -35,7 +35,6 @@ type appConfig struct {
 	StreamUploaderPublicURL string
 	StreamUploaderProxyURL  string
 	BackendControlURL       string
-	BackendAuthToken        string
 }
 
 type fileFact struct {
@@ -304,9 +303,6 @@ func (a *app) postBackendJSON(ctx context.Context, path string, body any, out an
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.cfg.BackendAuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+a.cfg.BackendAuthToken)
-	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -350,9 +346,6 @@ func (a *app) deleteObjectFromStreamUploader(ctx context.Context, objectKey stri
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
-	}
-	if a.cfg.BackendAuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+a.cfg.BackendAuthToken)
 	}
 	req.Header.Set("X-Request-ID", "demo-delete-"+token(8))
 	resp, err := http.DefaultClient.Do(req)
@@ -453,7 +446,6 @@ func loadConfig() appConfig {
 		StreamUploaderPublicURL: env("STREAMUPLOADER_PUBLIC_URL", "http://localhost:8080"),
 		StreamUploaderProxyURL:  env("STREAMUPLOADER_PROXY_URL", env("STREAMUPLOADER_PUBLIC_URL", "http://localhost:8080")),
 		BackendControlURL:       env("BACKEND_CONTROL_URL", ""),
-		BackendAuthToken:        env("BACKEND_AUTH_TOKEN", ""),
 	}
 }
 

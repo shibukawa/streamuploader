@@ -17,7 +17,6 @@ type Config struct {
 	Addr                    string
 	BackendAddr             string
 	BackendBasePath         string
-	BackendAuthToken        string
 	Mode                    string
 	PublicBaseURL           string
 	UploadBasePath          string
@@ -452,13 +451,12 @@ func Load() Config {
 	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
-		Addr:             env("ADDR", ":8080"),
-		BackendAddr:      env("BACKEND_ADDR", ""),
-		BackendBasePath:  cleanBasePathDefault(env("BACKEND_BASE_PATH", "/internal"), "/internal"),
-		BackendAuthToken: env("BACKEND_AUTH_TOKEN", ""),
-		Mode:             env("MODE", "simple_fronting_reverse_proxy"),
-		PublicBaseURL:    env("PUBLIC_BASE_URL", "http://localhost:8080"),
-		UploadBasePath:   cleanBasePath(env("UPLOAD_BASE_PATH", "/api/upload")),
+		Addr:            env("ADDR", ":8080"),
+		BackendAddr:     env("BACKEND_ADDR", ""),
+		BackendBasePath: cleanBasePathDefault(env("BACKEND_BASE_PATH", "/internal"), "/internal"),
+		Mode:            env("MODE", "simple_fronting_reverse_proxy"),
+		PublicBaseURL:   env("PUBLIC_BASE_URL", "http://localhost:8080"),
+		UploadBasePath:  cleanBasePath(env("UPLOAD_BASE_PATH", "/api/upload")),
 		ApplicationServerURL: env("APPLICATION_SERVER_URL",
 			env("APP_SERVER_URL", "http://demo-app:8081")),
 		AllowedOrigins:          split(env("ALLOWED_ORIGINS", "*")),

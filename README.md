@@ -49,6 +49,83 @@ Security configuration:
 - If the demo app is opened directly instead of through streamuploader, it proxies `/api/upload/*` to `SU_STREAMUPLOADER_PROXY_URL`.
 - The demo includes an `Upload Invalid Files` tab that sends known-bad uploads and shows the JSON rejection response.
 
+Authentication extension:
+
+- Streamuploader core does not implement built-in application authentication for frontend or backend routes. The default frontend and backend auth middleware are pass-through.
+- Production deployments may protect backend control routes with external controls such as security groups, firewall rules, API Gateway, ingress policy, service mesh policy, or private listener placement.
+- Deployments that need application-level authentication can replace the middleware through the public `streamuploader/auth` package. `SetFrontendAuthMiddleware` wraps browser-facing upload and file APIs. `SetBackendAuthMiddleware` wraps backend control APIs.
+- The old built-in `BACKEND_AUTH_TOKEN` behavior has been removed from core. Streamuploader provides only hook points; any bearer-token, gateway-header, SSO, or other auth behavior belongs in a custom main or deployment-owned package.
+
+Current-equivalent backend bearer token sample:
+
+```go
+package main
+
+import (
+	"net/http"
+	"os"
+
+	"streamuploader/auth"
+	"streamuploader/streamuploadercli"
+)
+
+func main() {
+	token := os.Getenv("SU_BACKEND_AUTH_TOKEN")
+	auth.SetBackendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	streamuploadercli.Main()
+}
+```
+
+Build that custom main instead of `./cmd/streamuploader`, set `SU_BACKEND_AUTH_TOKEN`, and backend control requests must send:
+
+```http
+Authorization: Bearer <token>
+```
+
+Custom middleware can be installed directly from `main`:
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"streamuploader/auth"
+	"streamuploader/streamuploadercli"
+)
+
+func main() {
+	auth.SetBackendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Gateway-Actor") == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	streamuploadercli.Main()
+}
+```
+
+License:
+
+- Streamuploader core is licensed under the GNU AGPLv3. See `LICENSE`.
+- Authentication middleware extension code that uses only the public `streamuploader/auth` boundary may be distributed under other terms under the additional permission in `LICENSE-AUTH-EXCEPTION`.
+- Changes outside that authentication middleware boundary remain governed by the AGPLv3.
+
 ## Local build
 
 ```bash

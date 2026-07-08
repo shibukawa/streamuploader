@@ -1,4 +1,5 @@
 {"category": "interface", "id": "api:async-task-wait-api", "path": ".knowledge/api/async-task-wait-api.md", "role": "primary", "title": "Async Task Wait API", "type": "api"}
+{"category": "interface", "id": "api:auth-middleware-extension-api", "path": ".knowledge/api/auth-middleware-extension-api.md", "role": "primary", "title": "Auth Middleware Extension API", "type": "api"}
 {"category": "interface", "id": "api:backend-control-api", "path": ".knowledge/api/backend-control-api.md", "role": "primary", "title": "Backend Control API", "type": "api"}
 {"category": "interface", "id": "api:derived-asset-serving-api", "path": ".knowledge/api/derived-asset-serving-api.md", "role": "primary", "title": "Derived Asset Serving API", "type": "api"}
 {"category": "interface", "id": "api:download-api", "path": ".knowledge/api/download-api.md", "role": "primary", "title": "File Access API", "type": "api"}
@@ -10,6 +11,7 @@
 {"category": "interface", "id": "api:upload-api", "path": ".knowledge/api/upload-api.md", "role": "primary", "title": "Upload API", "type": "api"}
 {"category": "concept", "id": "concept:upload-experience-improvements", "path": ".knowledge/concept/upload-experience-improvements.md", "role": "supporting", "title": "Upload Experience Improvements", "type": "concept"}
 {"category": "structure", "id": "data:async-task-marker", "path": ".knowledge/data/async-task-marker.md", "role": "supporting", "title": "Async Task Marker", "type": "data"}
+{"category": "structure", "id": "data:auth-context", "path": ".knowledge/data/auth-context.md", "role": "supporting", "title": "Auth Context", "type": "data"}
 {"category": "structure", "id": "data:derived-asset", "path": ".knowledge/data/derived-asset.md", "role": "supporting", "title": "Derived Asset", "type": "data"}
 {"category": "structure", "id": "data:extracted-content", "path": ".knowledge/data/extracted-content.md", "role": "supporting", "title": "Extracted Content", "type": "data"}
 {"category": "structure", "id": "data:file-item", "path": ".knowledge/data/file-item.md", "role": "supporting", "title": "File Item", "type": "data"}
@@ -47,6 +49,8 @@
 {"category": "behavior", "id": "flow:video-preview-generation", "path": ".knowledge/flow/video-preview-generation.md", "role": "primary", "title": "Video Preview Generation", "type": "flow"}
 {"category": "constraint", "id": "policy:archive-bomb-protection", "path": ".knowledge/policy/archive-bomb-protection.md", "role": "supporting", "title": "Archive Bomb Protection", "type": "policy"}
 {"category": "constraint", "id": "policy:audit-log-policy", "path": ".knowledge/policy/audit-log-policy.md", "role": "supporting", "title": "Audit Log Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:auth-extension-license-exception", "path": ".knowledge/policy/auth-extension-license-exception.md", "role": "supporting", "title": "Auth Extension License Exception", "type": "policy"}
+{"category": "constraint", "id": "policy:backend-auth-extension-policy", "path": ".knowledge/policy/backend-auth-extension-policy.md", "role": "supporting", "title": "Backend Auth Extension Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:backend-control-plane-policy", "path": ".knowledge/policy/backend-control-plane-policy.md", "role": "supporting", "title": "Backend Control Plane Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:checksum-dedupe-policy", "path": ".knowledge/policy/checksum-dedupe-policy.md", "role": "supporting", "title": "Checksum Dedupe Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:document-active-content-policy", "path": ".knowledge/policy/document-active-content-policy.md", "role": "supporting", "title": "Document Active Content Policy", "type": "policy"}
@@ -54,6 +58,7 @@
 {"category": "constraint", "id": "policy:external-delegation-policy", "path": ".knowledge/policy/external-delegation-policy.md", "role": "supporting", "title": "External Delegation Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:file-intake-security", "path": ".knowledge/policy/file-intake-security.md", "role": "supporting", "title": "File Intake Security", "type": "policy"}
 {"category": "constraint", "id": "policy:file-type-sanitization-policy", "path": ".knowledge/policy/file-type-sanitization-policy.md", "role": "supporting", "title": "File Type Sanitization Policy", "type": "policy"}
+{"category": "constraint", "id": "policy:frontend-auth-extension-policy", "path": ".knowledge/policy/frontend-auth-extension-policy.md", "role": "supporting", "title": "Frontend Auth Extension Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:frontend-upload-cancel-policy", "path": ".knowledge/policy/frontend-upload-cancel-policy.md", "role": "supporting", "title": "Frontend Upload Cancel Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:http-cors-header-policy", "path": ".knowledge/policy/http-cors-header-policy.md", "role": "supporting", "title": "HTTP CORS Header Policy", "type": "policy"}
 {"category": "constraint", "id": "policy:jwt-claim-authorization", "path": ".knowledge/policy/jwt-claim-authorization.md", "role": "supporting", "title": "JWT Claim Authorization", "type": "policy"}

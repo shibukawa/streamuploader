@@ -30,6 +30,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/klauspost/compress/zstd"
 
+	"streamuploader/auth"
 	"streamuploader/internal/config"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
@@ -3013,21 +3014,19 @@ func TestDownloadHeadersUseCachePolicy(t *testing.T) {
 func TestBackendDeleteObjectSamePort(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{"uploads/test/file.txt": []byte("hello")}}
 	cfg := config.Config{
-		Mode:             "standalone_cross_origin",
-		PublicBaseURL:    "http://example.test",
-		UploadBasePath:   "/api/upload",
-		BackendBasePath:  "/internal",
-		BackendAuthToken: "secret",
-		AllowedOrigins:   []string{"*"},
-		Bucket:           "bucket",
-		SessionTTL:       time.Hour,
-		MaxUploadBytes:   1024,
+		Mode:            "standalone_cross_origin",
+		PublicBaseURL:   "http://example.test",
+		UploadBasePath:  "/api/upload",
+		BackendBasePath: "/internal",
+		AllowedOrigins:  []string{"*"},
+		Bucket:          "bucket",
+		SessionTTL:      time.Hour,
+		MaxUploadBytes:  1024,
 	}
 	app := httptest.NewServer(New(cfg, store).Handler())
 	defer app.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
-	req.Header.Set("Authorization", "Bearer secret")
 	resp := do(t, req)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete status = %d", resp.StatusCode)
@@ -3038,6 +3037,91 @@ func TestBackendDeleteObjectSamePort(t *testing.T) {
 	if ok {
 		t.Fatal("object was not deleted")
 	}
+}
+
+func TestBackendAuthMiddlewareCanBeCustomized(t *testing.T) {
+	auth.SetBackendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer secret" {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	defer auth.SetBackendAuthMiddleware(nil)
+
+	store := &fakeStore{objects: map[string][]byte{"uploads/test/file.txt": []byte("hello")}}
+	cfg := config.Config{
+		Mode:            "standalone_cross_origin",
+		PublicBaseURL:   "http://example.test",
+		UploadBasePath:  "/api/upload",
+		BackendBasePath: "/internal",
+		AllowedOrigins:  []string{"*"},
+		Bucket:          "bucket",
+		SessionTTL:      time.Hour,
+		MaxUploadBytes:  1024,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
+	resp := do(t, req)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("delete without auth status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, _ = http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp = do(t, req)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete with auth status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestFrontendAuthMiddlewareCanBeCustomizedWithoutWrappingBackend(t *testing.T) {
+	auth.SetFrontendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Frontend-Auth") != "ok" {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "frontend authorization failed")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	defer auth.SetFrontendAuthMiddleware(nil)
+
+	store := &fakeStore{objects: map[string][]byte{"uploads/test/file.txt": []byte("hello")}}
+	cfg := config.Config{
+		Mode:            "standalone_cross_origin",
+		PublicBaseURL:   "http://example.test",
+		UploadBasePath:  "/api/upload",
+		BackendBasePath: "/internal",
+		AllowedOrigins:  []string{"*"},
+		Bucket:          "bucket",
+		SessionTTL:      time.Hour,
+		MaxUploadBytes:  1024,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	resp, err := http.Get(app.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("frontend health without auth status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
+	resp = do(t, req)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("backend delete with frontend auth installed status = %d", resp.StatusCode)
+	}
+	resp.Body.Close()
 }
 
 func TestBackendHealthHandler(t *testing.T) {

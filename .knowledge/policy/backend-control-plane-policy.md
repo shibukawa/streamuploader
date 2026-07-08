@@ -12,10 +12,16 @@ separation:
   - backend routes are not mounted on public upload listener
   - CORS is disabled on backend listener
 authentication:
-  preferred:
-    - mTLS between application server and streamuploader
-    - service account JWT with audience restricted to backend listener
-    - private network plus signed internal request
+  owner: policy:backend-auth-extension-policy
+  core_behavior:
+    - backend control plane delegates authentication to api:auth-middleware-extension-api backend middleware
+    - core does not include BackendAuthToken bearer authorization
+    - core does not define mTLS, service account JWT, or private network signed request as sufficient by itself
+    - default backend auth middleware passes through without app-level authentication
+  external_boundary:
+    - production deployments may rely on security groups, firewall rules, API Gateway, ingress policy, service mesh, private listener placement, or equivalent controls
+    - streamuploader treats those controls as deployment architecture, not application auth logic
+    - deployment owner decides whether external boundary is sufficient for backend control exposure
   forbidden:
     - upload capability token
     - browser session cookie alone
@@ -52,12 +58,14 @@ s3_operations:
     - audit because extracted text may expose full private file contents
 observability:
   - audit every request, decision, S3 operation, and failure
-  - include actor, service account, tenant, object key, old key, new key, checksum, request id, and reason
+  - include actor, backend actor, tenant, object key, old key, new key, checksum, request id, and reason
   - expose no secret or bearer token in logs
 references:
   - api:backend-control-api
   - api:extracted-content-api
   - system:backend-control-listener
+  - api:auth-middleware-extension-api
+  - policy:backend-auth-extension-policy
   - policy:audit-log-policy
   - policy:checksum-dedupe-policy
 ```

@@ -29,6 +29,7 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gorilla/websocket"
 
+	"streamuploader/auth"
 	"streamuploader/internal/config"
 	"streamuploader/internal/extraction"
 	"streamuploader/internal/model"
@@ -148,15 +149,23 @@ func New(cfg config.Config, store storage.Store) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	s.registerPublicRoutes(mux)
-	if s.cfg.BackendAddr == "" {
-		s.registerBackendRoutes(mux)
-	}
+	publicMux := http.NewServeMux()
+	s.registerPublicRoutes(publicMux)
 	if s.proxy != nil && s.cfg.Mode == "simple_fronting_reverse_proxy" {
-		mux.Handle("/", s.proxy)
+		publicMux.Handle("/", s.proxy)
 	}
-	return s.withAccessLog(s.withCORS(mux))
+	frontendHandler := auth.NewFrontendAuthMiddleware(s.withCORS(publicMux), &s.cfg)
+	if s.cfg.BackendAddr != "" {
+		return s.withAccessLog(frontendHandler)
+	}
+	backendHandler := auth.NewBackendAuthMiddleware(s.backendRoutesHandler(), &s.cfg)
+	return s.withAccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.isBackendPath(r.URL.Path) {
+			backendHandler.ServeHTTP(w, r)
+			return
+		}
+		frontendHandler.ServeHTTP(w, r)
+	}))
 }
 
 func (s *Server) BackendHandler() http.Handler {
@@ -164,8 +173,14 @@ func (s *Server) BackendHandler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		s.health(w)
 	})
-	s.registerBackendRoutes(mux)
-	return s.withAccessLog(mux)
+	backendHandler := auth.NewBackendAuthMiddleware(s.backendRoutesHandler(), &s.cfg)
+	return s.withAccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.isBackendPath(r.URL.Path) {
+			backendHandler.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 }
 
 func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
@@ -202,17 +217,31 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
 
 func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
 	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
-	mux.HandleFunc("POST "+base+"/file/presigned-url", s.backendAuthorized(s.createPresignedURL))
-	mux.HandleFunc("POST "+base+"/file/shared-keys", s.backendAuthorized(s.createSharedKey))
-	mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.backendAuthorized(s.deleteSharedKeyAPI))
-	mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.backendAuthorized(s.deleteObjectAPI))
-	mux.HandleFunc("GET "+base+"/objects/{objectKey}/extracted-content", s.backendAuthorized(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST "+base+"/file/presigned-url", s.createPresignedURL)
+	mux.HandleFunc("POST "+base+"/file/shared-keys", s.createSharedKey)
+	mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.deleteSharedKeyAPI)
+	mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.deleteObjectAPI)
+	mux.HandleFunc("GET "+base+"/objects/{objectKey}/extracted-content", func(w http.ResponseWriter, r *http.Request) {
 		s.getExtractedContent(w, r, r.PathValue("objectKey"))
-	}))
-	mux.HandleFunc("POST "+base+"/objects/{objectKey}/extracted-content/presigned-url", s.backendAuthorized(func(w http.ResponseWriter, r *http.Request) {
+	})
+	mux.HandleFunc("POST "+base+"/objects/{objectKey}/extracted-content/presigned-url", func(w http.ResponseWriter, r *http.Request) {
 		s.createExtractedContentPresignedURL(w, r, r.PathValue("objectKey"))
-	}))
-	mux.HandleFunc("GET "+base+"/tasks/wait", s.backendAuthorized(s.waitAsyncTasks))
+	})
+	mux.HandleFunc("GET "+base+"/tasks/wait", s.waitAsyncTasks)
+}
+
+func (s *Server) backendRoutesHandler() http.Handler {
+	mux := http.NewServeMux()
+	s.registerBackendRoutes(mux)
+	return mux
+}
+
+func (s *Server) isBackendPath(p string) bool {
+	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
+	if base == "" {
+		base = "/internal"
+	}
+	return p == base || strings.HasPrefix(p, base+"/")
 }
 
 func (s *Server) withCORS(next http.Handler) http.Handler {
@@ -228,16 +257,6 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 
 func (s *Server) health(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *Server) backendAuthorized(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.authorizeBackend(r) {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
-			return
-		}
-		next(w, r)
-	}
 }
 
 type presignRequest struct {
@@ -278,14 +297,6 @@ type extractedContentPresignRequest struct {
 	TTLSeconds           int  `json:"ttl_seconds,omitempty"`
 	Wait                 bool `json:"wait,omitempty"`
 	IncludePendingStatus bool `json:"include_pending_status,omitempty"`
-}
-
-func (s *Server) authorizeBackend(r *http.Request) bool {
-	if s.cfg.BackendAuthToken == "" {
-		return true
-	}
-	auth := r.Header.Get("Authorization")
-	return auth == "Bearer "+s.cfg.BackendAuthToken
 }
 
 func (s *Server) deleteSharedKeyAPI(w http.ResponseWriter, r *http.Request) {
