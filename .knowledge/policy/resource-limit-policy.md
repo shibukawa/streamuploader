@@ -13,20 +13,22 @@ rules:
     max_file_size_bytes: applies to all supported file types
     max_decompressed_size_bytes: applies to archives, office containers, PDF streams, and compressed media metadata when measurable
     max_pdf_page_count: applies to PDF inspection and preview
-    max_image_width: applies to decoded image headers
-    max_image_height: applies to decoded image headers
-    max_image_pixel_count: width multiplied by height
+    max_image_width: applies to decoded image headers and SVG intrinsic width or viewBox width
+    max_image_height: applies to decoded image headers and SVG intrinsic height or viewBox height
+    max_image_pixel_count: width multiplied by height, including SVG intrinsic dimensions or viewBox dimensions when available
     max_object_count: applies to PDF objects, XML nodes, archive entries, and format-specific records
     max_xml_depth: applies to SVG and Office XML parts
     max_zip_entries: applies to ZIP, OOXML, and other ZIP-derived containers
     max_embedded_object_count: applies to Office and PDF
     max_parser_time_ms: per format bounded parser budget
     max_sanitized_memory_bytes: maximum in-memory sanitized bytes buffer
+    max_upload_keys_per_owner: active key_created or uploading keys allowed per owner cookie
   enforcement_order:
+    - reject create_upload_key when active owner key count reaches max_upload_keys_per_owner
     - reject declared Content-Length or create_upload_key size_bytes above max_file_size_bytes when available
     - count request body bytes while reading
     - parse only bounded prefix when enough for header limits
-    - reject on header-declared dimensions, counts, or decompressed sizes exceeding limits
+    - reject on header-declared dimensions, SVG root dimensions, SVG viewBox dimensions, counts, or decompressed sizes exceeding limits
     - run bounded full scan when format requires full inspection
     - stop parser immediately when any counter or time budget exceeds limit
   allocation_rules:
@@ -48,6 +50,7 @@ rules:
       - zip_entry_count_exceeded
       - embedded_object_count_exceeded
       - parser_timeout
+      - too_many_upload_keys
 references:
   - data:security-policy-config
   - policy:file-intake-security

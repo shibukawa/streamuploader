@@ -130,6 +130,7 @@ endpoints:
       - backend API asks S3 for presigned GET URL
       - caller returns or redirects to URL
       - bucket can stay private
+      - api:extracted-content-api may reuse this behavior for source object key plus .text.json
   get_thumbnail:
     method: GET
     path: /api/file/{key}/thumbnail
@@ -178,6 +179,7 @@ references:
   - policy:shared-key-policy
   - api:shared-key-api
   - api:derived-asset-serving-api
+  - api:extracted-content-api
   - data:thumbnail-generation-config
   - policy:audit-log-policy
   - data:http-cache-config

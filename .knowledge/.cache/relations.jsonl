@@ -5,6 +5,8 @@
 {"context": "body", "path": ".knowledge/api/async-task-wait-api.md", "source": "api:async-task-wait-api", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "system:backend-control-listener", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "system:application-server", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "data:extracted-content", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "api:extracted-content-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "data:async-task-marker", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "policy:worker-queue-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/backend-control-api.md", "source": "api:backend-control-api", "target": "policy:backend-control-plane-policy", "target_category": "constraint", "target_type": "policy"}
@@ -23,11 +25,20 @@
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:http-cache-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:shared-key-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:extracted-content-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "api:derived-asset-serving-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "data:thumbnail-generation-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:shared-key-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/download-api.md", "source": "api:download-api", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "policy:backend-control-plane-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "api:async-task-wait-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "data:extracted-content", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "api:download-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "data:async-task-marker", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/extracted-content-api.md", "source": "api:extracted-content-api", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/health-api.md", "source": "api:health-api", "target": "system:backend-control-listener", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/health-api.md", "source": "api:health-api", "target": "system:server-deployment-modes", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/api/session-progress-api.md", "source": "api:session-progress-api", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
@@ -46,6 +57,7 @@
 {"context": "body", "path": ".knowledge/api/shared-key-api.md", "source": "api:shared-key-api", "target": "policy:backend-control-plane-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:storage-key-allocation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:upload-key-deadline-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:resource-limit-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:file-type-sanitization-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
@@ -61,7 +73,6 @@
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "decision:upload-transport-boundary", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
-{"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:resource-limit-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "policy:structural-validation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "api:backend-control-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/upload-api.md", "source": "api:upload-api", "target": "requirement:application-metadata-submit", "target_category": "objective", "target_type": "requirement"}
@@ -120,6 +131,7 @@
 {"context": "body", "path": ".knowledge/data/derived-asset.md", "source": "data:derived-asset", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "api:extracted-content-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "flow:text-extraction-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "flow:ocr-extraction-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/data/extracted-content.md", "source": "data:extracted-content", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
@@ -162,6 +174,7 @@
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:document-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:svg-security-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-check-result.md", "source": "data:security-check-result", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:markup-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:resource-limit-policy", "target_category": "constraint", "target_type": "policy"}
@@ -169,7 +182,6 @@
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:file-type-sanitization-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "system:clamav", "target_category": "external", "target_type": "system"}
-{"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "requirement:mime-magic-consistency", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "decision:mime-detector-library", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:document-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/data/security-policy-config.md", "source": "data:security-policy-config", "target": "policy:svg-security-policy", "target_category": "constraint", "target_type": "policy"}
@@ -268,6 +280,8 @@
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "api:derived-asset-serving-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/flow/image-thumbnail-generation.md", "source": "flow:image-thumbnail-generation", "target": "requirement:expanded-thumbnail-source-support", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "data:async-task-marker", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "flow:document-preview-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "system:local-command-processor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/flow/ocr-extraction-generation.md", "source": "flow:ocr-extraction-generation", "target": "data:processor-result", "target_category": "structure", "target_type": "data"}
@@ -284,6 +298,7 @@
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:file-type-sanitization-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "data:security-policy-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
+{"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "api:session-progress-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:archive-bomb-protection", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:document-active-content-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/flow/security-gated-upload-acceptance.md", "source": "flow:security-gated-upload-acceptance", "target": "policy:svg-security-policy", "target_category": "constraint", "target_type": "policy"}
@@ -323,6 +338,8 @@
 {"context": "body", "path": ".knowledge/flow/svg-preview-generation.md", "source": "flow:svg-preview-generation", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "data:file-item", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "policy:search-extraction-policy", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "data:derived-asset", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "data:async-task-marker", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "flow:ocr-extraction-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "system:local-command-processor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/flow/text-extraction-generation.md", "source": "flow:text-extraction-generation", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
@@ -345,8 +362,8 @@
 {"context": "body", "path": ".knowledge/flow/video-preview-generation.md", "source": "flow:video-preview-generation", "target": "system:media-converter", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "system:s3-storage", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "system:content-detector", "target_category": "external", "target_type": "system"}
-{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-policy-config", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "data:security-check-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/archive-bomb-protection.md", "source": "policy:archive-bomb-protection", "target": "policy:file-intake-security", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "data:logging-config", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:object-access-policy", "target_category": "constraint", "target_type": "policy"}
@@ -355,6 +372,7 @@
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "policy:backend-control-plane-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/audit-log-policy.md", "source": "policy:audit-log-policy", "target": "api:share-url-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/backend-control-plane-policy.md", "source": "policy:backend-control-plane-policy", "target": "api:backend-control-api", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/policy/backend-control-plane-policy.md", "source": "policy:backend-control-plane-policy", "target": "api:extracted-content-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/backend-control-plane-policy.md", "source": "policy:backend-control-plane-policy", "target": "system:backend-control-listener", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/backend-control-plane-policy.md", "source": "policy:backend-control-plane-policy", "target": "policy:audit-log-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/backend-control-plane-policy.md", "source": "policy:backend-control-plane-policy", "target": "policy:checksum-dedupe-policy", "target_category": "constraint", "target_type": "policy"}
@@ -464,12 +482,12 @@
 {"context": "body", "path": ".knowledge/policy/reverse-proxy-routing-policy.md", "source": "policy:reverse-proxy-routing-policy", "target": "api:upload-api", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/policy/reverse-proxy-routing-policy.md", "source": "policy:reverse-proxy-routing-policy", "target": "policy:http-cors-header-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "flow:text-extraction-generation", "target_category": "behavior", "target_type": "flow"}
+{"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "data:extracted-content", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "flow:ocr-extraction-generation", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "policy:external-delegation-policy", "target_category": "constraint", "target_type": "policy"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "system:local-command-processor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "system:openai-compatible-api-processor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "policy:processor-execution-policy", "target_category": "constraint", "target_type": "policy"}
-{"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "data:extracted-content", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "data:processor-result", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "system:text-extractor", "target_category": "external", "target_type": "system"}
 {"context": "body", "path": ".knowledge/policy/search-extraction-policy.md", "source": "policy:search-extraction-policy", "target": "system:ocr-engine", "target_category": "external", "target_type": "system"}

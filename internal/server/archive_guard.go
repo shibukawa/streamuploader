@@ -3,6 +3,7 @@ package server
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/bzip2"
 	"compress/gzip"
 	"context"
@@ -45,30 +46,42 @@ func shouldInspectArchive(prefix []byte, contentType, originalName string) bool 
 	return archiveKindFromMagic(prefix) != archiveUnknown
 }
 
-func inspectArchiveObject(ctx context.Context, store storage.Store, bucket, objectKey string, compressedSize int64, kind archiveKind, policy config.ArchiveGuardPolicy) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(policy.MaxInspectionTimeMS)*time.Millisecond)
+func inspectArchiveObject(ctx context.Context, store storage.Store, bucket, objectKey string, compressedSize int64, kind archiveKind, originalName string, policy config.SecurityPolicy) error {
+	archivePolicy := policy.ArchiveGuard
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(archivePolicy.MaxInspectionTimeMS)*time.Millisecond)
 	defer cancel()
 	switch kind {
 	case archiveZip:
-		return inspectZipArchive(ctx, s3ObjectReaderAt{ctx: ctx, store: store, bucket: bucket, key: objectKey}, compressedSize, policy)
+		budget := &archiveInspectionBudget{}
+		return inspectZipArchive(ctx, s3ObjectReaderAt{ctx: ctx, store: store, bucket: bucket, key: objectKey}, compressedSize, archivePolicy, policy.MimeMagic, 1, budget)
 	case archiveGzip:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, inspectGzipArchive)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, compressedSize int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectGzipArchiveNamed(ctx, reader, compressedSize, archivePolicy, policy.MimeMagic, originalName, 1, &archiveInspectionBudget{})
+		})
 	case archiveTar:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, func(ctx context.Context, reader io.Reader, _ int64, policy config.ArchiveGuardPolicy) error {
-			return inspectTarArchive(ctx, reader, policy)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, _ int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectTarArchive(ctx, reader, archivePolicy, policy.MimeMagic, 1, &archiveInspectionBudget{})
 		})
 	case archiveZstd:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, inspectZstdArchive)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, compressedSize int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectZstdArchiveNamed(ctx, reader, compressedSize, archivePolicy, policy.MimeMagic, originalName, 1, &archiveInspectionBudget{})
+		})
 	case archiveBrotli:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, inspectBrotliArchive)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, compressedSize int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectBrotliArchiveNamed(ctx, reader, compressedSize, archivePolicy, policy.MimeMagic, originalName, 1, &archiveInspectionBudget{})
+		})
 	case archiveBzip2:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, inspectBzip2Archive)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, compressedSize int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectBzip2ArchiveNamed(ctx, reader, compressedSize, archivePolicy, policy.MimeMagic, originalName, 1, &archiveInspectionBudget{})
+		})
 	case archiveXZ:
-		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, policy, inspectXZArchive)
+		return inspectStreamArchiveObject(ctx, store, bucket, objectKey, compressedSize, archivePolicy, func(ctx context.Context, reader io.Reader, compressedSize int64, archivePolicy config.ArchiveGuardPolicy) error {
+			return inspectXZArchiveNamed(ctx, reader, compressedSize, archivePolicy, policy.MimeMagic, originalName, 1, &archiveInspectionBudget{})
+		})
 	case archive7z:
-		return inspect7zArchive(ctx, s3ObjectReaderAt{ctx: ctx, store: store, bucket: bucket, key: objectKey}, compressedSize, policy)
+		return inspect7zArchive(ctx, s3ObjectReaderAt{ctx: ctx, store: store, bucket: bucket, key: objectKey}, compressedSize, archivePolicy, policy.MimeMagic, 1, &archiveInspectionBudget{})
 	default:
-		if policy.Strict {
+		if archivePolicy.Strict {
 			return archiveSecurityError("archive_unsupported_method", "archive type could not be inspected")
 		}
 		return nil
@@ -114,7 +127,27 @@ func (r s3ObjectReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return n, readErr
 }
 
-func inspectZipArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize int64, policy config.ArchiveGuardPolicy) error {
+type archiveInspectionBudget struct {
+	totalUncompressed int64
+	entries           int64
+}
+
+func (b *archiveInspectionBudget) addEntry(size int64, policy config.ArchiveGuardPolicy) error {
+	if b == nil {
+		return nil
+	}
+	b.entries++
+	if b.entries > policy.MaxEntries {
+		return archiveSecurityError("archive_too_many_entries", "archive has too many entries")
+	}
+	b.totalUncompressed += size
+	if b.totalUncompressed > policy.MaxTotalUncompressedBytes {
+		return archiveSecurityError("archive_too_large", "archive exceeds max total uncompressed bytes")
+	}
+	return nil
+}
+
+func inspectZipArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
 	zr, err := zip.NewReader(readerAt, compressedSize)
 	if err != nil {
 		return archiveSecurityError("archive_unsupported_method", "zip archive could not be parsed")
@@ -144,14 +177,23 @@ func inspectZipArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize
 			return archiveSecurityError("archive_unsupported_method", "encrypted archive entries are not allowed")
 		}
 		if entry.FileInfo().IsDir() {
+			if err := budget.addEntry(0, policy); err != nil {
+				return err
+			}
 			continue
 		}
 		if archiveEntryIsLink(entry.FileInfo()) {
 			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
 		}
+		if archiveEntryIsSpecial(entry.FileInfo()) {
+			return archiveSecurityError("archive_special_file_rejected", "archive special files are not allowed")
+		}
 		size := int64(entry.UncompressedSize64)
 		if size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
+		}
+		if err := budget.addEntry(size, policy); err != nil {
+			return err
 		}
 		total += size
 		if total > policy.MaxTotalUncompressedBytes {
@@ -160,37 +202,215 @@ func inspectZipArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize
 		if compressedSize > 0 && float64(total)/float64(compressedSize) > policy.MaxCompressionRatio {
 			return archiveSecurityError("archive_ratio_exceeded", "archive compression ratio exceeds limit")
 		}
+		if err := inspectZipEntryContent(ctx, entry, cleanName, policy, mimePolicy, depth, budget); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
+func inspectZipEntryContent(ctx context.Context, entry *zip.File, name string, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
+	knownExtension := len(config.MIMEFileType(normalizedExtension(name))) > 0
+	nestedKind := archiveKindFor("", name)
+	if err := ctx.Err(); err != nil {
+		return archiveSecurityError("archive_inspection_timeout", "archive inspection timed out")
+	}
+	rc, err := entry.Open()
+	if err != nil {
+		return archiveSecurityError("archive_unsupported_method", "zip archive entry could not be inspected")
+	}
+	defer rc.Close()
+	prefix, err := readArchiveEntryPrefix(rc, mimePolicy)
+	if err != nil {
+		return err
+	}
+	if len(prefix) == 0 && knownExtension {
+		return archiveSecurityError("archive_entry_type_mismatch", "archive entry content type could not be detected")
+	}
+	if err := inspectArchiveEntryScript(prefix, name, mimePolicy); err != nil {
+		return err
+	}
+	detected := detectContentType(prefix)
+	if knownExtension && !archiveEntryExtensionMatchesDetected(name, detected, mimePolicy) {
+		ext := normalizedExtension(name)
+		return archiveSecurityError("archive_entry_type_mismatch", fmt.Sprintf("archive entry %s extension .%s does not match detected content type %s", name, ext, detected))
+	}
+	if nestedKind == archiveUnknown {
+		nestedKind = archiveKindFromMagic(prefix)
+	}
+	if nestedKind == archiveUnknown {
+		return nil
+	}
+	if depth >= policy.MaxDepth {
+		return archiveSecurityError("archive_too_deep", "archive nesting depth exceeds limit")
+	}
+	return inspectNestedArchiveEntry(ctx, entry, name, nestedKind, policy, mimePolicy, depth+1, budget)
+}
+
+func readArchiveEntryPrefix(reader io.Reader, policy config.MimeMagicPolicy) ([]byte, error) {
+	limit := policy.PrefixBytes
+	if limit <= 0 {
+		limit = 3072
+	}
+	if limit < 512 {
+		limit = 512
+	}
+	if limit > 1<<20 {
+		limit = 1 << 20
+	}
+	prefix := make([]byte, limit)
+	n, err := io.ReadFull(reader, prefix)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, archiveSecurityError("archive_unsupported_method", "archive entry prefix could not be read")
+	}
+	return prefix[:n], nil
+}
+
+func archiveEntryExtensionMatchesDetected(name, detected string, policy config.MimeMagicPolicy) bool {
+	expected := config.MIMEFileType(normalizedExtension(name))
+	for _, candidate := range expected {
+		if mimeEquivalent(detected, candidate, policy.EquivalentMIMETypes) || declaredCompatibleWithDetected(candidate, detected, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectNestedArchiveEntry(ctx context.Context, entry *zip.File, name string, kind archiveKind, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
+	rc, err := entry.Open()
+	if err != nil {
+		return archiveSecurityError("archive_unsupported_method", "nested archive entry could not be opened")
+	}
+	defer rc.Close()
+	compressedSize := int64(entry.UncompressedSize64)
+	return inspectNestedArchiveReader(ctx, rc, compressedSize, name, kind, policy, mimePolicy, depth, budget)
+}
+
+func inspectNestedArchiveReader(ctx context.Context, reader io.Reader, compressedSize int64, name string, kind archiveKind, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
+	switch kind {
+	case archiveZip:
+		body, err := readArchiveEntryBytes(reader, policy.MaxSingleEntryBytes)
+		if err != nil {
+			return err
+		}
+		return inspectZipArchive(ctx, bytesReaderAt(body), int64(len(body)), policy, mimePolicy, depth, budget)
+	case archiveGzip:
+		return inspectGzipArchiveNamed(ctx, reader, compressedSize, policy, mimePolicy, name, depth, budget)
+	case archiveTar:
+		return inspectTarArchive(ctx, reader, policy, mimePolicy, depth, budget)
+	case archiveZstd:
+		return inspectZstdArchiveNamed(ctx, reader, compressedSize, policy, mimePolicy, name, depth, budget)
+	case archiveBrotli:
+		return inspectBrotliArchiveNamed(ctx, reader, compressedSize, policy, mimePolicy, name, depth, budget)
+	case archiveBzip2:
+		return inspectBzip2ArchiveNamed(ctx, reader, compressedSize, policy, mimePolicy, name, depth, budget)
+	case archiveXZ:
+		return inspectXZArchiveNamed(ctx, reader, compressedSize, policy, mimePolicy, name, depth, budget)
+	case archive7z:
+		body, err := readArchiveEntryBytes(reader, policy.MaxSingleEntryBytes)
+		if err != nil {
+			return err
+		}
+		return inspect7zArchive(ctx, bytesReaderAt(body), int64(len(body)), policy, mimePolicy, depth, budget)
+	default:
+		if policy.Strict {
+			return archiveSecurityError("archive_unsupported_method", "nested archive type could not be inspected")
+		}
+		return nil
+	}
+}
+
+func readArchiveEntryBytes(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = 64 << 20
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, archiveSecurityError("archive_unsupported_method", "nested archive entry could not be read")
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, archiveSecurityError("archive_too_large", "nested archive entry exceeds size limit")
+	}
+	return body, nil
+}
+
+type bytesReaderAt []byte
+
+func (b bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("negative offset")
+	}
+	if off >= int64(len(b)) {
+		return 0, io.EOF
+	}
+	n := copy(p, b[int(off):])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
 func inspectGzipArchive(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
+	return inspectGzipArchiveNamed(ctx, reader, compressedSize, policy, config.MimeMagicPolicy{}, "", 1, &archiveInspectionBudget{})
+}
+
+func inspectGzipArchiveNamed(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, name string, depth int64, budget *archiveInspectionBudget) error {
 	gz, err := gzip.NewReader(reader)
 	if err != nil {
 		return archiveSecurityError("archive_unsupported_method", "gzip stream could not be parsed")
 	}
 	defer gz.Close()
-	return countArchiveStream(ctx, gz, compressedSize, policy)
+	if compressedArchiveWrapsTar(archiveGzip, name) {
+		return inspectTarArchive(ctx, gz, policy, mimePolicy, depth, budget)
+	}
+	return countArchiveStream(ctx, gz, compressedSize, policy, budget)
 }
 
 func inspectZstdArchive(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
+	return inspectZstdArchiveNamed(ctx, reader, compressedSize, policy, config.MimeMagicPolicy{}, "", 1, &archiveInspectionBudget{})
+}
+
+func inspectZstdArchiveNamed(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, name string, depth int64, budget *archiveInspectionBudget) error {
 	zr, err := zstd.NewReader(reader)
 	if err != nil {
 		return archiveSecurityError("archive_unsupported_method", "zstd stream could not be parsed")
 	}
 	defer zr.Close()
-	return countArchiveStream(ctx, zr, compressedSize, policy)
+	if compressedArchiveWrapsTar(archiveZstd, name) {
+		return inspectTarArchive(ctx, zr, policy, mimePolicy, depth, budget)
+	}
+	return countArchiveStream(ctx, zr, compressedSize, policy, budget)
 }
 
 func inspectBrotliArchive(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
-	return countArchiveStream(ctx, brotli.NewReader(reader), compressedSize, policy)
+	return inspectBrotliArchiveNamed(ctx, reader, compressedSize, policy, config.MimeMagicPolicy{}, "", 1, &archiveInspectionBudget{})
+}
+
+func inspectBrotliArchiveNamed(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, name string, depth int64, budget *archiveInspectionBudget) error {
+	br := brotli.NewReader(reader)
+	if compressedArchiveWrapsTar(archiveBrotli, name) {
+		return inspectTarArchive(ctx, br, policy, mimePolicy, depth, budget)
+	}
+	return countArchiveStream(ctx, br, compressedSize, policy, budget)
 }
 
 func inspectBzip2Archive(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
-	return countArchiveStream(ctx, bzip2.NewReader(reader), compressedSize, policy)
+	return inspectBzip2ArchiveNamed(ctx, reader, compressedSize, policy, config.MimeMagicPolicy{}, "", 1, &archiveInspectionBudget{})
+}
+
+func inspectBzip2ArchiveNamed(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, name string, depth int64, budget *archiveInspectionBudget) error {
+	bz := bzip2.NewReader(reader)
+	if compressedArchiveWrapsTar(archiveBzip2, name) {
+		return inspectTarArchive(ctx, bz, policy, mimePolicy, depth, budget)
+	}
+	return countArchiveStream(ctx, bz, compressedSize, policy, budget)
 }
 
 func inspectXZArchive(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
+	return inspectXZArchiveNamed(ctx, reader, compressedSize, policy, config.MimeMagicPolicy{}, "", 1, &archiveInspectionBudget{})
+}
+
+func inspectXZArchiveNamed(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, name string, depth int64, budget *archiveInspectionBudget) error {
 	dictMax := uint32(policy.WorkerMemoryBytes)
 	if policy.WorkerMemoryBytes <= 0 || policy.WorkerMemoryBytes > int64(^uint32(0)) {
 		dictMax = xz.DefaultDictMax
@@ -199,10 +419,31 @@ func inspectXZArchive(ctx context.Context, reader io.Reader, compressedSize int6
 	if err != nil {
 		return archiveSecurityError("archive_unsupported_method", "xz stream could not be parsed")
 	}
-	return countArchiveStream(ctx, xr, compressedSize, policy)
+	if compressedArchiveWrapsTar(archiveXZ, name) {
+		return inspectTarArchive(ctx, xr, policy, mimePolicy, depth, budget)
+	}
+	return countArchiveStream(ctx, xr, compressedSize, policy, budget)
 }
 
-func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize int64, policy config.ArchiveGuardPolicy) error {
+func compressedArchiveWrapsTar(kind archiveKind, name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch kind {
+	case archiveGzip:
+		return strings.HasSuffix(lower, ".tgz") || strings.HasSuffix(lower, ".tar.gz")
+	case archiveZstd:
+		return strings.HasSuffix(lower, ".tar.zst") || strings.HasSuffix(lower, ".tar.zstd")
+	case archiveBrotli:
+		return strings.HasSuffix(lower, ".tar.br") || strings.HasSuffix(lower, ".tar.brotli")
+	case archiveBzip2:
+		return strings.HasSuffix(lower, ".tbz") || strings.HasSuffix(lower, ".tbz2") || strings.HasSuffix(lower, ".tar.bz2") || strings.HasSuffix(lower, ".tar.bzip2")
+	case archiveXZ:
+		return strings.HasSuffix(lower, ".txz") || strings.HasSuffix(lower, ".tar.xz")
+	default:
+		return false
+	}
+}
+
+func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
 	szr, err := sevenzip.NewReader(readerAt, compressedSize)
 	if err != nil {
 		return archiveSecurityError("archive_unsupported_method", "7z archive could not be parsed")
@@ -228,14 +469,23 @@ func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize 
 		}
 		seen[cleanName] = struct{}{}
 		if entry.FileInfo().IsDir() {
+			if err := budget.addEntry(0, policy); err != nil {
+				return err
+			}
 			continue
 		}
 		if archiveEntryIsLink(entry.FileInfo()) {
 			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
 		}
+		if archiveEntryIsSpecial(entry.FileInfo()) {
+			return archiveSecurityError("archive_special_file_rejected", "archive special files are not allowed")
+		}
 		size := int64(entry.UncompressedSize)
 		if size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
+		}
+		if err := budget.addEntry(size, policy); err != nil {
+			return err
 		}
 		total += size
 		if total > policy.MaxTotalUncompressedBytes {
@@ -244,17 +494,9 @@ func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize 
 		if compressedSize > 0 && float64(total)/float64(compressedSize) > policy.MaxCompressionRatio {
 			return archiveSecurityError("archive_ratio_exceeded", "archive compression ratio exceeds limit")
 		}
-		rc, err := entry.Open()
+		counted, err := inspect7zEntryContent(ctx, entry, cleanName, compressedSize, policy, mimePolicy, depth, budget)
 		if err != nil {
-			return sevenZipOpenError(err, policy)
-		}
-		counted, countErr := countSingleArchiveEntry(ctx, rc, compressedSize, policy)
-		closeErr := rc.Close()
-		if countErr != nil {
-			return countErr
-		}
-		if closeErr != nil {
-			return sevenZipOpenError(closeErr, policy)
+			return err
 		}
 		if counted > size && size > 0 {
 			return archiveSecurityError("archive_too_large", "archive entry exceeded declared size")
@@ -263,7 +505,44 @@ func inspect7zArchive(ctx context.Context, readerAt io.ReaderAt, compressedSize 
 	return nil
 }
 
-func inspectTarArchive(ctx context.Context, reader io.Reader, policy config.ArchiveGuardPolicy) error {
+func inspect7zEntryContent(ctx context.Context, entry *sevenzip.File, name string, compressedSize int64, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, archiveSecurityError("archive_inspection_timeout", "archive inspection timed out")
+	}
+	rc, err := entry.Open()
+	if err != nil {
+		return 0, sevenZipOpenError(err, policy)
+	}
+	defer rc.Close()
+	prefix, err := readArchiveEntryPrefix(rc, mimePolicy)
+	if err != nil {
+		return 0, err
+	}
+	if err := inspectArchiveEntryPrefix(ctx, prefix, name, mimePolicy); err != nil {
+		return 0, err
+	}
+	nestedKind := archiveKindFor("", name)
+	if nestedKind == archiveUnknown {
+		nestedKind = archiveKindFromMagic(prefix)
+	}
+	reader := io.MultiReader(bytes.NewReader(prefix), rc)
+	if nestedKind != archiveUnknown {
+		if depth >= policy.MaxDepth {
+			return 0, archiveSecurityError("archive_too_deep", "archive nesting depth exceeds limit")
+		}
+		if err := inspectNestedArchiveReader(ctx, reader, int64(entry.UncompressedSize), name, nestedKind, policy, mimePolicy, depth+1, budget); err != nil {
+			return 0, err
+		}
+		return int64(entry.UncompressedSize), nil
+	}
+	counted, err := countSingleArchiveEntry(ctx, reader, compressedSize, policy)
+	if err != nil {
+		return counted, err
+	}
+	return counted, nil
+}
+
+func inspectTarArchive(ctx context.Context, reader io.Reader, policy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
 	tr := tar.NewReader(reader)
 	total := int64(0)
 	entries := int64(0)
@@ -291,14 +570,80 @@ func inspectTarArchive(ctx context.Context, reader io.Reader, policy config.Arch
 		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
 			return archiveSecurityError("archive_link_rejected", "archive links are not allowed")
 		}
+		if header.FileInfo().IsDir() {
+			if err := budget.addEntry(0, policy); err != nil {
+				return err
+			}
+			continue
+		}
+		if !tarEntryIsRegular(header) {
+			return archiveSecurityError("archive_special_file_rejected", "archive special files are not allowed")
+		}
 		if header.Size > policy.MaxSingleEntryBytes {
 			return archiveSecurityError("archive_too_large", "archive entry exceeds max single entry bytes")
+		}
+		if err := budget.addEntry(header.Size, policy); err != nil {
+			return err
 		}
 		total += header.Size
 		if total > policy.MaxTotalUncompressedBytes {
 			return archiveSecurityError("archive_too_large", "archive exceeds max total uncompressed bytes")
 		}
+		if err := inspectTarEntryContent(ctx, tr, header.Name, header.Size, policy, mimePolicy, depth, budget); err != nil {
+			return err
+		}
 	}
+}
+
+func inspectTarEntryContent(ctx context.Context, reader io.Reader, name string, compressedSize int64, archivePolicy config.ArchiveGuardPolicy, mimePolicy config.MimeMagicPolicy, depth int64, budget *archiveInspectionBudget) error {
+	prefix, err := readArchiveEntryPrefix(reader, mimePolicy)
+	if err != nil {
+		return err
+	}
+	if err := inspectArchiveEntryPrefix(ctx, prefix, name, mimePolicy); err != nil {
+		return err
+	}
+	nestedKind := archiveKindFor("", name)
+	if nestedKind == archiveUnknown {
+		nestedKind = archiveKindFromMagic(prefix)
+	}
+	if nestedKind == archiveUnknown {
+		return nil
+	}
+	if depth >= archivePolicy.MaxDepth {
+		return archiveSecurityError("archive_too_deep", "archive nesting depth exceeds limit")
+	}
+	return inspectNestedArchiveReader(ctx, io.MultiReader(bytes.NewReader(prefix), reader), compressedSize, name, nestedKind, archivePolicy, mimePolicy, depth+1, budget)
+}
+
+func inspectArchiveEntryPrefix(ctx context.Context, prefix []byte, name string, policy config.MimeMagicPolicy) error {
+	knownExtension := len(config.MIMEFileType(normalizedExtension(name))) > 0
+	if err := ctx.Err(); err != nil {
+		return archiveSecurityError("archive_inspection_timeout", "archive inspection timed out")
+	}
+	if len(prefix) == 0 && knownExtension {
+		return archiveSecurityError("archive_entry_type_mismatch", "archive entry content type could not be detected")
+	}
+	if err := inspectArchiveEntryScript(prefix, name, policy); err != nil {
+		return err
+	}
+	if !knownExtension {
+		return nil
+	}
+	detected := detectContentType(prefix)
+	if archiveEntryExtensionMatchesDetected(name, detected, policy) {
+		return nil
+	}
+	ext := normalizedExtension(name)
+	return archiveSecurityError("archive_entry_type_mismatch", fmt.Sprintf("archive entry %s extension .%s does not match detected content type %s", name, ext, detected))
+}
+
+func inspectArchiveEntryScript(prefix []byte, name string, policy config.MimeMagicPolicy) error {
+	script := detectScript(prefix, name)
+	if !policy.RejectScriptUploads || !script.detected || scriptAllowed(script, policy) {
+		return nil
+	}
+	return archiveSecurityError("archive_entry_script_rejected", fmt.Sprintf("archive entry %s contains a script", name))
 }
 
 func archiveEntryIsLink(info fs.FileInfo) bool {
@@ -308,9 +653,26 @@ func archiveEntryIsLink(info fs.FileInfo) bool {
 	return info.Mode()&fs.ModeSymlink != 0
 }
 
-func countArchiveStream(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) error {
-	_, err := countSingleArchiveEntry(ctx, reader, compressedSize, policy)
-	return err
+func archiveEntryIsSpecial(info fs.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	return info.Mode()&fs.ModeType != 0
+}
+
+func tarEntryIsRegular(header *tar.Header) bool {
+	if header == nil {
+		return false
+	}
+	return header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA
+}
+
+func countArchiveStream(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy, budget *archiveInspectionBudget) error {
+	counted, err := countSingleArchiveEntry(ctx, reader, compressedSize, policy)
+	if err != nil {
+		return err
+	}
+	return budget.addEntry(counted, policy)
 }
 
 func countSingleArchiveEntry(ctx context.Context, reader io.Reader, compressedSize int64, policy config.ArchiveGuardPolicy) (int64, error) {
@@ -356,7 +718,7 @@ func safeArchivePath(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("archive entry path is empty")
 	}
-	if strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) || strings.Contains(name, `\`) {
+	if strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) || strings.Contains(name, `\`) || hasWindowsDrivePrefix(name) {
 		return "", fmt.Errorf("archive entry path is unsafe")
 	}
 	cleanName := path.Clean(name)
@@ -366,10 +728,24 @@ func safeArchivePath(name string) (string, error) {
 	return cleanName, nil
 }
 
+func hasWindowsDrivePrefix(name string) bool {
+	if len(name) < 2 || name[1] != ':' {
+		return false
+	}
+	first := name[0]
+	return (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+}
+
 func archiveKindFor(contentType, originalName string) archiveKind {
 	contentType = normalizeContentType(contentType)
 	switch contentType {
-	case "application/zip", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+	case "application/zip",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"application/vnd.oasis.opendocument.text",
+		"application/vnd.oasis.opendocument.spreadsheet",
+		"application/vnd.oasis.opendocument.presentation":
 		return archiveZip
 	case "application/gzip", "application/x-gzip":
 		return archiveGzip
@@ -388,7 +764,13 @@ func archiveKindFor(contentType, originalName string) archiveKind {
 	}
 	lowerName := strings.ToLower(originalName)
 	switch {
-	case strings.HasSuffix(lowerName, ".zip"), strings.HasSuffix(lowerName, ".docx"), strings.HasSuffix(lowerName, ".xlsx"), strings.HasSuffix(lowerName, ".pptx"):
+	case strings.HasSuffix(lowerName, ".zip"),
+		strings.HasSuffix(lowerName, ".docx"),
+		strings.HasSuffix(lowerName, ".xlsx"),
+		strings.HasSuffix(lowerName, ".pptx"),
+		strings.HasSuffix(lowerName, ".odt"),
+		strings.HasSuffix(lowerName, ".ods"),
+		strings.HasSuffix(lowerName, ".odp"):
 		return archiveZip
 	case strings.HasSuffix(lowerName, ".gz"), strings.HasSuffix(lowerName, ".tgz"):
 		return archiveGzip

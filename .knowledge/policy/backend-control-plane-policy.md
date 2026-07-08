@@ -27,6 +27,7 @@ authorization:
     - object:replace
     - prefix:purge
     - derived:invalidate
+    - extracted-content:read
   checks:
     - tenant ownership
     - object key namespace
@@ -45,12 +46,17 @@ s3_operations:
     - write new object body
     - recompute content facts
     - invalidate stale derived assets and extracted content
+  extracted_content_read:
+    - read only the derived .text.json artifact for an authorized source object
+    - deny when caller lacks extracted-content read permission for tenant, object namespace, or privacy classification
+    - audit because extracted text may expose full private file contents
 observability:
   - audit every request, decision, S3 operation, and failure
   - include actor, service account, tenant, object key, old key, new key, checksum, request id, and reason
   - expose no secret or bearer token in logs
 references:
   - api:backend-control-api
+  - api:extracted-content-api
   - system:backend-control-listener
   - policy:audit-log-policy
   - policy:checksum-dedupe-policy

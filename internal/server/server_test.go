@@ -31,6 +31,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"streamuploader/internal/config"
+	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
 )
 
@@ -242,6 +243,153 @@ func TestUploadKeyFlow(t *testing.T) {
 	decode(t, waitResp, &wait)
 	if !wait.Ready || len(wait.Items) != 1 || wait.Items[0].Status != "uploaded" {
 		t.Fatalf("wait response = %+v", wait)
+	}
+}
+
+func TestCreateUploadKeyRejectsDeclaredSizeLimit(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 10,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"huge.txt","content_type":"text/plain","size_bytes":11}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create key status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "resource_limit_exceeded" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+}
+
+func TestCreateUploadKeyReturnsEffectiveMaxUploadBytes(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ResourceLimits.MaxFileSizeBytes = 8
+	cfg := testUploadConfig(security)
+	cfg.MaxUploadBytes = 10
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"small.txt","content_type":"text/plain","size_bytes":8}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create key status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var body model.CreateUploadKeyResponse
+	decode(t, resp, &body)
+	if body.MaxUploadBytes != 8 {
+		t.Fatalf("max_upload_bytes = %d", body.MaxUploadBytes)
+	}
+}
+
+func TestCreateUploadKeyRejectsOwnerActiveKeyLimit(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:                  "standalone_cross_origin",
+		PublicBaseURL:         "http://example.test",
+		UploadBasePath:        "/api/upload",
+		AllowedOrigins:        []string{"*"},
+		Bucket:                "bucket",
+		SessionTTL:            time.Hour,
+		MaxUploadBytes:        1024,
+		MaxUploadKeysPerOwner: 2,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	firstResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"one.txt"}`)
+	defer firstResp.Body.Close()
+	if firstResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(firstResp.Body)
+		t.Fatalf("first create key status = %d body=%q", firstResp.StatusCode, string(respBody))
+	}
+	cookies := firstResp.Cookies()
+	secondReq, _ := http.NewRequest(http.MethodPost, app.URL+"/api/upload/keys", strings.NewReader(`{"file_name":"two.txt"}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		secondReq.AddCookie(cookie)
+	}
+	secondResp := do(t, secondReq)
+	defer secondResp.Body.Close()
+	if secondResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(secondResp.Body)
+		t.Fatalf("second create key status = %d body=%q", secondResp.StatusCode, string(respBody))
+	}
+	thirdReq, _ := http.NewRequest(http.MethodPost, app.URL+"/api/upload/keys", strings.NewReader(`{"file_name":"three.txt"}`))
+	thirdReq.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		thirdReq.AddCookie(cookie)
+	}
+	thirdResp := do(t, thirdReq)
+	defer thirdResp.Body.Close()
+	if thirdResp.StatusCode != http.StatusTooManyRequests {
+		respBody, _ := io.ReadAll(thirdResp.Body)
+		t.Fatalf("third create key status = %d body=%q", thirdResp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, thirdResp, &errorBody)
+	if errorBody["error"] != "too_many_upload_keys" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+}
+
+func TestCreateUploadKeyOwnerLimitIgnoresCanceledKeys(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := config.Config{
+		Mode:                  "standalone_cross_origin",
+		PublicBaseURL:         "http://example.test",
+		UploadBasePath:        "/api/upload",
+		AllowedOrigins:        []string{"*"},
+		Bucket:                "bucket",
+		SessionTTL:            time.Hour,
+		MaxUploadBytes:        1024,
+		MaxUploadKeysPerOwner: 1,
+	}
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	firstResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"one.txt"}`)
+	defer firstResp.Body.Close()
+	if firstResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(firstResp.Body)
+		t.Fatalf("first create key status = %d body=%q", firstResp.StatusCode, string(respBody))
+	}
+	cookies := firstResp.Cookies()
+	var first model.CreateUploadKeyResponse
+	decode(t, firstResp, &first)
+	cancelReq, _ := http.NewRequest(http.MethodDelete, app.URL+"/api/upload/keys/"+first.UploadKey, nil)
+	for _, cookie := range cookies {
+		cancelReq.AddCookie(cookie)
+	}
+	cancelResp := do(t, cancelReq)
+	defer cancelResp.Body.Close()
+	if cancelResp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(cancelResp.Body)
+		t.Fatalf("cancel status = %d body=%q", cancelResp.StatusCode, string(respBody))
+	}
+	secondReq, _ := http.NewRequest(http.MethodPost, app.URL+"/api/upload/keys", strings.NewReader(`{"file_name":"two.txt"}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		secondReq.AddCookie(cookie)
+	}
+	secondResp := do(t, secondReq)
+	defer secondResp.Body.Close()
+	if secondResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(secondResp.Body)
+		t.Fatalf("second create key status = %d body=%q", secondResp.StatusCode, string(respBody))
 	}
 }
 
@@ -1371,6 +1519,407 @@ func TestUploadRejectsZipSymlink(t *testing.T) {
 	assertNoTmpObjects(t, store)
 }
 
+func TestUploadRejectsZipSpecialFile(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZipSpecialFile(t, "pipe", fs.ModeNamedPipe|0644)
+	resp, key := uploadTestObject(t, app.URL, "special.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_special_file_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with special file was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsArchiveWindowsDrivePath(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "C:/temp/evil.txt", []byte("bad"))
+	resp, key := uploadTestObject(t, app.URL, "drive.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_path_unsafe" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with drive path was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsZipEntryExtensionMismatch(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "photo.jpg", makeTestPNG(t, 1, 1))
+	resp, key := uploadTestObject(t, app.URL, "photos.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_type_mismatch" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with mismatched entry was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsZipScriptEntry(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "run.sh", []byte("#!/bin/sh\necho bad\n"))
+	resp, key := uploadTestObject(t, app.URL, "scripts.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_script_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with script entry was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadAllowsZipScriptEntryWhenExplicitlyAllowed(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.MimeMagic.AllowedScriptExtensions = map[string]bool{"sh": true}
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "run.sh", []byte("#!/bin/sh\necho ok\n"))
+	resp, key := uploadTestObject(t, app.URL, "scripts.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("stored zip body changed")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadAllowsZipEntryGenericTextForJSONExtension(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeZip(t, "payload.json", []byte(`{"ok":true}`))
+	resp, key := uploadTestObject(t, app.URL, "payload.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("stored zip body changed")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedZipArchiveBomb(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
+	body := makeZip(t, "inner.zip", inner)
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with nested archive bomb was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedArchiveDepth(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxDepth = 1
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	inner := makeZip(t, "note.txt", []byte("hello"))
+	body := makeZip(t, "inner.zip", inner)
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_deep" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("too-deep nested archive was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedArchiveAggregateSize(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 700
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	innerA := makeZip(t, "a.txt", bytes.Repeat([]byte("a"), 400))
+	innerB := makeZip(t, "b.txt", bytes.Repeat([]byte("b"), 400))
+	body := makeZipWithEntries(t, map[string][]byte{"a.zip": innerA, "b.zip": innerB})
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with aggregate nested archive bomb was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedCompressedStreamAggregateSize(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 700
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	streamA := makeGzip(t, bytes.Repeat([]byte("a"), 400))
+	streamB := makeGzip(t, bytes.Repeat([]byte("b"), 400))
+	body := makeZipWithEntries(t, map[string][]byte{"a.gz": streamA, "b.gz": streamB})
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with aggregate nested compressed streams was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedArchiveAggregateEntryCount(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxEntries = 3
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	innerA := makeZip(t, "a.txt", []byte("a"))
+	innerB := makeZip(t, "b.txt", []byte("b"))
+	body := makeZipWithEntries(t, map[string][]byte{"a.zip": innerA, "b.zip": innerB})
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_many_entries" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with aggregate nested archive entries was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsNestedZipArchiveByMagicWithoutExtension(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
+	body := makeZip(t, "payload", inner)
+	resp, key := uploadTestObject(t, app.URL, "outer.zip", "application/zip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("zip with extensionless nested archive bomb was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarNestedArchiveBomb(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ArchiveGuard.MaxTotalUncompressedBytes = 512
+	security.ArchiveGuard.MaxSingleEntryBytes = 2048
+	security.ArchiveGuard.MaxCompressionRatio = 1000
+	cfg := testUploadConfig(security)
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
+	body := makeTarWithEntries(t, map[string][]byte{"payload": inner})
+	resp, key := uploadTestObject(t, app.URL, "outer.tar", "application/x-tar", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_too_large" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tar with nested archive bomb was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
 func TestUploadRejectsTarLinks(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1409,6 +1958,202 @@ func TestUploadRejectsTarLinks(t *testing.T) {
 			assertNoTmpObjects(t, store)
 		})
 	}
+}
+
+func TestUploadRejectsTarSpecialFile(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeTarSpecialFile(t, "pipe", tar.TypeFifo)
+	resp, key := uploadTestObject(t, app.URL, "special.tar", "application/x-tar", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_special_file_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tar with special file was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarEntryExtensionMismatch(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeTarWithEntries(t, map[string][]byte{"photo.jpg": makeTestPNG(t, 1, 1)})
+	resp, key := uploadTestObject(t, app.URL, "photos.tar", "application/x-tar", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_type_mismatch" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tar with mismatched entry was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarScriptEntry(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeTarWithEntries(t, map[string][]byte{"run.sh": []byte("#!/bin/sh\necho bad\n")})
+	resp, key := uploadTestObject(t, app.URL, "scripts.tar", "application/x-tar", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_script_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tar with script entry was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadAllowsTarEntryGenericTextForJSONExtension(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeTarWithEntries(t, map[string][]byte{"payload.json": []byte(`{"ok":true}`)})
+	resp, key := uploadTestObject(t, app.URL, "payload.tar", "application/x-tar", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("stored tar body changed")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarGzipSymlink(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeGzip(t, makeTarLink(t, "link", "target.txt", tar.TypeSymlink))
+	resp, key := uploadTestObject(t, app.URL, "links.tgz", "application/gzip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_link_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tgz with symlink was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarGzipScriptEntry(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeGzip(t, makeTarWithEntries(t, map[string][]byte{"run.sh": []byte("#!/bin/sh\necho bad\n")}))
+	resp, key := uploadTestObject(t, app.URL, "scripts.tgz", "application/gzip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_script_rejected" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tgz with script entry was stored")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestUploadRejectsTarGzipEntryExtensionMismatch(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	app := httptest.NewServer(New(cfg, store).Handler())
+	defer app.Close()
+
+	body := makeGzip(t, makeTarWithEntries(t, map[string][]byte{"photo.jpg": makeTestPNG(t, 1, 1)}))
+	resp, key := uploadTestObject(t, app.URL, "photos.tar.gz", "application/gzip", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
+		t.Fatal(err)
+	}
+	if errorBody["error"] != "archive_entry_type_mismatch" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("tgz with mismatched entry was stored")
+	}
+	assertNoTmpObjects(t, store)
 }
 
 func TestUploadWithClamAVScansTmpThenPublishes(t *testing.T) {
@@ -1573,6 +2318,62 @@ func TestUploadRejectsSVGActiveContent(t *testing.T) {
 	store.mu.Unlock()
 	if stored {
 		t.Fatal("rejected SVG was stored")
+	}
+}
+
+func TestUploadRejectsSVGDimensionLimit(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ResourceLimits.MaxImageWidth = 10
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="11" height="1"></svg>`)
+	resp, key := uploadTestObject(t, srv.URL, "wide.svg", "image/svg+xml", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "resource_limit_exceeded" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("oversized SVG was stored")
+	}
+}
+
+func TestUploadRejectsSVGViewBoxPixelLimit(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	security := config.DefaultSecurityPolicy()
+	security.ResourceLimits.MaxImagePixelCount = 99
+	cfg := testUploadConfig(security)
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"></svg>`)
+	resp, key := uploadTestObject(t, srv.URL, "pixels.svg", "image/svg+xml", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	var errorBody map[string]string
+	decode(t, resp, &errorBody)
+	if errorBody["error"] != "resource_limit_exceeded" {
+		t.Fatalf("error body = %+v", errorBody)
+	}
+	store.mu.Lock()
+	_, stored := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if stored {
+		t.Fatal("oversized viewBox SVG was stored")
 	}
 }
 
@@ -1759,7 +2560,7 @@ func TestUploadRejectsOfficeMacroPart(t *testing.T) {
 	defer srv.Close()
 
 	body := makeZipWithEntries(t, map[string][]byte{
-		"[Content_Types].xml":          []byte(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`),
+		"[Content_Types].xml":          []byte(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`),
 		"word/document.xml":            []byte(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`),
 		"word/vbaProject.bin":          []byte("macro"),
 		"word/_rels/document.xml.rels": []byte(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`),
@@ -1780,6 +2581,136 @@ func TestUploadRejectsOfficeMacroPart(t *testing.T) {
 	store.mu.Unlock()
 	if stored {
 		t.Fatal("rejected Office document was stored")
+	}
+}
+
+func TestInspectOfficeOpenXMLRequiresContentTypesAndMainPart(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	tests := []struct {
+		name        string
+		entries     map[string][]byte
+		contentType string
+		original    string
+	}{
+		{
+			name:        "missing content types",
+			entries:     map[string][]byte{"word/document.xml": []byte(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`)},
+			contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			original:    "missing.docx",
+		},
+		{
+			name: "missing main part",
+			entries: map[string][]byte{
+				"[Content_Types].xml": []byte(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`),
+			},
+			contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			original:    "missing-main.docx",
+		},
+		{
+			name: "declared docx but package is xlsx",
+			entries: map[string][]byte{
+				"[Content_Types].xml": []byte(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`),
+				"xl/workbook.xml":     []byte(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`),
+			},
+			contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			original:    "wrong.docx",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := makeZipWithEntries(t, tt.entries)
+			err := inspectOfficeOpenXML(body, tt.contentType, tt.original, policy.ResourceLimits)
+			if err == nil {
+				t.Fatal("expected invalid Office package to be rejected")
+			}
+			var uploadErr securityUploadError
+			if !errors.As(err, &uploadErr) || uploadErr.code != "structural_validation_failed" {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestUploadAcceptsValidOpenDocumentPackage(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{}}
+	cfg := testUploadConfig(config.DefaultSecurityPolicy())
+	srv := httptest.NewServer(New(cfg, store).Handler())
+	defer srv.Close()
+
+	body := makeOpenDocumentPackage(t, "application/vnd.oasis.opendocument.text")
+	resp, key := uploadTestObject(t, srv.URL, "note.odt", "application/vnd.oasis.opendocument.text", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
+	}
+	store.mu.Lock()
+	got := store.objects[key.ObjectKey]
+	store.mu.Unlock()
+	if !bytes.Equal(got, body) {
+		t.Fatal("stored OpenDocument body changed")
+	}
+	assertNoTmpObjects(t, store)
+}
+
+func TestInspectOpenDocumentRequiresMatchingMimetypeManifestAndContent(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	tests := []struct {
+		name    string
+		entries map[string][]byte
+	}{
+		{
+			name: "missing mimetype",
+			entries: map[string][]byte{
+				"META-INF/manifest.xml": openDocumentManifest("application/vnd.oasis.opendocument.text"),
+				"content.xml":           []byte(`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>`),
+			},
+		},
+		{
+			name: "mismatched mimetype",
+			entries: map[string][]byte{
+				"mimetype":              []byte("application/vnd.oasis.opendocument.spreadsheet"),
+				"META-INF/manifest.xml": openDocumentManifest("application/vnd.oasis.opendocument.spreadsheet"),
+				"content.xml":           []byte(`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>`),
+			},
+		},
+		{
+			name: "missing content",
+			entries: map[string][]byte{
+				"mimetype":              []byte("application/vnd.oasis.opendocument.text"),
+				"META-INF/manifest.xml": openDocumentManifest("application/vnd.oasis.opendocument.text"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := makeZipWithEntries(t, tt.entries)
+			err := inspectOpenDocument(body, "application/vnd.oasis.opendocument.text", "bad.odt", policy.ResourceLimits)
+			if err == nil {
+				t.Fatal("expected invalid OpenDocument package to be rejected")
+			}
+			var uploadErr securityUploadError
+			if !errors.As(err, &uploadErr) || uploadErr.code != "structural_validation_failed" {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestInspectOpenDocumentRejectsActiveXMLContent(t *testing.T) {
+	policy := config.DefaultSecurityPolicy()
+	body := makeZipWithEntries(t, map[string][]byte{
+		"mimetype":              []byte("application/vnd.oasis.opendocument.text"),
+		"META-INF/manifest.xml": openDocumentManifest("application/vnd.oasis.opendocument.text"),
+		"content.xml":           []byte(`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0"><script:event-listener script:language="ooo:script" script:event-name="dom:load" xlink:href="vnd.sun.star.script:Standard.Module.Main?language=Basic&amp;location=document"/></office:document-content>`),
+	})
+	err := inspectOpenDocument(body, "application/vnd.oasis.opendocument.text", "active.odt", policy.ResourceLimits)
+	if err == nil {
+		t.Fatal("expected active OpenDocument package to be rejected")
+	}
+	var uploadErr securityUploadError
+	if !errors.As(err, &uploadErr) || uploadErr.code != "document_active_content_rejected" {
+		t.Fatalf("error = %#v", err)
 	}
 }
 
@@ -2475,6 +3406,19 @@ func makeZipWithEntries(t *testing.T, entries map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
+func makeOpenDocumentPackage(t *testing.T, mimeType string) []byte {
+	t.Helper()
+	return makeZipWithEntries(t, map[string][]byte{
+		"mimetype":              []byte(mimeType),
+		"META-INF/manifest.xml": openDocumentManifest(mimeType),
+		"content.xml":           []byte(`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>`),
+	})
+}
+
+func openDocumentManifest(mimeType string) []byte {
+	return []byte(fmt.Sprintf(`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:full-path="/" manifest:media-type="%s"/></manifest:manifest>`, mimeType))
+}
+
 func makeZipSymlink(t *testing.T, name, target string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -2494,6 +3438,21 @@ func makeZipSymlink(t *testing.T, name, target string) []byte {
 	return buf.Bytes()
 }
 
+func makeZipSpecialFile(t *testing.T, name string, mode fs.FileMode) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	header := &zip.FileHeader{Name: name}
+	header.SetMode(mode)
+	if _, err := zw.CreateHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 func makeTarLink(t *testing.T, name, target string, typeflag byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -2505,6 +3464,41 @@ func makeTarLink(t *testing.T, name, target string, typeflag byte) []byte {
 		Mode:     0777,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeTarSpecialFile(t *testing.T, name string, typeflag byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     name,
+		Typeflag: typeflag,
+		Mode:     0600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func makeTarWithEntries(t *testing.T, entries map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, body := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Size: int64(len(body)), Mode: 0600}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)

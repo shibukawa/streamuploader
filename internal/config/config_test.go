@@ -156,6 +156,19 @@ mime_magic:
 	}
 }
 
+func TestDefaultSecurityPolicyImageLimits(t *testing.T) {
+	policy := DefaultSecurityPolicy()
+	if policy.ResourceLimits.MaxImageWidth != 10000 {
+		t.Fatalf("max image width = %d", policy.ResourceLimits.MaxImageWidth)
+	}
+	if policy.ResourceLimits.MaxImageHeight != 10000 {
+		t.Fatalf("max image height = %d", policy.ResourceLimits.MaxImageHeight)
+	}
+	if policy.ResourceLimits.MaxImagePixelCount != 100000000 {
+		t.Fatalf("max image pixel count = %d", policy.ResourceLimits.MaxImagePixelCount)
+	}
+}
+
 func TestLoadSecurityPolicyRejectsListSyntax(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "security.yaml")
 	body := []byte(`
@@ -345,6 +358,9 @@ func TestMIMEFileTypeExpandsCategoriesAndShortNames(t *testing.T) {
 		"html":   "text/html",
 		"xhtml":  "application/xhtml+xml",
 		"rtf":    "text/rtf",
+		"odt":    "application/vnd.oasis.opendocument.text",
+		"ods":    "application/vnd.oasis.opendocument.spreadsheet",
+		"odp":    "application/vnd.oasis.opendocument.presentation",
 	}
 	for input, want := range tests {
 		if got := MIMEFileType(input); !containsString(got, want) {

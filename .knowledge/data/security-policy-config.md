@@ -26,7 +26,13 @@ source:
         - SU_CLAMAV_ENABLED
         - SU_CLAMAV_SCAN_TIMEOUT_MS
         - SU_CLAMAV_STREAM_CHUNK_BYTES
-schema:
+  runtime_limits:
+    max_upload_keys_per_owner:
+      env: SU_MAX_UPLOAD_KEYS_PER_OWNER
+      legacy_compat: MAX_UPLOAD_KEYS_PER_OWNER
+      default: 1000
+      meaning: maximum active key_created or uploading upload keys per owner cookie
+	schema:
   mime_magic:
     enabled:
       type: bool
@@ -71,6 +77,7 @@ schema:
       type: map string bool
       default: {}
       meaning: category or short file type aliases expanded to allow_mime_types
+      secondary_use: known extension to expected MIME map for requirement:mime-magic-consistency extension_content_type_match
       example:
         images: true
         pdf: true
@@ -86,8 +93,15 @@ schema:
           - png
           - jpeg
           - pdf
+          - docx
+          - xlsx
+          - pptx
+          - odt
+          - ods
+          - odp
           - csv
           - zip
+          - tar
     deny_mime_types:
       type: map string bool
       default: {}
@@ -105,6 +119,7 @@ schema:
       default:
         - [application/xml, text/xml]
         - [image/jpeg, image/pjpeg]
+        - [image/heic, image/heif, image/heic-sequence, image/heif-sequence]
         - [application/gzip, application/x-gzip]
         - [application/rtf, text/rtf]
         - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/x-ole-storage]
@@ -214,6 +229,75 @@ schema:
           extensions: [bat, cmd]
         powershell:
           extensions: [ps1, psm1, psd1]
+    extension_content_type_match:
+      meaning: known filename extensions must match detected or declared content type before upload acceptance
+      source_map: allow_file_types short file type aliases and MIME expansion table
+      security_note:
+        - validates extension against content type; not only declared versus detected MIME
+        - unknown extensions are ignored by this check
+        - generic browser MIME compatibility may explain text/plain or application/octet-stream but not a concrete wrong family
+      examples:
+        reject:
+          - file_name: photo.jpg
+            declared: image/png
+            detected: image/png
+            reason: jpg extension expects image/jpeg or equivalent
+        allow:
+          - file_name: payload.json
+            declared: application/json
+            detected: text/plain
+            reason: JSON extension and declared MIME match; detector only proved generic text
+    archive_entry_content_type_match:
+      meaning: zip, tar, and 7z entry filename extensions are checked against bounded-prefix detected MIME during archive_guard inspection
+      prefix_limit: mime_magic.prefix_bytes
+      source_map: allow_file_types short file type aliases and MIME expansion table
+      reject_errors:
+        - archive_entry_type_mismatch
+        - archive_entry_script_rejected
+      notes:
+        - applies to non-directory zip entries after path, link, and declared size checks
+        - applies to regular tar entries after path, link, and declared size checks
+        - applies to non-directory 7z entries after path, link, and declared size checks
+        - unknown entry extensions are ignored
+        - generic text detection may satisfy known text-derived extensions
+        - script entry names and shebang prefixes follow mime_magic.reject_script_uploads and script allowlists
+    nested_archive_inspection:
+      meaning: archive files stored inside zip, tar, or 7z entries are recursively inspected under the same archive_guard limits
+      depth_limit: archive_guard.max_depth
+      aggregate_budget:
+        - max_entries counts entries across the full recursive archive tree
+        - max_total_uncompressed_bytes counts declared or counted expanded bytes across sibling nested archives and nested compressed streams
+        - nested gzip, zstd, brotli, bzip2, and xz stream expansion is added to the same recursive budget
+      detection:
+        - filename archive extension
+        - archive magic bytes from bounded entry prefix
+      reject_errors:
+        - archive_too_deep
+        - archive_too_large
+        - archive_too_many_entries
+        - archive_path_unsafe
+        - archive_link_rejected
+        - archive_special_file_rejected
+        - archive_entry_type_mismatch
+        - archive_entry_script_rejected
+    compressed_tar_wrapper_inspection:
+      meaning: compressed streams whose filenames indicate tar wrapper are decompressed into tar inspector instead of only byte-counted
+      filename_patterns:
+        gzip: [tgz, tar.gz]
+        zstd: [tar.zst, tar.zstd]
+        brotli: [tar.br, tar.brotli]
+        bzip2: [tbz, tbz2, tar.bz2, tar.bzip2]
+        xz: [txz, tar.xz]
+      enforced_checks:
+        - max_entries
+        - max_total_uncompressed_bytes
+        - max_single_entry_bytes
+        - max_filename_bytes
+        - path safety
+        - symlink and hardlink rejection
+        - special filesystem entry rejection
+        - archive entry content type match for known extensions
+        - archive entry script rejection unless explicitly allowed
   archive_guard:
     enabled:
       type: bool
@@ -226,6 +310,14 @@ schema:
     allow_encrypted:
       type: bool
       default: false
+    links:
+      type: implicit deny
+      default: reject symlink and hardlink entries
+      reason: uploaded archives are not allowed to encode filesystem links
+    special_files:
+      type: implicit deny
+      default: reject device, FIFO, socket, and irregular filesystem entries
+      reason: uploaded archives are not allowed to encode filesystem node types other than regular files and directories
     max_total_uncompressed_bytes:
       type: integer
       default: 536870912
@@ -244,6 +336,7 @@ schema:
     max_depth:
       type: integer
       default: 3
+      meaning: maximum recursive archive nesting depth inspected from uploaded archives and zip entries
     max_filename_bytes:
       type: integer
       default: 512
@@ -282,13 +375,16 @@ schema:
       default: 500
     max_image_width:
       type: integer
-      default: 32768
+      default: 10000
+      meaning: maximum raster image width or SVG root/viewBox width in CSS pixels
     max_image_height:
       type: integer
-      default: 32768
+      default: 10000
+      meaning: maximum raster image height or SVG root/viewBox height in CSS pixels
     max_image_pixel_count:
       type: integer
-      default: 268435456
+      default: 100000000
+      meaning: maximum width multiplied by height for raster images and SVG root/viewBox dimensions
     max_object_count:
       type: integer
       default: 100000
@@ -432,9 +528,9 @@ example:
     max_file_size_bytes: 1073741824
     max_decompressed_size_bytes: 536870912
     max_pdf_page_count: 500
-    max_image_width: 32768
-    max_image_height: 32768
-    max_image_pixel_count: 268435456
+    max_image_width: 10000
+    max_image_height: 10000
+    max_image_pixel_count: 100000000
     max_object_count: 100000
     max_xml_depth: 64
     max_zip_entries: 10000

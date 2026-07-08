@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -134,7 +135,7 @@ func applyFileSanitization(reader io.Reader, contentType, originalName string, p
 			return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "Office document sanitization is not supported"}
 		}
 		if mode == "reject_active_content" || mode == "secure_default" {
-			if err := inspectOfficeOpenXML(body, policy.ResourceLimits); err != nil {
+			if err := inspectOfficeOpenXML(body, contentType, originalName, policy.ResourceLimits); err != nil {
 				return sanitizedBody{}, err
 			}
 		}
@@ -187,7 +188,7 @@ func fileRequiresPostUploadFullScan(contentType, originalName string, policy con
 	if mode == "accept_as_is" {
 		return false
 	}
-	return isPDF(contentType, originalName) || isOfficeOpenXML(contentType, originalName)
+	return isPDF(contentType, originalName) || isOfficeOpenXML(contentType, originalName) || isOpenDocument(contentType, originalName)
 }
 
 func inspectStoredFileObject(reader io.Reader, size int64, contentType, originalName string, policy config.SecurityPolicy) error {
@@ -226,7 +227,12 @@ func inspectStoredFileObject(reader io.Reader, size int64, contentType, original
 		if mode == "sanitize_when_supported" {
 			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "Office document sanitization is not supported"}
 		}
-		return inspectOfficeOpenXML(body, policy.ResourceLimits)
+		return inspectOfficeOpenXML(body, contentType, originalName, policy.ResourceLimits)
+	case isOpenDocument(contentType, originalName):
+		if mode == "sanitize_when_supported" {
+			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "OpenDocument sanitization is not supported"}
+		}
+		return inspectOpenDocument(body, contentType, originalName, policy.ResourceLimits)
 	default:
 		return nil
 	}
@@ -252,7 +258,7 @@ func fileSanitizationMode(contentType, originalName string, policy config.FileSa
 		return fallbackMode(policy.Markup.DefaultMode, "reject_active_or_external_content")
 	case isImage(contentType, originalName), isVideo(contentType, originalName):
 		return fallbackMode(policy.ImageVideoMetadata.DefaultMode, "sanitize_metadata")
-	case isPDF(contentType, originalName), isOfficeOpenXML(contentType, originalName):
+	case isPDF(contentType, originalName), isOfficeOpenXML(contentType, originalName), isOpenDocument(contentType, originalName):
 		return fallbackMode(policy.OfficePDF.DefaultMode, "reject_active_content")
 	case isLegacyOrComplexDocument(contentType, originalName):
 		return fallbackMode(policy.LegacyOrComplexDocuments.DefaultMode, "reject")
@@ -321,6 +327,20 @@ func validateStructure(body []byte, contentType, originalName string, policy con
 		}
 		if policy.ResourceLimits.MaxZIPEntries > 0 && int64(len(zr.File)) > policy.ResourceLimits.MaxZIPEntries {
 			return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "Office package has too many ZIP entries"}
+		}
+		if err := validateOfficeOpenXMLPackage(zr, contentType, originalName); err != nil {
+			return err
+		}
+	case isOpenDocument(contentType, originalName):
+		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument package ZIP structure is invalid"}
+		}
+		if policy.ResourceLimits.MaxZIPEntries > 0 && int64(len(zr.File)) > policy.ResourceLimits.MaxZIPEntries {
+			return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "OpenDocument package has too many ZIP entries"}
+		}
+		if err := validateOpenDocumentPackage(zr, contentType, originalName); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -713,6 +733,7 @@ func inspectSVG(body []byte, limits config.ResourceLimitPolicy, policy config.SV
 	decoder := xml.NewDecoder(bytes.NewReader(body))
 	depth := 0
 	objects := int64(0)
+	rootChecked := false
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
@@ -732,6 +753,15 @@ func inspectSVG(body []byte, limits config.ResourceLimitPolicy, policy config.SV
 				return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "SVG object count exceeds configured limit"}
 			}
 			name := strings.ToLower(t.Name.Local)
+			if !rootChecked {
+				rootChecked = true
+				if name != "svg" {
+					return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "SVG root element is invalid"}
+				}
+				if err := inspectSVGDimensionLimits(t, limits); err != nil {
+					return err
+				}
+			}
 			switch name {
 			case "script":
 				return svgReject("svg_script_detected", "SVG script element is not allowed")
@@ -751,6 +781,90 @@ func inspectSVG(body []byte, limits config.ResourceLimitPolicy, policy config.SV
 			depth--
 		}
 	}
+}
+
+func inspectSVGDimensionLimits(el xml.StartElement, limits config.ResourceLimitPolicy) error {
+	width, widthOK := svgDimensionAttribute(el, "width")
+	height, heightOK := svgDimensionAttribute(el, "height")
+	viewBoxWidth, viewBoxHeight, viewBoxOK := svgViewBoxDimensions(el)
+	if !widthOK && viewBoxOK {
+		width = viewBoxWidth
+		widthOK = true
+	}
+	if !heightOK && viewBoxOK {
+		height = viewBoxHeight
+		heightOK = true
+	}
+	if widthOK && limits.MaxImageWidth > 0 && width > float64(limits.MaxImageWidth) {
+		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "SVG width exceeds configured limit"}
+	}
+	if heightOK && limits.MaxImageHeight > 0 && height > float64(limits.MaxImageHeight) {
+		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "SVG height exceeds configured limit"}
+	}
+	if widthOK && heightOK && limits.MaxImagePixelCount > 0 && width*height > float64(limits.MaxImagePixelCount) {
+		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "SVG pixel count exceeds configured limit"}
+	}
+	return nil
+}
+
+func svgDimensionAttribute(el xml.StartElement, name string) (float64, bool) {
+	for _, attr := range el.Attr {
+		if strings.EqualFold(attr.Name.Local, name) {
+			return parseSVGLengthPixels(attr.Value)
+		}
+	}
+	return 0, false
+}
+
+func parseSVGLengthPixels(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasSuffix(value, "%") {
+		return 0, false
+	}
+	lower := strings.ToLower(value)
+	unitScale := 1.0
+	for _, unit := range []struct {
+		suffix string
+		scale  float64
+	}{
+		{suffix: "px", scale: 1},
+		{suffix: "in", scale: 96},
+		{suffix: "cm", scale: 96 / 2.54},
+		{suffix: "mm", scale: 96 / 25.4},
+		{suffix: "q", scale: 96 / 101.6},
+		{suffix: "pt", scale: 96 / 72},
+		{suffix: "pc", scale: 16},
+	} {
+		if strings.HasSuffix(lower, unit.suffix) {
+			value = strings.TrimSpace(value[:len(value)-len(unit.suffix)])
+			unitScale = unit.scale
+			break
+		}
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed <= 0 {
+		return 0, false
+	}
+	return parsed * unitScale, true
+}
+
+func svgViewBoxDimensions(el xml.StartElement) (float64, float64, bool) {
+	for _, attr := range el.Attr {
+		if !strings.EqualFold(attr.Name.Local, "viewBox") {
+			continue
+		}
+		fields := strings.Fields(strings.ReplaceAll(attr.Value, ",", " "))
+		if len(fields) != 4 {
+			return 0, 0, false
+		}
+		width, widthErr := strconv.ParseFloat(fields[2], 64)
+		height, heightErr := strconv.ParseFloat(fields[3], 64)
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			return 0, 0, false
+		}
+		return width, height, true
+	}
+	return 0, 0, false
 }
 
 func inspectMarkup(body []byte, contentType, originalName string, limits config.ResourceLimitPolicy, policy config.MarkupSanitizationPolicy) error {
@@ -965,13 +1079,16 @@ func inspectPDF(body []byte, limits config.ResourceLimitPolicy) error {
 	return nil
 }
 
-func inspectOfficeOpenXML(body []byte, limits config.ResourceLimitPolicy) error {
+func inspectOfficeOpenXML(body []byte, contentType, originalName string, limits config.ResourceLimitPolicy) error {
 	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "Office package ZIP structure is invalid"}
 	}
 	if limits.MaxZIPEntries > 0 && int64(len(zr.File)) > limits.MaxZIPEntries {
 		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "Office package has too many ZIP entries"}
+	}
+	if err := validateOfficeOpenXMLPackage(zr, contentType, originalName); err != nil {
+		return err
 	}
 	for _, entry := range zr.File {
 		name := strings.ToLower(entry.Name)
@@ -992,6 +1109,87 @@ func inspectOfficeOpenXML(body []byte, limits config.ResourceLimitPolicy) error 
 		}
 	}
 	return nil
+}
+
+func validateOfficeOpenXMLPackage(zr *zip.Reader, contentType, originalName string) error {
+	contentTypes, err := readRequiredZipEntry(zr, "[Content_Types].xml", 1<<20)
+	if err != nil {
+		return err
+	}
+	expected := officeMainPartContentType(contentType, originalName)
+	if expected == "" {
+		return nil
+	}
+	mainPart, ok := officeMainPartOverride(contentTypes, expected)
+	if !ok {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "Office package content types do not match declared document type"}
+	}
+	if !zipHasEntry(zr, mainPart) {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "Office package main document part is missing"}
+	}
+	return nil
+}
+
+func officeMainPartOverride(contentTypes []byte, expectedContentType string) (string, bool) {
+	decoder := xml.NewDecoder(bytes.NewReader(contentTypes))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return "", false
+		}
+		if err != nil {
+			return "", false
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || !strings.EqualFold(start.Name.Local, "Override") {
+			continue
+		}
+		partName := ""
+		contentType := ""
+		for _, attr := range start.Attr {
+			switch strings.ToLower(attr.Name.Local) {
+			case "partname":
+				partName = strings.TrimPrefix(strings.TrimSpace(attr.Value), "/")
+			case "contenttype":
+				contentType = strings.ToLower(strings.TrimSpace(attr.Value))
+			}
+		}
+		if partName != "" && contentType == strings.ToLower(expectedContentType) {
+			return partName, true
+		}
+	}
+}
+
+func zipHasEntry(zr *zip.Reader, name string) bool {
+	name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+	for _, entry := range zr.File {
+		if strings.EqualFold(strings.TrimPrefix(entry.Name, "/"), name) {
+			return true
+		}
+	}
+	return false
+}
+
+func readRequiredZipEntry(zr *zip.Reader, name string, maxBytes int64) ([]byte, error) {
+	for _, entry := range zr.File {
+		if strings.EqualFold(entry.Name, name) {
+			return readZipEntry(entry, maxBytes)
+		}
+	}
+	return nil, securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "Office package required content type part is missing"}
+}
+
+func officeMainPartContentType(contentType, originalName string) string {
+	switch {
+	case contentType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || hasAnyExtension(originalName, ".docx"):
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+	case contentType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || hasAnyExtension(originalName, ".xlsx"):
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+	case contentType == "application/vnd.openxmlformats-officedocument.presentationml.presentation" || hasAnyExtension(originalName, ".pptx"):
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
+	default:
+		return ""
+	}
 }
 
 func readZipEntry(entry *zip.File, maxBytes int64) ([]byte, error) {
@@ -1044,6 +1242,150 @@ func officeXMLHasDangerousContent(data []byte) bool {
 	return false
 }
 
+func inspectOpenDocument(body []byte, contentType, originalName string, limits config.ResourceLimitPolicy) error {
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument package ZIP structure is invalid"}
+	}
+	if limits.MaxZIPEntries > 0 && int64(len(zr.File)) > limits.MaxZIPEntries {
+		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "OpenDocument package has too many ZIP entries"}
+	}
+	if err := validateOpenDocumentPackage(zr, contentType, originalName); err != nil {
+		return err
+	}
+	for _, entry := range zr.File {
+		name := strings.ToLower(entry.Name)
+		if limits.MaxDecompressedSizeBytes > 0 && int64(entry.UncompressedSize64) > limits.MaxDecompressedSizeBytes {
+			return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "OpenDocument package part exceeds decompressed size limit"}
+		}
+		if openDocumentDangerousPart(name) {
+			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "document_active_content_rejected", message: fmt.Sprintf("OpenDocument package contains dangerous part %s", entry.Name)}
+		}
+		if strings.HasSuffix(name, ".xml") {
+			data, err := readZipEntry(entry, limits.MaxDecompressedSizeBytes)
+			if err != nil {
+				return err
+			}
+			if openDocumentXMLHasDangerousContent(data) {
+				return securityUploadError{status: http.StatusUnsupportedMediaType, code: "document_active_content_rejected", message: fmt.Sprintf("OpenDocument package contains dangerous active content in %s", entry.Name)}
+			}
+		}
+	}
+	return nil
+}
+
+func validateOpenDocumentPackage(zr *zip.Reader, contentType, originalName string) error {
+	expected := openDocumentMIME(contentType, originalName)
+	if expected == "" {
+		return nil
+	}
+	mimetype, err := readRequiredOpenDocumentZipEntry(zr, "mimetype", 512)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(mimetype)) != expected {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument mimetype does not match declared document type"}
+	}
+	manifest, err := readRequiredOpenDocumentZipEntry(zr, "META-INF/manifest.xml", 1<<20)
+	if err != nil {
+		return err
+	}
+	if !openDocumentManifestDeclaresRoot(manifest, expected) {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument manifest does not match declared document type"}
+	}
+	if !zipHasEntry(zr, "content.xml") {
+		return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument content part is missing"}
+	}
+	return nil
+}
+
+func readRequiredOpenDocumentZipEntry(zr *zip.Reader, name string, maxBytes int64) ([]byte, error) {
+	for _, entry := range zr.File {
+		if strings.EqualFold(entry.Name, name) {
+			return readZipEntry(entry, maxBytes)
+		}
+	}
+	return nil, securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "OpenDocument package required part is missing"}
+}
+
+func openDocumentManifestDeclaresRoot(manifest []byte, expected string) bool {
+	decoder := xml.NewDecoder(bytes.NewReader(manifest))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			return false
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || !strings.EqualFold(start.Name.Local, "file-entry") {
+			continue
+		}
+		fullPath := ""
+		mediaType := ""
+		for _, attr := range start.Attr {
+			switch strings.ToLower(attr.Name.Local) {
+			case "full-path":
+				fullPath = strings.TrimSpace(attr.Value)
+			case "media-type":
+				mediaType = strings.TrimSpace(attr.Value)
+			}
+		}
+		if fullPath == "/" && mediaType == expected {
+			return true
+		}
+	}
+}
+
+func openDocumentDangerousPart(name string) bool {
+	for _, fragment := range []string{
+		"scripts/",
+		"basic/",
+		"/scripts/",
+		"/basic/",
+		"event-listener",
+	} {
+		if strings.Contains(name, fragment) {
+			return true
+		}
+	}
+	return strings.HasSuffix(name, ".bas")
+}
+
+func openDocumentXMLHasDangerousContent(data []byte) bool {
+	lower := bytes.ToLower(data)
+	for _, marker := range [][]byte{
+		[]byte("script:event-listener"),
+		[]byte("script:language"),
+		[]byte("ooo:script"),
+		[]byte("macro-name"),
+		[]byte("starbasic"),
+		[]byte("application/vnd.sun.star.script"),
+		[]byte(`xlink:href="http://`),
+		[]byte(`xlink:href="https://`),
+		[]byte(`xlink:href="file://`),
+	} {
+		if bytes.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func openDocumentMIME(contentType, originalName string) string {
+	switch {
+	case contentType == "application/vnd.oasis.opendocument.text" || hasAnyExtension(originalName, ".odt"):
+		return "application/vnd.oasis.opendocument.text"
+	case contentType == "application/vnd.oasis.opendocument.spreadsheet" || hasAnyExtension(originalName, ".ods"):
+		return "application/vnd.oasis.opendocument.spreadsheet"
+	case contentType == "application/vnd.oasis.opendocument.presentation" || hasAnyExtension(originalName, ".odp"):
+		return "application/vnd.oasis.opendocument.presentation"
+	default:
+		return ""
+	}
+}
+
 func isImage(contentType, originalName string) bool {
 	return strings.HasPrefix(contentType, "image/") || hasAnyExtension(originalName, ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".tif", ".tiff", ".bmp", ".svg")
 }
@@ -1080,6 +1422,17 @@ func isOfficeOpenXML(contentType, originalName string) bool {
 		return true
 	default:
 		return hasAnyExtension(originalName, ".docx", ".xlsx", ".pptx")
+	}
+}
+
+func isOpenDocument(contentType, originalName string) bool {
+	switch contentType {
+	case "application/vnd.oasis.opendocument.text",
+		"application/vnd.oasis.opendocument.spreadsheet",
+		"application/vnd.oasis.opendocument.presentation":
+		return true
+	default:
+		return hasAnyExtension(originalName, ".odt", ".ods", ".odp")
 	}
 }
 

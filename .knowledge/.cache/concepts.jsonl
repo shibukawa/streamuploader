@@ -2,6 +2,7 @@
 {"category": "interface", "id": "api:backend-control-api", "path": ".knowledge/api/backend-control-api.md", "role": "primary", "title": "Backend Control API", "type": "api"}
 {"category": "interface", "id": "api:derived-asset-serving-api", "path": ".knowledge/api/derived-asset-serving-api.md", "role": "primary", "title": "Derived Asset Serving API", "type": "api"}
 {"category": "interface", "id": "api:download-api", "path": ".knowledge/api/download-api.md", "role": "primary", "title": "File Access API", "type": "api"}
+{"category": "interface", "id": "api:extracted-content-api", "path": ".knowledge/api/extracted-content-api.md", "role": "primary", "title": "Extracted Content API", "type": "api"}
 {"category": "interface", "id": "api:health-api", "path": ".knowledge/api/health-api.md", "role": "primary", "title": "Health API", "type": "api"}
 {"category": "interface", "id": "api:session-progress-api", "path": ".knowledge/api/session-progress-api.md", "role": "primary", "title": "Session Progress API", "type": "api"}
 {"category": "interface", "id": "api:share-url-api", "path": ".knowledge/api/share-url-api.md", "role": "primary", "title": "Share URL API", "type": "api"}

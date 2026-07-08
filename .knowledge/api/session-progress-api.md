@@ -44,6 +44,9 @@ endpoints:
         uploaded_bytes: integer
         size_bytes: integer optional
         status: uploading
+        display_rule:
+          - when post-upload synchronous security gate is pending, uploaded_bytes must be capped below full size, default 98 percent
+          - only terminal uploaded state may expose full byte completion for gated uploads
       state:
         type: state
         upload_key: upload_key
@@ -61,6 +64,7 @@ behavior:
   - client can add upload keys to an existing WebSocket without reopening the connection
   - server should send an initial snapshot for every newly watched key
   - server should send terminal state once and keep it available through polling status
+  - browser progress bars must not turn completed or success-colored solely because request bytes reached storage while synchronous scan or staging gates are still pending
 references:
   - data:upload-batch
   - data:file-item

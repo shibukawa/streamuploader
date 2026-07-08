@@ -90,6 +90,9 @@ func New(cfg config.Config, store storage.Store) *Server {
 	if cfg.MaxArchiveBytes <= 0 {
 		cfg.MaxArchiveBytes = 1 << 30
 	}
+	if cfg.MaxUploadKeysPerOwner <= 0 {
+		cfg.MaxUploadKeysPerOwner = 1000
+	}
 	if cfg.Security.MimeMagic.PrefixBytes <= 0 {
 		cfg.Security = config.DefaultSecurityPolicy()
 	}
@@ -712,10 +715,19 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_file_name", "file_name is required")
 		return
 	}
+	maxUploadBytes := s.effectiveMaxUploadBytes()
+	if req.SizeBytes > maxUploadBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "resource_limit_exceeded", "declared upload size exceeds configured maximum file size")
+		return
+	}
 	now := time.Now().UTC()
-	uploadKey := randomToken(24)
 	ownerToken := s.uploadOwnerToken(w, r)
 	ownerTokenHash := hashToken(ownerToken)
+	if s.activeUploadKeyCountForOwner(ownerTokenHash) >= s.cfg.MaxUploadKeysPerOwner {
+		writeError(w, http.StatusTooManyRequests, "too_many_upload_keys", "too many active upload keys for owner")
+		return
+	}
+	uploadKey := randomToken(24)
 	fileName := safeSegment(req.FileName)
 	prefix := storagePrefix(uploadKey, req.Prefix)
 	objectKey := path.Join(prefix, fileName)
@@ -764,7 +776,7 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 		StoragePrefix:  prefix,
 		ObjectKey:      objectKey,
 		DisplayKey:     objectKey,
-		MaxUploadBytes: s.cfg.MaxUploadBytes,
+		MaxUploadBytes: maxUploadBytes,
 	})
 }
 
@@ -809,6 +821,36 @@ func (s *Server) cancelUploadKey(w http.ResponseWriter, r *http.Request, uploadK
 	})
 	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadCanceled, Item: mustUpload(s.upload(uploadKey))})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) effectiveMaxUploadBytes() int64 {
+	maxUploadBytes := s.cfg.MaxUploadBytes
+	if s.cfg.Security.ResourceLimits.Enabled && s.cfg.Security.ResourceLimits.MaxFileSizeBytes > 0 && (maxUploadBytes <= 0 || s.cfg.Security.ResourceLimits.MaxFileSizeBytes < maxUploadBytes) {
+		maxUploadBytes = s.cfg.Security.ResourceLimits.MaxFileSizeBytes
+	}
+	if maxUploadBytes <= 0 {
+		return 1 << 30
+	}
+	return maxUploadBytes
+}
+
+func (s *Server) activeUploadKeyCountForOwner(ownerTokenHash string) int {
+	if ownerTokenHash == "" {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, item := range s.uploads {
+		if item == nil || item.OwnerTokenHash != ownerTokenHash {
+			continue
+		}
+		switch item.Status {
+		case model.UploadKeyCreated, model.UploadUploading:
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey string) {
@@ -860,14 +902,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		item.UpdatedAt = time.Now().UTC()
 	})
 
-	maxUploadBytes := s.cfg.MaxUploadBytes
-	if s.cfg.Security.ResourceLimits.Enabled && s.cfg.Security.ResourceLimits.MaxFileSizeBytes > 0 && (maxUploadBytes <= 0 || s.cfg.Security.ResourceLimits.MaxFileSizeBytes < maxUploadBytes) {
-		maxUploadBytes = s.cfg.Security.ResourceLimits.MaxFileSizeBytes
-	}
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 1 << 30
-	}
-	if s.cfg.Security.ResourceLimits.Enabled && r.ContentLength > maxUploadBytes {
+	maxUploadBytes := s.effectiveMaxUploadBytes()
+	if r.ContentLength > maxUploadBytes {
 		err := securityUploadError{
 			status:  http.StatusRequestEntityTooLarge,
 			code:    "resource_limit_exceeded",
@@ -991,7 +1027,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		return
 	}
 	if archiveUpload {
-		if err := inspectArchiveObject(uploadCtx, s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, s.cfg.Security.ArchiveGuard); err != nil {
+		if err := inspectArchiveObject(uploadCtx, s.store, s.cfg.Bucket, objectKey, measured.n, archiveKind, target.originalName, s.cfg.Security); err != nil {
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
@@ -2560,6 +2596,8 @@ func declaredTextDerivedMIME(declared string) bool {
 func extensionCompatibleWithDetected(declared, detected, originalName string) bool {
 	ext := normalizedExtension(originalName)
 	switch ext {
+	case "docx", "xlsx", "pptx", "odt", "ods", "odp":
+		return detected == "application/zip"
 	case "md", "markdown":
 		return declared == "text/markdown" && (detected == "text/plain" || detected == "text/html")
 	case "rst", "rest":

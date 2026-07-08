@@ -133,6 +133,45 @@ requirements:
         script_family: powershell
         detection_note: extension may classify script family before content detector proves PowerShell syntax
     accept_condition: extension fallback may suppress content_type_mismatch only when declared and detected MIME are in the format-specific compatible sets
+  extension_content_type_match:
+    purpose: ensure accepted files with known extensions match the type represented by that extension
+    source: data:security-policy-config allow_file_types short-name MIME map
+    scope:
+      - last filename extension after normalization
+      - known extensions only; unknown extensions are not interpreted as type policy
+    accept:
+      - detected MIME matches extension expected MIME or configured equivalent group
+      - declared MIME matches extension expected MIME and detected MIME is empty, application/octet-stream, equivalent, or browser-generic compatible
+      - generic text detection for JSON/YAML/CSV/Markdown/XML/source extensions when declared MIME matches the extension type
+    reject:
+      - detected concrete MIME belongs to another known family than the extension
+      - declared MIME and detected MIME both fail the extension expected MIME set
+    error:
+      status: 415
+      code: file_extension_mismatch
+  archive_entry_content_type_match:
+    purpose: apply extension_content_type_match to files accepted inside uploaded zip, tar, and 7z archives
+    trigger: policy:archive-bomb-protection inspects zip central directory, tar headers, or 7z headers
+    scope:
+      - non-directory zip entries
+      - regular tar entries
+      - non-directory 7z entries
+      - entries with safe paths and known last filename extension
+      - entry declared size already accepted by policy:archive-bomb-protection
+      - entry bytes read through bounded prefix only
+    accept:
+      - detected entry MIME matches extension expected MIME or configured equivalent group
+      - detected generic text/plain is compatible with a text-derived extension such as json, csv, markdown, xml, or txt
+      - unknown entry extension is skipped
+    reject:
+      - known entry extension conflicts with detected concrete MIME
+      - entry content type cannot be detected for a known extension
+      - entry name or shebang indicates script while script upload rejection is enabled and script family or extension is not explicitly allowed
+    error:
+      status: 415
+      codes:
+        - archive_entry_type_mismatch
+        - archive_entry_script_rejected
   generic_text_detected_fallback:
     purpose: accept browser-declared structured text when bounded prefix detection can only prove generic text/plain
     rule: if detected MIME is text/plain and declared MIME is known text-derived MIME, suppress content_type_mismatch
@@ -219,6 +258,9 @@ requirements:
       note: compatibility suppresses content_type_mismatch only; deny lists and script rejection still apply.
   reject:
     - declared MIME conflicts with detected MIME
+    - known filename extension conflicts with detected and declared MIME
+    - known zip, tar, or 7z entry extension conflicts with detected entry MIME
+    - known zip, tar, or 7z entry appears script-like and scripts are not explicitly allowed
     - detected or declared MIME is denied by data:security-policy-config
     - allow list exists and upload type is not allowed
     - prefix indicates script while script upload rejection is enabled and script family or extension is not explicitly allowed

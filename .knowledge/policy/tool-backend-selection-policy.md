@@ -66,10 +66,10 @@ features:
     preferred:
       - direct parser for text-like files
       - docx parser for OOXML
-      - Go PDF text parser when quality is acceptable
+      - pdftotext for PDF embedded text when startup probe finds it
+      - Go PDF literal parser when pdftotext is missing, failing, or empty
       - Go metadata or EXIF parser for allowlisted fields
     fallback:
-      - pdftotext for PDF embedded text
       - Apache Tika when enabled
       - LibreOffice text export fallback
       - local command processor for document AI when policy explicitly delegates
@@ -90,6 +90,9 @@ features:
       - local command processor that calls document AI when policy explicitly delegates
     missing_behavior: skip OCR or mark failed depending on requirement
 reporting:
+  - tool availability is probed at startup and reused during execution
+  - do not run PATH lookup in per-file execution paths
+  - emit startup logs for extraction tools, including pdftotext, external command, and OCR command availability
   - expose selected backend in health API
   - include backend name and version in worker audit event
   - include missing backend reason in status when feature is skipped

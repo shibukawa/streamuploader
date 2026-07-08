@@ -17,6 +17,7 @@ rules:
       - shebang and script language detection
       - archive or polyglot indicators when relevant
       - declared versus detected content type mismatch
+      - known filename extension versus detected or declared content type mismatch
     stream_handling:
       - read at most configured prefix bytes from http request body
       - detect type from prefix bytes only on request path
@@ -73,8 +74,37 @@ rules:
       equivalent_mime_types: configured alias groups
       generic_mime_compatibility: built-in mismatch-only mapping, not used for allow or deny matching
       extension_fallback: built-in mismatch-only and script-family mapping, not used for allow or deny matching
+    extension_consistency:
+      scope: filename extensions known by data:security-policy-config allow_file_types aliases
+      rule:
+        - derive expected MIME set from last filename extension
+        - allow when detected MIME matches expected MIME or configured equivalent group
+        - allow when declared MIME matches expected MIME and generic browser MIME compatibility explains detected MIME
+        - skip when extension is unknown to policy
+      rejects:
+        - image/png bytes uploaded as .jpg when declared or detected type is image/png
+        - application/pdf bytes uploaded with known non-pdf extension
+      error:
+        http_status: 415
+        code: file_extension_mismatch
+    archive_entry_consistency:
+      scope: zip, tar, and 7z entries with known filename extensions
+      rule:
+        - archive guard reads only bounded prefix bytes from each entry
+        - detected entry MIME must match entry extension expected MIME or configured equivalent group
+        - script entry names or shebang prefixes are rejected unless explicitly allowed
+        - generic text detection is allowed for text-derived extensions using the same compatibility rules
+        - unknown entry extensions are ignored by this check
+      error:
+        http_status: 415
+        codes:
+          - archive_entry_type_mismatch
+          - archive_entry_script_rejected
     reject_when:
       - declared MIME exists and detected MIME conflicts
+      - known filename extension conflicts with detected and declared MIME
+      - zip, tar, or 7z entry known filename extension conflicts with detected entry MIME
+      - zip, tar, or 7z entry appears script-like and scripts are not explicitly allowed
       - detected or declared MIME matches deny list
       - allow list exists and neither detected nor declared MIME is allowed
       - detected MIME is unknown in strict mode

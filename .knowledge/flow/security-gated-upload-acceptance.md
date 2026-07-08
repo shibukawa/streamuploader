@@ -32,6 +32,7 @@ flow:
       actions:
         - stream accepted bytes to system:s3-storage
         - when system:clamav enabled, send same bytes to clamd TCP INSTREAM through io.MultiWriter
+        - cap api:session-progress-api uploaded_bytes below full completion while post-upload gate is pending, default 98 percent
         - when prefix indicates archive or container, run policy:archive-bomb-protection against .tmp object after S3 upload completes
         - when Office or PDF full scan is required, run policy:document-active-content-policy before copying .tmp object to final key
         - when SVG cannot be safely checked by streaming parser, run policy:svg-security-policy before copying .tmp object to final key

@@ -16,6 +16,9 @@ rules:
     fallback: full scan before final storage commit
     limits:
       - max_file_size_bytes
+      - max_image_width from root width or viewBox width
+      - max_image_height from root height or viewBox height
+      - max_image_pixel_count from root dimensions or viewBox dimensions
       - max_xml_depth
       - max_object_count
       - max_parser_time_ms

@@ -3,7 +3,7 @@ id: policy:document-active-content-policy
 type: policy
 title: Document Active Content Policy
 ---
-Document active content policy rejects Office Open XML and PDF uploads containing dangerous, executable, externally loaded, or embedded active features.
+Document active content policy rejects Office Open XML, OpenDocument, and PDF uploads containing dangerous, executable, externally loaded, or embedded active features.
 
 ```yaml
 rules:
@@ -12,13 +12,22 @@ rules:
       - docx
       - xlsx
       - pptx
+    open_document:
+      - odt
+      - ods
+      - odp
     pdf:
       - pdf
   default: reject_on_detection
-  inspection:
-    office_open_xml:
-      - validate ZIP package and content types
-      - inspect relationships for external targets
+	  inspection:
+	    office_open_xml:
+	      - validate ZIP package and [Content_Types].xml before active content inspection
+	      - require declared docx, xlsx, or pptx family to match an existing main package part
+	      - inspect relationships for external targets
+	    open_document:
+	      - validate ZIP package, mimetype, manifest root media type, and content.xml before active content inspection
+	      - reject script and Basic macro package parts
+	      - inspect XML parts for script event listeners, StarBasic markers, and external xlink targets
       - inspect package parts for macros, OLE, ActiveX, embedded packages, and external references
       - enforce archive limits from policy:archive-bomb-protection and policy:resource-limit-policy
     pdf:

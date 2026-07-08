@@ -33,6 +33,7 @@ type Config struct {
 	S3PublicRead            bool
 	SessionTTL              time.Duration
 	MaxUploadBytes          int64
+	MaxUploadKeysPerOwner   int
 	SecurityConfigPath      string
 	Security                SecurityPolicy
 	PresignTTL              time.Duration
@@ -471,6 +472,7 @@ func Load() Config {
 		S3PublicRead:            envBool("S3_PUBLIC_READ", false),
 		SessionTTL:              envDuration("SESSION_TTL", 24*time.Hour),
 		MaxUploadBytes:          envInt64("MAX_UPLOAD_BYTES", 1<<30),
+		MaxUploadKeysPerOwner:   envInt("MAX_UPLOAD_KEYS_PER_OWNER", 1000),
 		SecurityConfigPath:      securityConfigPath,
 		Security:                security,
 		PresignTTL:              envDuration("PRESIGN_TTL", 15*time.Minute),
@@ -546,9 +548,9 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			MaxFileSizeBytes:         1 << 30,
 			MaxDecompressedSizeBytes: 512 << 20,
 			MaxPDFPageCount:          500,
-			MaxImageWidth:            32768,
-			MaxImageHeight:           32768,
-			MaxImagePixelCount:       268435456,
+			MaxImageWidth:            10000,
+			MaxImageHeight:           10000,
+			MaxImagePixelCount:       100000000,
 			MaxObjectCount:           100000,
 			MaxXMLDepth:              64,
 			MaxZIPEntries:            10000,
@@ -1146,8 +1148,8 @@ func normalizeFileType(value string) string {
 var mimeFileTypes = map[string][]string{
 	"images":       {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
 	"image":        {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml", "image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence", "image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf", "image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga"},
-	"documents":    {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-	"document":     {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"documents":    {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"},
+	"document":     {"application/pdf", "text/plain", "text/csv", "application/rtf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"},
 	"archives":     {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
 	"archive":      {"application/zip", "application/gzip", "application/x-gzip", "application/zstd", "application/x-zstd", "application/x-brotli", "application/br", "application/x-tar", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed"},
 	"audio":        {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/flac", "audio/aac"},
@@ -1180,6 +1182,9 @@ var mimeFileTypes = map[string][]string{
 	"docx":         {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
 	"xlsx":         {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 	"pptx":         {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"odt":          {"application/vnd.oasis.opendocument.text"},
+	"ods":          {"application/vnd.oasis.opendocument.spreadsheet"},
+	"odp":          {"application/vnd.oasis.opendocument.presentation"},
 	"txt":          {"text/plain"},
 	"plain":        {"text/plain"},
 	"csv":          {"text/csv"},

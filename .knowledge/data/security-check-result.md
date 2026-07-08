@@ -79,6 +79,10 @@ fields:
       - archive_too_many_entries
       - archive_too_deep
       - archive_path_unsafe
+      - archive_link_rejected
+      - archive_special_file_rejected
+      - archive_entry_type_mismatch
+      - archive_entry_script_rejected
       - archive_inspection_timeout
       - archive_unsupported_method
       - file_too_large

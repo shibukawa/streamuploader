@@ -27,7 +27,10 @@ endpoints:
       storage_prefix: generated folder prefix
       object_key: generated folder plus safe file name
       display_key: key returned for metadata payload
+      max_upload_bytes: effective maximum upload body size after global and policy:resource-limit-policy caps
     behavior:
+      - reject when declared size_bytes exceeds max_upload_bytes before issuing an upload key
+      - reject when the owner already has max_upload_keys_per_owner active key_created or uploading keys
       - create S3-backed upload deadline marker before response
       - marker stores upload_start_deadline and upload_finish_deadline
   upload_file:

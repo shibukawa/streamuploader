@@ -24,11 +24,19 @@ rules:
       - local header consistency
       - ZIP64 consistency
       - path safety
-    office_open_xml:
-      - valid ZIP package
-      - required content type parts
-      - relationship target consistency
-      - no ambiguous duplicate package parts
+	    office_open_xml:
+	      - valid ZIP package
+	      - required [Content_Types].xml part
+	      - declared document family matches an Override main part content type
+	      - Override main PartName exists as an actual package part
+	      - relationship target consistency
+	      - no ambiguous duplicate package parts
+	    open_document:
+	      - valid ZIP package
+	      - required mimetype part matches declared odt, ods, or odp family
+	      - required META-INF/manifest.xml root file-entry media type matches declared family
+	      - required content.xml part exists
+	      - XML parts are parser-readable under configured decompressed size limits
     pdf:
       - cross-reference consistency
       - object stream consistency
