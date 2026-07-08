@@ -148,127 +148,96 @@ func New(cfg config.Config, store storage.Store) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.withAccessLog(http.HandlerFunc(s.route))
+	mux := http.NewServeMux()
+	s.registerPublicRoutes(mux)
+	if s.cfg.BackendAddr == "" {
+		s.registerBackendRoutes(mux)
+	}
+	if s.proxy != nil && s.cfg.Mode == "simple_fronting_reverse_proxy" {
+		mux.Handle("/", s.proxy)
+	}
+	return s.withAccessLog(s.withCORS(mux))
 }
 
 func (s *Server) BackendHandler() http.Handler {
-	return s.withAccessLog(http.HandlerFunc(s.backendRoute))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		s.health(w)
+	})
+	s.registerBackendRoutes(mux)
+	return s.withAccessLog(mux)
 }
 
-func (s *Server) route(w http.ResponseWriter, r *http.Request) {
-	s.cors(w, r)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.URL.Path == "/healthz" {
+func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		s.health(w)
-		return
-	}
-	if s.cfg.BackendAddr == "" && (r.URL.Path == s.cfg.BackendBasePath || strings.HasPrefix(r.URL.Path, s.cfg.BackendBasePath+"/")) {
-		s.handleBackendAPI(w, r)
-		return
-	}
-	if r.URL.Path == s.uploadBase || strings.HasPrefix(r.URL.Path, s.uploadBase+"/") {
-		s.handleUploadAPI(w, r)
-		return
-	}
-	if r.URL.Path == s.fileBase || strings.HasPrefix(r.URL.Path, s.fileBase+"/") {
-		s.handleFileAPI(w, r)
-		return
-	}
-	if r.URL.Path == s.filesBase || strings.HasPrefix(r.URL.Path, s.filesBase+"/") {
-		s.handleFilesAPI(w, r)
-		return
-	}
-	if s.proxy != nil && s.cfg.Mode == "simple_fronting_reverse_proxy" {
-		s.proxy.ServeHTTP(w, r)
-		return
-	}
-	writeError(w, http.StatusNotFound, "not_found", "route not found")
+	})
+	mux.HandleFunc("POST "+s.uploadBase+"/keys", s.createUploadKey)
+	mux.HandleFunc("POST "+s.uploadBase+"/wait", s.waitUploads)
+	mux.HandleFunc("GET "+s.uploadBase+"/watch", s.watchUploads)
+	mux.HandleFunc("GET "+s.uploadBase+"/keys/{uploadKey}", func(w http.ResponseWriter, r *http.Request) {
+		s.getUpload(w, r, r.PathValue("uploadKey"))
+	})
+	mux.HandleFunc("DELETE "+s.uploadBase+"/keys/{uploadKey}", func(w http.ResponseWriter, r *http.Request) {
+		s.cancelUploadKey(w, r, r.PathValue("uploadKey"))
+	})
+	mux.HandleFunc("PUT "+s.uploadBase+"/keys/{uploadKey}/content", func(w http.ResponseWriter, r *http.Request) {
+		s.uploadFile(w, r, r.PathValue("uploadKey"))
+	})
+	mux.HandleFunc("GET "+s.fileBase+"/shared/{sharedKey}/content", func(w http.ResponseWriter, r *http.Request) {
+		s.streamSharedObject(w, r, false)
+	})
+	mux.HandleFunc("GET "+s.fileBase+"/shared/{sharedKey}/download", func(w http.ResponseWriter, r *http.Request) {
+		s.streamSharedObject(w, r, true)
+	})
+	mux.HandleFunc("GET "+s.fileBase+"/{key}/thumbnail", s.streamThumbnail)
+	mux.HandleFunc("GET "+s.fileBase+"/{key}/content", func(w http.ResponseWriter, r *http.Request) {
+		s.streamFrontendObject(w, r, false)
+	})
+	mux.HandleFunc("GET "+s.fileBase+"/{key}/download", func(w http.ResponseWriter, r *http.Request) {
+		s.streamFrontendObject(w, r, true)
+	})
+	mux.HandleFunc("GET "+s.filesBase+"/{keys}", s.streamFrontendArchive)
 }
 
-func (s *Server) backendRoute(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/healthz" {
-		s.health(w)
-		return
-	}
-	if r.URL.Path == s.cfg.BackendBasePath || strings.HasPrefix(r.URL.Path, s.cfg.BackendBasePath+"/") {
-		s.handleBackendAPI(w, r)
-		return
-	}
-	writeError(w, http.StatusNotFound, "not_found", "backend route not found")
+func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
+	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
+	mux.HandleFunc("POST "+base+"/file/presigned-url", s.backendAuthorized(s.createPresignedURL))
+	mux.HandleFunc("POST "+base+"/file/shared-keys", s.backendAuthorized(s.createSharedKey))
+	mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.backendAuthorized(s.deleteSharedKeyAPI))
+	mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.backendAuthorized(s.deleteObjectAPI))
+	mux.HandleFunc("GET "+base+"/objects/{objectKey}/extracted-content", s.backendAuthorized(func(w http.ResponseWriter, r *http.Request) {
+		s.getExtractedContent(w, r, r.PathValue("objectKey"))
+	}))
+	mux.HandleFunc("POST "+base+"/objects/{objectKey}/extracted-content/presigned-url", s.backendAuthorized(func(w http.ResponseWriter, r *http.Request) {
+		s.createExtractedContentPresignedURL(w, r, r.PathValue("objectKey"))
+	}))
+	mux.HandleFunc("GET "+base+"/tasks/wait", s.backendAuthorized(s.waitAsyncTasks))
+}
+
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.cors(w, r)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
-	rel := strings.TrimPrefix(r.URL.Path, s.uploadBase)
-	if rel == "" {
-		rel = "/"
-	}
-	parts := strings.Split(strings.Trim(rel, "/"), "/")
-	switch {
-	case rel == "/keys" && r.Method == http.MethodPost:
-		s.createUploadKey(w, r)
-	case rel == "/wait" && r.Method == http.MethodPost:
-		s.waitUploads(w, r)
-	case rel == "/watch" && r.Method == http.MethodGet:
-		s.watchUploads(w, r)
-	case len(parts) == 2 && parts[0] == "keys" && r.Method == http.MethodGet:
-		s.getUpload(w, r, parts[1])
-	case len(parts) == 2 && parts[0] == "keys" && r.Method == http.MethodDelete:
-		s.cancelUploadKey(w, r, parts[1])
-	case len(parts) == 3 && parts[0] == "keys" && parts[2] == "content" && r.Method == http.MethodPut:
-		s.uploadFile(w, r, parts[1])
-	default:
-		writeError(w, http.StatusNotFound, "not_found", "upload route not found")
-	}
-}
-
-func (s *Server) handleBackendAPI(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeBackend(r) {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
-		return
-	}
-	escapedPath := r.URL.EscapedPath()
-	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
-	filePrefix := base + "/file/"
-	if strings.HasPrefix(escapedPath, filePrefix) {
-		s.handleBackendFileAPI(w, r, strings.TrimPrefix(escapedPath, filePrefix))
-		return
-	}
-	objectsPrefix := base + "/objects/"
-	if strings.HasPrefix(escapedPath, objectsPrefix) {
-		if s.handleBackendObjectAPI(w, r, strings.TrimPrefix(escapedPath, objectsPrefix)) {
+func (s *Server) backendAuthorized(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeBackend(r) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
 			return
 		}
+		next(w, r)
 	}
-	if strings.HasPrefix(escapedPath, objectsPrefix) && r.Method == http.MethodDelete {
-		escapedKey := strings.TrimPrefix(escapedPath, objectsPrefix)
-		if strings.Contains(escapedKey, "/") {
-			writeError(w, http.StatusNotFound, "not_found", "backend route not found")
-			return
-		}
-		objectKey, err := url.PathUnescape(escapedKey)
-		if err != nil || strings.TrimSpace(objectKey) == "" {
-			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is required")
-			return
-		}
-		if err := s.deleteObjectAndShares(r.Context(), objectKey); err != nil {
-			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if escapedPath == base+"/tasks/wait" && r.Method == http.MethodGet {
-		s.waitAsyncTasks(w, r)
-		return
-	}
-	writeError(w, http.StatusNotFound, "not_found", "backend route not found")
 }
 
 type presignRequest struct {
@@ -311,53 +280,41 @@ type extractedContentPresignRequest struct {
 	IncludePendingStatus bool `json:"include_pending_status,omitempty"`
 }
 
-func (s *Server) handleBackendObjectAPI(w http.ResponseWriter, r *http.Request, escapedRel string) bool {
-	const extractedSuffix = "/extracted-content"
-	const extractedPresignSuffix = "/extracted-content/presigned-url"
-	switch {
-	case strings.HasSuffix(escapedRel, extractedPresignSuffix) && r.Method == http.MethodPost:
-		s.createExtractedContentPresignedURL(w, r, strings.TrimSuffix(escapedRel, extractedPresignSuffix))
-		return true
-	case strings.HasSuffix(escapedRel, extractedSuffix) && r.Method == http.MethodGet:
-		s.getExtractedContent(w, r, strings.TrimSuffix(escapedRel, extractedSuffix))
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *Server) handleBackendFileAPI(w http.ResponseWriter, r *http.Request, escapedRel string) {
-	switch {
-	case escapedRel == "presigned-url" && r.Method == http.MethodPost:
-		s.createPresignedURL(w, r)
-	case escapedRel == "shared-keys" && r.Method == http.MethodPost:
-		s.createSharedKey(w, r)
-	case strings.HasPrefix(escapedRel, "shared-keys/") && r.Method == http.MethodDelete:
-		sharedKey, err := url.PathUnescape(strings.TrimPrefix(escapedRel, "shared-keys/"))
-		if err != nil || strings.TrimSpace(sharedKey) == "" || strings.Contains(sharedKey, "/") {
-			writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
-			return
-		}
-		if !s.cfg.EnableSharedKey {
-			writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
-			return
-		}
-		if err := s.deleteSharedKey(r.Context(), sharedKey); err != nil {
-			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		writeError(w, http.StatusNotFound, "not_found", "backend file route not found")
-	}
-}
-
 func (s *Server) authorizeBackend(r *http.Request) bool {
 	if s.cfg.BackendAuthToken == "" {
 		return true
 	}
 	auth := r.Header.Get("Authorization")
 	return auth == "Bearer "+s.cfg.BackendAuthToken
+}
+
+func (s *Server) deleteSharedKeyAPI(w http.ResponseWriter, r *http.Request) {
+	sharedKey := r.PathValue("sharedKey")
+	if strings.TrimSpace(sharedKey) == "" || strings.Contains(sharedKey, "/") {
+		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
+		return
+	}
+	if !s.cfg.EnableSharedKey {
+		writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
+		return
+	}
+	if err := s.deleteSharedKey(r.Context(), sharedKey); err != nil {
+		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteObjectAPI(w http.ResponseWriter, r *http.Request) {
+	objectKey, ok := backendObjectKeyFromPathValue(w, r.PathValue("objectKey"))
+	if !ok {
+		return
+	}
+	if err := s.deleteObjectAndShares(r.Context(), objectKey); err != nil {
+		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createPresignedURL(w http.ResponseWriter, r *http.Request) {
@@ -396,7 +353,7 @@ func (s *Server) createPresignedURL(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getExtractedContent(w http.ResponseWriter, r *http.Request, escapedKey string) {
-	objectKey, ok := backendObjectKeyFromEscaped(w, escapedKey)
+	objectKey, ok := backendObjectKeyFromPathValue(w, escapedKey)
 	if !ok {
 		return
 	}
@@ -482,7 +439,7 @@ func (s *Server) getExtractedContent(w http.ResponseWriter, r *http.Request, esc
 }
 
 func (s *Server) createExtractedContentPresignedURL(w http.ResponseWriter, r *http.Request, escapedKey string) {
-	objectKey, ok := backendObjectKeyFromEscaped(w, escapedKey)
+	objectKey, ok := backendObjectKeyFromPathValue(w, escapedKey)
 	if !ok {
 		return
 	}
@@ -629,78 +586,59 @@ func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleFileAPI(w http.ResponseWriter, r *http.Request) {
-	escaped := r.URL.EscapedPath()
-	prefix := s.fileBase + "/"
-	switch {
-	case strings.HasPrefix(escaped, prefix+"shared/") && (strings.HasSuffix(escaped, "/content") || strings.HasSuffix(escaped, "/download")) && r.Method == http.MethodGet:
-		attachment := strings.HasSuffix(escaped, "/download")
-		suffix := "/content"
-		if attachment {
-			suffix = "/download"
-		}
-		sharedKey := strings.TrimSuffix(strings.TrimPrefix(escaped, prefix+"shared/"), suffix)
-		if strings.Contains(sharedKey, "/") {
-			writeError(w, http.StatusNotFound, "not_found", "file route not found")
-			return
-		}
-		key, name, contentType, ok := s.resolveSharedKey(w, r, sharedKey)
-		if !ok {
-			return
-		}
-		s.streamObject(w, r, key, name, contentType, attachment)
-	case strings.HasPrefix(escaped, prefix) && strings.HasSuffix(escaped, "/thumbnail") && r.Method == http.MethodGet:
-		if !s.cfg.Thumbnails.Enabled {
-			writeError(w, http.StatusNotFound, "not_found", "thumbnail generation is disabled")
-			return
-		}
-		key, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(escaped, prefix), "/thumbnail"))
-		if err != nil || strings.TrimSpace(key) == "" {
-			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
-			return
-		}
-		s.streamObject(w, r, key+s.cfg.Thumbnails.ObjectKeySuffix, path.Base(key), "", false)
-	case strings.HasPrefix(escaped, prefix) && (strings.HasSuffix(escaped, "/content") || strings.HasSuffix(escaped, "/download")) && r.Method == http.MethodGet:
-		attachment := strings.HasSuffix(escaped, "/download")
-		suffix := "/content"
-		if attachment {
-			suffix = "/download"
-		}
-		key, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(escaped, prefix), suffix))
-		if err != nil || strings.TrimSpace(key) == "" {
-			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
-			return
-		}
-		s.streamObject(w, r, key, path.Base(key), "", attachment)
-	default:
-		writeError(w, http.StatusNotFound, "not_found", "file route not found")
-	}
-}
-
-func (s *Server) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+func (s *Server) streamSharedObject(w http.ResponseWriter, r *http.Request, attachment bool) {
+	sharedKey := r.PathValue("sharedKey")
+	if strings.TrimSpace(sharedKey) == "" || strings.Contains(sharedKey, "/") {
+		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
 		return
 	}
-	escaped := strings.TrimPrefix(r.URL.EscapedPath(), s.filesBase+"/")
-	if escaped == "" || strings.Contains(escaped, "/") {
+	key, name, contentType, ok := s.resolveSharedKey(w, r, sharedKey)
+	if !ok {
+		return
+	}
+	s.streamObject(w, r, key, name, contentType, attachment)
+}
+
+func (s *Server) streamThumbnail(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Thumbnails.Enabled {
+		writeError(w, http.StatusNotFound, "not_found", "thumbnail generation is disabled")
+		return
+	}
+	key := r.PathValue("key")
+	if strings.TrimSpace(key) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		return
+	}
+	s.streamObject(w, r, key+s.cfg.Thumbnails.ObjectKeySuffix, path.Base(key), "", false)
+}
+
+func (s *Server) streamFrontendObject(w http.ResponseWriter, r *http.Request, attachment bool) {
+	key := r.PathValue("key")
+	if strings.TrimSpace(key) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		return
+	}
+	s.streamObject(w, r, key, path.Base(key), "", attachment)
+}
+
+func (s *Server) streamFrontendArchive(w http.ResponseWriter, r *http.Request) {
+	keysValue := r.PathValue("keys")
+	if keysValue == "" {
 		writeError(w, http.StatusNotFound, "not_found", "files route not found")
 		return
 	}
-	parts := strings.Split(escaped, ",")
+	parts := strings.Split(keysValue, ",")
 	if len(parts) == 0 || len(parts) > s.cfg.MaxArchiveFiles {
 		writeError(w, http.StatusBadRequest, "too_many_files", "too many files requested")
 		return
 	}
 	keys := make([]string, 0, len(parts))
 	for _, part := range parts {
-		key, err := url.PathUnescape(part)
-		if err != nil || strings.TrimSpace(key) == "" {
+		if strings.TrimSpace(part) == "" {
 			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 			return
 		}
-		keys = append(keys, key)
+		keys = append(keys, part)
 	}
 	s.streamZipArchive(w, r, keys)
 }
@@ -1263,13 +1201,8 @@ func (s *Server) waitForAsyncTaskKinds(ctx context.Context, objectKeys, kinds []
 	}
 }
 
-func backendObjectKeyFromEscaped(w http.ResponseWriter, escapedKey string) (string, bool) {
-	if strings.Contains(escapedKey, "/") {
-		writeError(w, http.StatusNotFound, "not_found", "backend route not found")
-		return "", false
-	}
-	objectKey, err := url.PathUnescape(escapedKey)
-	if err != nil || strings.TrimSpace(objectKey) == "" {
+func backendObjectKeyFromPathValue(w http.ResponseWriter, objectKey string) (string, bool) {
+	if strings.TrimSpace(objectKey) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is required")
 		return "", false
 	}
@@ -1458,13 +1391,12 @@ func (s *Server) streamZipArchive(w http.ResponseWriter, r *http.Request, keys [
 	}
 }
 
-func (s *Server) resolveSharedKey(w http.ResponseWriter, r *http.Request, escapedSharedKey string) (string, string, string, bool) {
+func (s *Server) resolveSharedKey(w http.ResponseWriter, r *http.Request, sharedKey string) (string, string, string, bool) {
 	if !s.cfg.EnableSharedKey {
 		writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
 		return "", "", "", false
 	}
-	sharedKey, err := url.PathUnescape(escapedSharedKey)
-	if err != nil || strings.TrimSpace(sharedKey) == "" {
+	if strings.TrimSpace(sharedKey) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
 		return "", "", "", false
 	}
@@ -2064,7 +1996,7 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			slog.Info("http_request",
 				"method", r.Method,
-				"route", routeTemplate(r.URL.Path, s),
+				"route", requestRoutePattern(r, s),
 				"status", http.StatusSwitchingProtocols,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"request_id", r.Header.Get("X-Request-ID"),
@@ -2076,13 +2008,20 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		slog.Info("http_request",
 			"method", r.Method,
-			"route", routeTemplate(r.URL.Path, s),
+			"route", requestRoutePattern(r, s),
 			"status", rec.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"request_id", r.Header.Get("X-Request-ID"),
 			"source_ip", r.RemoteAddr,
 		)
 	})
+}
+
+func requestRoutePattern(r *http.Request, s *Server) string {
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return routeTemplate(r.URL.Path, s)
 }
 
 type statusRecorder struct {

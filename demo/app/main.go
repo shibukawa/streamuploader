@@ -94,18 +94,24 @@ func main() {
 	}
 	a := &app{cfg: cfg, store: st}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", a.index)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /{$}", a.index)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("/demo/api/config", a.configAPI)
-	mux.HandleFunc("/demo/api/files", a.filesAPI)
-	mux.HandleFunc("/demo/api/files/", a.fileAPI)
-	mux.HandleFunc("/api/config", a.configAPI)
-	mux.HandleFunc("/api/upload", a.uploadProxy)
+	mux.HandleFunc("GET /demo/api/config", a.configAPI)
+	mux.HandleFunc("GET /demo/api/files", a.listFilesAPI)
+	mux.HandleFunc("POST /demo/api/files", a.createFilesAPI)
+	mux.HandleFunc("DELETE /demo/api/files/{id}", a.deleteFileAPI)
+	mux.HandleFunc("GET /demo/api/files/{id}/download", a.downloadFileAPI)
+	mux.HandleFunc("GET /demo/api/files/download.zip", a.downloadZipAPI)
+	mux.HandleFunc("GET /api/config", a.configAPI)
 	mux.HandleFunc("/api/upload/", a.uploadProxy)
-	mux.HandleFunc("/api/files", a.filesAPI)
-	mux.HandleFunc("/api/files/", a.fileAPI)
+	mux.HandleFunc("/api/upload", a.uploadProxy)
+	mux.HandleFunc("GET /api/files", a.listFilesAPI)
+	mux.HandleFunc("POST /api/files", a.createFilesAPI)
+	mux.HandleFunc("DELETE /api/files/{id}", a.deleteFileAPI)
+	mux.HandleFunc("GET /api/files/{id}/download", a.downloadFileAPI)
+	mux.HandleFunc("GET /api/files/download.zip", a.downloadZipAPI)
 	log.Printf("demo app listening on %s", cfg.Addr)
 	log.Fatal(http.ListenAndServe(cfg.Addr, mux))
 }
@@ -141,121 +147,108 @@ func (a *app) uploadProxy(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func (a *app) filesAPI(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, a.store.list())
-	case http.MethodPost:
-		var req submitRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
-			return
-		}
-		if strings.TrimSpace(req.Title) == "" {
-			req.Title = "Untitled"
-		}
-		if len(req.Files) == 0 {
-			writeError(w, http.StatusBadRequest, "missing_files", "files is required")
-			return
-		}
-		now := time.Now().UTC()
-		records := make([]fileRecord, 0, len(req.Files))
-		for _, file := range req.Files {
-			if file.ObjectKey == "" {
-				writeError(w, http.StatusBadRequest, "missing_object_key", "each file needs object_key")
-				return
-			}
-			name := file.OriginalName
-			if name == "" {
-				name = filepath.Base(file.ObjectKey)
-			}
-			records = append(records, fileRecord{
-				ID:             "file_" + token(12),
-				Title:          req.Title,
-				Note:           req.Note,
-				UploadKey:      file.UploadKey,
-				OriginalName:   name,
-				ContentType:    file.ContentType,
-				SizeBytes:      file.SizeBytes,
-				ChecksumSHA256: file.ChecksumSHA256,
-				ObjectKey:      file.ObjectKey,
-				DisplayKey:     file.DisplayKey,
-				ThumbnailURL:   thumbnailURL(a.cfg, file),
-				CreatedAt:      now,
-			})
-		}
-		if err := a.store.add(records); err != nil {
-			writeError(w, http.StatusInternalServerError, "store_error", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusCreated, records)
-	default:
-		w.Header().Set("Allow", "GET,POST")
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
-	}
+func (a *app) listFilesAPI(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, a.store.list())
 }
 
-func (a *app) fileAPI(w http.ResponseWriter, r *http.Request) {
-	rel := strings.TrimPrefix(r.URL.Path, "/demo/api/files/")
-	if rel == r.URL.Path {
-		rel = strings.TrimPrefix(r.URL.Path, "/api/files/")
+func (a *app) createFilesAPI(w http.ResponseWriter, r *http.Request) {
+	var req submitRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+		return
 	}
-	parts := strings.Split(strings.Trim(rel, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
+	if strings.TrimSpace(req.Title) == "" {
+		req.Title = "Untitled"
+	}
+	if len(req.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_files", "files is required")
+		return
+	}
+	now := time.Now().UTC()
+	records := make([]fileRecord, 0, len(req.Files))
+	for _, file := range req.Files {
+		if file.ObjectKey == "" {
+			writeError(w, http.StatusBadRequest, "missing_object_key", "each file needs object_key")
+			return
+		}
+		name := file.OriginalName
+		if name == "" {
+			name = filepath.Base(file.ObjectKey)
+		}
+		records = append(records, fileRecord{
+			ID:             "file_" + token(12),
+			Title:          req.Title,
+			Note:           req.Note,
+			UploadKey:      file.UploadKey,
+			OriginalName:   name,
+			ContentType:    file.ContentType,
+			SizeBytes:      file.SizeBytes,
+			ChecksumSHA256: file.ChecksumSHA256,
+			ObjectKey:      file.ObjectKey,
+			DisplayKey:     file.DisplayKey,
+			ThumbnailURL:   thumbnailURL(a.cfg, file),
+			CreatedAt:      now,
+		})
+	}
+	if err := a.store.add(records); err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, records)
+}
+
+func (a *app) deleteFileAPI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, ok := a.store.get(id)
+	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	id := parts[0]
-	switch {
-	case len(parts) == 1 && r.Method == http.MethodDelete:
-		rec, ok := a.store.get(id)
-		if !ok {
-			writeError(w, http.StatusNotFound, "not_found", "file not found")
+	if a.cfg.DeleteObjectsOnDelete {
+		if err := a.deleteObjectFromStreamUploader(r.Context(), rec.ObjectKey); err != nil {
+			writeError(w, http.StatusBadGateway, "streamuploader_delete_error", err.Error())
 			return
 		}
-		if a.cfg.DeleteObjectsOnDelete {
-			if err := a.deleteObjectFromStreamUploader(r.Context(), rec.ObjectKey); err != nil {
-				writeError(w, http.StatusBadGateway, "streamuploader_delete_error", err.Error())
-				return
-			}
-		}
-		if err := a.store.delete(id); err != nil {
-			writeError(w, http.StatusInternalServerError, "store_error", err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet:
-		rec, ok := a.store.get(id)
-		if !ok {
-			writeError(w, http.StatusNotFound, "not_found", "file not found")
-			return
-		}
-		target, err := a.downloadURL(r.Context(), rec, r.URL.Query().Get("mode"))
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "download_url_error", err.Error())
-			return
-		}
-		http.Redirect(w, r, target, http.StatusFound)
-	case len(parts) == 1 && id == "download.zip" && r.Method == http.MethodGet:
-		ids := splitCSV(r.URL.Query().Get("ids"))
-		if len(ids) == 0 {
-			writeError(w, http.StatusBadRequest, "missing_ids", "ids is required")
-			return
-		}
-		records := a.store.getMany(ids)
-		if len(records) == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "files not found")
-			return
-		}
-		keys := make([]string, 0, len(records))
-		for _, rec := range records {
-			keys = append(keys, url.PathEscape(rec.ObjectKey))
-		}
-		archive := streamUploaderPublicURL(a.cfg) + "/api/files/" + strings.Join(keys, ",") + "?filename=" + url.QueryEscape("streamuploader-demo.zip")
-		http.Redirect(w, r, archive, http.StatusFound)
-	default:
-		writeError(w, http.StatusNotFound, "not_found", "route not found")
 	}
+	if err := a.store.delete(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) downloadFileAPI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, ok := a.store.get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	target, err := a.downloadURL(r.Context(), rec, r.URL.Query().Get("mode"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "download_url_error", err.Error())
+		return
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+func (a *app) downloadZipAPI(w http.ResponseWriter, r *http.Request) {
+	ids := splitCSV(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_ids", "ids is required")
+		return
+	}
+	records := a.store.getMany(ids)
+	if len(records) == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "files not found")
+		return
+	}
+	keys := make([]string, 0, len(records))
+	for _, rec := range records {
+		keys = append(keys, url.PathEscape(rec.ObjectKey))
+	}
+	archive := streamUploaderPublicURL(a.cfg) + "/api/files/" + strings.Join(keys, ",") + "?filename=" + url.QueryEscape("streamuploader-demo.zip")
+	http.Redirect(w, r, archive, http.StatusFound)
 }
 
 func (a *app) downloadURL(ctx context.Context, rec fileRecord, mode string) (string, error) {

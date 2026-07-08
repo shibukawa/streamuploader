@@ -659,7 +659,7 @@ func TestBackendWaitAsyncTasks(t *testing.T) {
 	}
 
 	postResp := postJSON(t, app.URL+"/internal/tasks/wait", fmt.Sprintf(`{"object_keys":[%q]}`, objectKey))
-	if postResp.StatusCode != http.StatusNotFound {
+	if postResp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST wait status = %d", postResp.StatusCode)
 	}
 	_ = postResp.Body.Close()
