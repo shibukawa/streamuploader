@@ -126,6 +126,22 @@ License:
 - Authentication middleware extension code that uses only the public `streamuploader/auth` boundary may be distributed under other terms under the additional permission in `LICENSE-AUTH-EXCEPTION`.
 - Changes outside that authentication middleware boundary remain governed by the AGPLv3.
 
+## PDF and Office documents
+
+PDF, OOXML Office files (`.docx`, `.xlsx`, `.pptx`), Photoshop (`.psd`, `.psb`), Illustrator (`.ai`, PDF-compatible only), EPUB, Parquet, Visio (`.vsdx`), CSV/TSV, Markdown, HTML and draw.io (`.drawio`) files are processed in-process with [bdf](https://github.com/shibukawa/bdf); no office suite or external tool is involved. For every accepted upload streamuploader stores:
+
+- a thumbnail of the first page (`<object key>/thumbnail`, re-encoded through the thumbnail format policy),
+- the search text as extracted content (`<object key>.text.json`): the joined text under `texts.extracted` and the per-page text under `pages` (`view`, `page` from 1, `text`; select it with `include=pages`), so a hit can link to its page,
+- the whole document as a single-file BDF preview (`<object key>.bdf`, `application/x-bdf`, served at `/api/file/{key}/preview`).
+
+These three are built in and have no on/off switch; `thumbnails.enabled` and `text_extraction.enabled` only affect other file types. To refuse a type, use `mime_magic.deny_file_types`. Legacy `.doc`/`.xls`/`.ppt` and OpenDocument files are rejected. Photoshop files cannot be metadata-sanitized, so like TIFF/AVIF/HEIC they need a per-file-type `accept_as_is` mode under the default image policy. Illustrator files saved without PDF content (and Illustrator 8 or older) cannot be converted. PSD/AI have no search text.
+
+Formats are checked by content, not only by name or declared type. Binary formats must be confirmed by bdf's detection plus a structure check (a Parquet footer, an EPUB with its package document, a Visio package); otherwise the upload is refused with `415 document_format_mismatch`, and obviously wrong first bytes are refused before the rest of the file is read. Text formats are nominated by extension, declared type or content (a `text/plain` upload that is an HTML page or a draw.io diagram is recognized) and confirmed by parsing (a `.csv` must parse as a table with consistent columns); a text file that is not what its name suggests is not refused but handled as plain text, as before. CSV/Markdown/HTML/draw.io keep the text extractor's `texts.text` (and its external command and metadata options) next to the bdf `pages`. Conversion never fetches images from the network (HTML, Markdown and EPUB can reference remote images; they are left out).
+
+Password-protected documents: the first upload returns `422 document_password_required`. Send the file again with the password in the `X-Document-Password` header; a wrong password returns `422 document_password_invalid` and nothing is stored. An accepted protected document shows a lock mark (`thumbnail.status` and `extracted_content.status` are `locked`, `protected` is `true`), no search text is extracted, and its `.bdf` is sealed with the same password. A protected Office file is recognized from its first bytes, so the password request is returned before the rest of the upload is read; a protected PDF is only recognized after the whole file arrived. The password is never stored or logged. For a PDF the thumbnail is stored as soon as the first page is converted, before the remaining pages and the `.bdf` are finished.
+
+`document_processing` in the security config tunes the behavior: `fail_upload_on_error` (default `false`) cancels the upload with `422 document_processing_failed` when a document cannot be converted, instead of accepting it with failed derived assets (env `DOCUMENT_PROCESSING_FAIL_UPLOAD_ON_ERROR`; it forces sequential execution); `max_input_bytes` bounds the document read for conversion; `execution_mode` is `async` or `sequential`.
+
 ## Local build
 
 ```bash
@@ -153,23 +169,10 @@ Use this when you want streamuploader to run from the tools image that already c
 docker compose -f compose.tools.yaml up --build
 ```
 
-Build the smaller tools image without LibreOffice when Office-to-PDF conversion is not needed:
-
-```bash
-./scripts/build-tools-nooffice-image.sh streamuploader:tools-nooffice
-docker compose -f compose.tools.nooffice.yaml up --build
-```
-
 Set `STREAMUPLOADER_TOOLS_IMAGE` to use a different prebuilt tools image tag:
 
 ```bash
 STREAMUPLOADER_TOOLS_IMAGE=streamuploader:tools docker compose -f compose.tools.yaml up --build
-```
-
-Set `STREAMUPLOADER_TOOLS_NOOFFICE_IMAGE` to use a different prebuilt nooffice tools image tag:
-
-```bash
-STREAMUPLOADER_TOOLS_NOOFFICE_IMAGE=streamuploader:tools-nooffice docker compose -f compose.tools.nooffice.yaml up --build
 ```
 
 This starts the same local stack as `compose.yaml`: streamuploader on `localhost:8080`, backend control on `localhost:8082`, the demo app on `localhost:8081`, RustFS on `localhost:9000`, and ClamAV on `localhost:3310`.

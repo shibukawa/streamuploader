@@ -11,7 +11,6 @@ contents:
     - ttf-dejavu
     - font-liberation
     - font-noto-cjk
-    - libreoffice-26.2
     - poppler-utils
     - tesseract
     - tesseract-eng
@@ -52,15 +51,6 @@ paths:
     permissions: 0o755
   - path: /usr/local/bin
     type: directory
-    permissions: 0o755
-  - path: /usr/bin/soffice
-    type: symlink
-    source: /usr/lib/libreoffice/program/soffice.bin
-  - path: /usr/bin/libreoffice
-    type: symlink
-    source: /usr/lib/libreoffice/program/soffice.bin
-  - path: /usr/lib/libreoffice/program/soffice.bin
-    type: permissions
     permissions: 0o755
 
 archs:

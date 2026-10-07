@@ -79,6 +79,27 @@
       },
       "type": "object"
     },
+    "document_processing": {
+      "additionalProperties": false,
+      "properties": {
+        "execution_mode": {
+          "enum": [
+            "async",
+            "sequential"
+          ],
+          "type": "string"
+        },
+        "fail_upload_on_error": {
+          "type": "boolean"
+        },
+        "max_input_bytes": {
+          "maximum": 536870912,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "file_sanitization": {
       "additionalProperties": false,
       "properties": {

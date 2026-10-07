@@ -1,0 +1,22 @@
+id: decision:bdf-over-libreoffice
+type: decision
+title: Use bdf in-process instead of LibreOffice for PDF/Office
+summary: Adopt github.com/shibukawa/bdf for PDF and Office thumbnails and search text and drop LibreOffice; always on, refusal only by file type.
+lifecycle: proposed
+facts:
+  decided_by: user request 2026-10-07
+  rationale:
+    - lower memory and no external process
+    - smaller tools image, removing the nooffice image variant
+    - one code path instead of optional capability detection
+  tradeoffs:
+    - protected documents get a lock mark only, no thumbnail or text
+    - narrower format coverage than LibreOffice (legacy binary Office, ODF)
+    - dependency on a young library (3 stars, v0.1.x) and Go 1.27
+    - rendering fidelity differs from LibreOffice
+  rejected_alternatives:
+    keep_libreoffice_fallback: contradicts goal of removing it
+    optional_toggle: contradicts goal of making features default
+relations:
+  - relation: refines
+    to: requirement:bdf-document-processing

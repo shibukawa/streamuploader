@@ -32,7 +32,12 @@ type UploadItem struct {
 	UploadedAt       *time.Time    `json:"uploaded_at,omitempty"`
 	Thumbnail        *DerivedAsset `json:"thumbnail,omitempty"`
 	ExtractedContent *DerivedAsset `json:"extracted_content,omitempty"`
-	OwnerTokenHash   string        `json:"-"`
+	// Preview is the full-document .bdf of a PDF or Office upload.
+	Preview *DerivedAsset `json:"preview,omitempty"`
+	// Protected marks a password-protected document: it has a lock mark
+	// instead of a thumbnail and no search text.
+	Protected      bool   `json:"protected,omitempty"`
+	OwnerTokenHash string `json:"-"`
 }
 
 type DerivedAsset struct {

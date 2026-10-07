@@ -1,7 +1,6 @@
 package thumbnail
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
@@ -27,6 +26,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 
 	"streamuploader/internal/config"
+	"streamuploader/internal/docpreview"
 	"streamuploader/internal/storage"
 )
 
@@ -52,7 +52,6 @@ type Plan struct {
 	CGOEnabled       bool
 	GoCandidates     []encoderCandidate
 	ToolCandidates   []toolCandidate
-	MutoolPath       string
 	FFmpegPath       string
 	FFmpegEncoders   map[string]bool
 	SipsPath         string
@@ -114,12 +113,6 @@ func ProbePlan(policy config.ThumbnailPolicy) Plan {
 		return plan
 	}
 	plan.GoCandidates = goEncoderCandidates(policy)
-	plan.MutoolPath = probeMutool()
-	if plan.MutoolPath != "" {
-		plan.ToolCandidates = append(plan.ToolCandidates, toolCandidate{kind: "mutool", contentType: "image/png", backend: "mutool:draw"})
-	} else {
-		plan.UnavailableNotes = append(plan.UnavailableNotes, "mutool unavailable")
-	}
 	plan.FFmpegPath, plan.FFmpegEncoders = probeFFmpegEncoders()
 	if plan.FFmpegPath == "" {
 		plan.UnavailableNotes = append(plan.UnavailableNotes, "ffmpeg unavailable")
@@ -303,15 +296,15 @@ func ConvertWithPlanForContentType(r io.Reader, sourceContentType string, policy
 		return nil, "", "", 0, 0, err
 	}
 	sourceContentType = normalizeContentType(sourceContentType)
-	if isOOXMLContentType(sourceContentType) {
-		if thumb, thumbType, err := extractOOXMLThumbnail(input); err == nil {
-			return convertImageBytes(thumb, thumbType, policy, plan, "embedded")
+	if docpreview.Supported(sourceContentType) {
+		doc, err := docpreview.Convert(input, sourceContentType, docpreview.Options{ThumbnailSize: max(policy.Width, policy.Height)})
+		if err != nil {
+			return nil, "", "", 0, 0, err
 		}
-		if pdf, err := convertOfficeToPDF(input, sourceContentType, policy); err == nil {
-			if body, contentType, backend, width, height, err := convertWithTools(pdf, "application/pdf", policy, plan); err == nil {
-				return body, contentType, "libreoffice:" + backend, width, height, nil
-			}
+		if doc.Thumbnail == nil {
+			return nil, "", "", 0, 0, docpreview.ErrPasswordRequired
 		}
+		return convertDecodedImage(doc.Thumbnail, policy, plan, "bdf")
 	}
 	if strings.HasPrefix(sourceContentType, "video/") {
 		if body, contentType, backend, width, height, err := convertVideoStill(input, policy, plan); err == nil {
@@ -380,13 +373,6 @@ func convertWithTools(input []byte, sourceContentType string, policy config.Thum
 	var lastErr error
 	for _, candidate := range plan.ToolCandidates {
 		switch candidate.kind {
-		case "mutool":
-			body, err := runMutoolThumbnail(ctx, plan.MutoolPath, input, policy, sourceContentType)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			return convertImageBytes(body, "image/png", policy, plan, "mutool")
 		case "ffmpeg":
 			body, err := runFFmpegThumbnail(ctx, plan.FFmpegPath, input, filter, candidate.ffmpeg)
 			if err != nil {
@@ -471,14 +457,6 @@ func sipsOutputCandidates(policy config.ThumbnailPolicy, formats map[string]bool
 		add(jpeg)
 	}
 	return candidates
-}
-
-func probeMutool() string {
-	path, err := exec.LookPath("mutool")
-	if err != nil {
-		return ""
-	}
-	return path
 }
 
 func probeFFmpegEncoders() (string, map[string]bool) {
@@ -782,153 +760,8 @@ func runSipsThumbnail(ctx context.Context, sipsPath string, input []byte, policy
 	return os.ReadFile(dst)
 }
 
-func runMutoolThumbnail(ctx context.Context, mutoolPath string, input []byte, policy config.ThumbnailPolicy, sourceContentType string) ([]byte, error) {
-	if mutoolPath == "" {
-		return nil, fmt.Errorf("mutool unavailable")
-	}
-	dir, err := os.MkdirTemp("", "streamuploader-mutool-thumb-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	src := filepath.Join(dir, "source"+extensionForContentType(sourceContentType))
-	dst := filepath.Join(dir, "page.png")
-	if err := os.WriteFile(src, input, 0600); err != nil {
-		return nil, err
-	}
-	args := []string{
-		"draw",
-		"-q",
-		"-F", "png",
-		"-o", dst,
-		"-w", strconv.Itoa(max(1, policy.Width)),
-		"-h", strconv.Itoa(max(1, policy.Height)),
-		src,
-		"1",
-	}
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, mutoolPath, args...)
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("mutool draw: %w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil, err
-	}
-	return os.ReadFile(dst)
-}
-
-func extractOOXMLThumbnail(input []byte) ([]byte, string, error) {
-	reader, err := zip.NewReader(bytes.NewReader(input), int64(len(input)))
-	if err != nil {
-		return nil, "", err
-	}
-	for _, file := range reader.File {
-		name := strings.ToLower(file.Name)
-		var contentType string
-		switch name {
-		case "docprops/thumbnail.jpeg", "docprops/thumbnail.jpg":
-			contentType = "image/jpeg"
-		case "docprops/thumbnail.png":
-			contentType = "image/png"
-		case "docprops/thumbnail.emf", "docprops/thumbnail.wmf":
-			continue
-		default:
-			continue
-		}
-		if file.UncompressedSize64 > 32<<20 {
-			continue
-		}
-		rc, err := file.Open()
-		if err != nil {
-			continue
-		}
-		body, readErr := io.ReadAll(io.LimitReader(rc, 32<<20))
-		_ = rc.Close()
-		if readErr == nil && len(body) > 0 {
-			return body, contentType, nil
-		}
-	}
-	return nil, "", fmt.Errorf("ooxml thumbnail not found")
-}
-
-func convertOfficeToPDF(input []byte, sourceContentType string, policy config.ThumbnailPolicy) ([]byte, error) {
-	tool, err := officeConverterPath()
-	if err != nil {
-		return nil, err
-	}
-	timeout := policy.ExternalTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	dir, err := os.MkdirTemp("", "streamuploader-office-thumb-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	src := filepath.Join(dir, "source"+officeExtensionForContentType(sourceContentType))
-	if err := os.WriteFile(src, input, 0600); err != nil {
-		return nil, err
-	}
-	userInstall := "file://" + filepath.Join(dir, "libreoffice-profile")
-	cmd := exec.CommandContext(ctx, tool, "-env:UserInstallation="+userInstall, "--headless", "--convert-to", "pdf", "--outdir", dir, src)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("libreoffice: %w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil, err
-	}
-	pdfPath := filepath.Join(dir, "source.pdf")
-	body, err := os.ReadFile(pdfPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(body) == 0 {
-		return nil, fmt.Errorf("libreoffice: empty PDF output")
-	}
-	return body, nil
-}
-
-func officeConverterPath() (string, error) {
-	for _, name := range []string{"soffice", "libreoffice"} {
-		path, err := exec.LookPath(name)
-		if err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("libreoffice unavailable")
-}
-
 func normalizeContentType(contentType string) string {
 	return strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-}
-
-func isOOXMLContentType(contentType string) bool {
-	switch normalizeContentType(contentType) {
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		return true
-	default:
-		return false
-	}
-}
-
-func officeExtensionForContentType(contentType string) string {
-	switch normalizeContentType(contentType) {
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		return ".docx"
-	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		return ".xlsx"
-	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		return ".pptx"
-	default:
-		return ".docx"
-	}
 }
 
 func extensionForContentType(contentType string) string {
@@ -1041,4 +874,14 @@ func BackendSummary(policy config.ThumbnailPolicy) string {
 		return "external-webhook:" + policy.ExternalWebhookURL
 	}
 	return encoderBackendSummary(policy)
+}
+
+// EncodeImage resizes and encodes a rendered page with the configured
+// preferred format (AVIF/WebP/JPEG fallbacks).
+func EncodeImage(img image.Image, policy config.ThumbnailPolicy) (Conversion, error) {
+	body, contentType, backend, width, height, err := convertDecodedImage(img, policy, currentPlan(policy), "bdf")
+	if err != nil {
+		return Conversion{}, err
+	}
+	return Conversion{Result: Result{ContentType: contentType, Backend: backend, Width: width, Height: height, SizeBytes: int64(len(body))}, Body: body}, nil
 }

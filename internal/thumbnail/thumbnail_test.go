@@ -120,54 +120,6 @@ func TestConvertFallsBackToFFmpegForNonGoImage(t *testing.T) {
 	}
 }
 
-func TestConvertExtractsOOXMLEmbeddedThumbnail(t *testing.T) {
-	var imageBuf bytes.Buffer
-	img := image.NewRGBA(image.Rect(0, 0, 8, 4))
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 8; x++ {
-			img.Set(x, y, color.RGBA{R: 200, G: 40, B: 20, A: 255})
-		}
-	}
-	if err := png.Encode(&imageBuf, img); err != nil {
-		t.Fatal(err)
-	}
-	var doc bytes.Buffer
-	zw := zip.NewWriter(&doc)
-	w, err := zw.Create("docProps/thumbnail.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Write(imageBuf.Bytes()); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	policy := config.DefaultSecurityPolicy().Thumbnails
-	policy.Enabled = true
-	policy.Width = 4
-	policy.Height = 4
-	policy.Fit = "contain"
-	policy.PreferredFormat = "jpeg"
-	plan := Plan{GoCandidates: goEncoderCandidates(policy)}
-	body, contentType, backend, width, height, err := ConvertWithPlanForContentType(
-		bytes.NewReader(doc.Bytes()),
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		policy,
-		plan,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if contentType != "image/jpeg" || !strings.HasPrefix(backend, "embedded:") {
-		t.Fatalf("embedded thumbnail output = %s %s", contentType, backend)
-	}
-	if width != 4 || height != 2 || len(body) == 0 {
-		t.Fatalf("embedded thumbnail size=%dx%d bytes=%d", width, height, len(body))
-	}
-}
-
 func TestRunSipsThumbnailIfAvailable(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("sips is only available on macOS")
@@ -189,21 +141,6 @@ func TestRunSipsThumbnailIfAvailable(t *testing.T) {
 	width, height := decodedSize(body)
 	if width == 0 || height == 0 || len(body) == 0 {
 		t.Fatalf("sips thumbnail size=%dx%d bytes=%d", width, height, len(body))
-	}
-}
-
-func TestConvertOfficeToPDFWithLibreOfficeIfAvailable(t *testing.T) {
-	requireAnyTool(t, "soffice", "libreoffice")
-	docx := makeMinimalDOCX(t)
-	policy := config.DefaultSecurityPolicy().Thumbnails
-	policy.ExternalTimeout = 20 * time.Second
-
-	body, err := convertOfficeToPDF(docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.HasPrefix(body, []byte("%PDF-")) {
-		t.Fatalf("libreoffice output does not look like PDF: %.16q", body)
 	}
 }
 
@@ -279,5 +216,28 @@ func addZipFile(t *testing.T, zw *zip.Writer, name, body string) {
 	}
 	if _, err := w.Write([]byte(body)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConvertOfficeDocumentWithBDF(t *testing.T) {
+	policy := config.DefaultSecurityPolicy().Thumbnails
+	policy.Width = 64
+	policy.Height = 64
+	policy.PreferredFormat = "jpeg"
+	plan := Plan{GoCandidates: goEncoderCandidates(policy)}
+	body, contentType, backend, width, height, err := ConvertWithPlanForContentType(
+		bytes.NewReader(makeMinimalDOCX(t)),
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		policy,
+		plan,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "image/jpeg" || !strings.HasPrefix(backend, "bdf:") {
+		t.Fatalf("output = %s %s", contentType, backend)
+	}
+	if width == 0 || height == 0 || width > 64 || height > 64 || len(body) == 0 {
+		t.Fatalf("size=%dx%d bytes=%d", width, height, len(body))
 	}
 }

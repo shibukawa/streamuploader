@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -380,6 +379,9 @@ func sanitizationAction(enabled bool, mode string, entry fileTypePolicyLog) stri
 }
 
 func thumbnailBackend(entry fileTypePolicyLog, policy config.ThumbnailPolicy, plan thumbnail.Plan) string {
+	if entry.Group == "office_pdf" || entry.Group == "ooxml" {
+		return "bdf"
+	}
 	if !policy.Enabled {
 		return ""
 	}
@@ -392,10 +394,10 @@ func thumbnailBackend(entry fileTypePolicyLog, policy config.ThumbnailPolicy, pl
 			return "internal"
 		}
 		return toolThumbnailBackend(plan)
-	case "svg", "office_pdf":
+	case "svg":
 		return toolThumbnailBackend(plan)
-	case "ooxml":
-		return officeThumbnailBackend()
+	case "office_pdf", "ooxml":
+		return "bdf"
 	case "video":
 		if plan.FFmpegPath != "" {
 			return "ffmpeg"
@@ -405,21 +407,15 @@ func thumbnailBackend(entry fileTypePolicyLog, policy config.ThumbnailPolicy, pl
 }
 
 func extractionBackend(entry fileTypePolicyLog, policy config.TextExtractionPolicy, plan extraction.Plan) string {
+	if entry.Group == "office_pdf" || entry.Group == "ooxml" {
+		return "bdf"
+	}
 	if !policy.Enabled {
 		return ""
 	}
 	switch entry.Group {
 	case "text", "markup", "script":
 		return "direct"
-	case "ooxml":
-		return "ooxml"
-	case "office_pdf":
-		if entry.Type == "pdf" {
-			if plan.PDFToTextPath != "" {
-				return "pdftotext"
-			}
-			return "pdf_literal"
-		}
 	case "image":
 		if policy.ExtractMetadata && policy.EnableOCR && plan.OCRAvailable {
 			return "metadata+ocr"
@@ -448,11 +444,6 @@ func internalThumbnailInput(fileType string) bool {
 
 func toolThumbnailBackend(plan thumbnail.Plan) string {
 	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
-		if strings.HasPrefix(candidate.Backend, "mutool:") {
-			return "mutool"
-		}
-	}
-	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
 		if strings.HasPrefix(candidate.Backend, "ffmpeg:") {
 			return "ffmpeg"
 		}
@@ -460,15 +451,6 @@ func toolThumbnailBackend(plan thumbnail.Plan) string {
 	for _, candidate := range thumbnail.ToolCandidateSummaries(plan) {
 		if strings.HasPrefix(candidate.Backend, "sips:") {
 			return "sips"
-		}
-	}
-	return "unavailable"
-}
-
-func officeThumbnailBackend() string {
-	for _, name := range []string{"soffice", "libreoffice"} {
-		if _, err := exec.LookPath(name); err == nil {
-			return "libreoffice"
 		}
 	}
 	return "unavailable"

@@ -1,0 +1,161 @@
+id: requirement:bdf-document-processing
+type: requirement
+title: BDF-based PDF and Office processing
+summary: Replace LibreOffice forwarding with the in-process Go library github.com/shibukawa/bdf
+  for PDF and Office thumbnails and search text; both are always-on built-in features
+  that can be refused only per file type.
+lifecycle: accepted
+scope:
+  document_types: [pdf, docx, pptx, xlsx, psd, psb, ai, epub, parquet, vsdx, csv, tsv, markdown, html, drawio]
+facts:
+  motivation:
+    - LibreOffice conversion costs high memory and a large tools image
+    - bdf is pure Go (also WASM) and converts without an office suite or headless browser
+    - bdf offers first-page-only conversion, so a thumbnail does not convert the whole document
+  library:
+    repo: https://github.com/shibukawa/bdf
+    license: MIT
+    observed_2026_10_07:
+      converters: [pdf, docx, pptx, xlsx, csv/tsv, parquet, visio, epub, markdown, html, drawio]
+      thumbnail_api: "converter.Convert(r io.ReaderAt, size, name, &converter.Options{FileName, Pages: converter.PageList(1), Password}) then thumbnail.Make(doc, &thumbnail.Options{Size})"
+      search_text_api: "(*bdf.Document).SearchText() returns Meta plus per-view per-page plain text"
+      errors: [ErrUnknownFormat, ErrPasswordRequired, ErrWrongPassword]
+      go_version_required: "1.27+ (this repo go.mod says 1.26)"
+      input_limits: "readers enforce limits for untrusted input (MaxPageSize, MaxDecodePixels 100M px, manifest 256 MiB)"
+  current_implementation:
+    thumbnail: internal/thumbnail/thumbnail.go ConvertWithPlanForContentType - OOXML embedded thumbnail, then convertOfficeToPDF via soffice, then pdf tools
+    text_extraction: internal/extraction/extraction.go - OOXML parser and pdftotext, plus external command/OCR
+    doctor: streamuploadercli/main.go officeThumbnailBackend reports libreoffice
+    packaging: tools.apko.yaml libreoffice-26.2; tools.nooffice.apko.yaml; compose.tools.nooffice.yaml; scripts/build-tools-nooffice-image.sh; README section
+  answered_2026_10_07:
+    go-version: Go 1.27
+    legacy-office: refuse
+    failed-conversion: configurable flag
+    other-extractors: keep
+    embedded-thumbnail: always bdf
+    fonts: delegate to bdf
+    thumbnail-pipeline: yes, pass through AVIF/WebP
+  answered_round2_2026_10_07:
+    protected-password-input: Upload without password returns an error (password required); the client resends with the password in upload metadata. Password must never be logged or persisted; .bdf is opened with it in the viewer.
+    protected-detect: Detect with bdf CheckPassword. Missing password -> error response asking for it; wrong password -> upload rejected (no object stored).
+    bdf-storage-key: Content-Type application/x-bdf, extension .bdf; single-file BDF.
+    bdf-version-pin: Pin bdf to a release tag in go.mod.
+    max-pages: .bdf converts all pages (users may read whole documents on the web); only the thumbnail uses first page.
+  round3_2026_10_07:
+    staged-conversion: Thumbnail from the first page is stored before the remaining pages convert (bdf OpenStream; page-wise only for PDF, other formats convert whole).
+    per-page-text: extracted content gains pages[] (view, page, text) next to texts.extracted; text and pages share a quarter of max_output_bytes each.
+    early-password-check: encrypted OOXML (OLE container) is detected from the first bytes and rejected before reading the body; protected PDFs are only detectable after the full upload.
+    avif: bdf skips AVIF as too heavy; AVIF thumbnail encoding stays in streamuploader's existing encoder.
+  round5_2026_10_07:
+    text-formats: CSV/TSV, Markdown, HTML, draw.io (legacy .vdx dropped) go through bdf. Nominated by extension, declared type or content (text/plain that is HTML or draw.io), confirmed by parsing; unconfirmed text falls back to the plain text path. They keep texts.text and the external extractor, and gain pages.
+    content-detection: binary formats must be confirmed by bdf converter.Detect plus structure checks (parquet footer, epub package document); first bytes are checked before the body is read (CheckPrefix); mismatch is 415 document_format_mismatch.
+    ssrf-guard: bdf html/markdown/epub fetch remote images by default; conversion always passes remote=false.
+  round4_2026_10_07:
+    more-formats: EPUB, Parquet and Visio (.vsdx) go through bdf. CSV/TSV, Markdown, HTML and draw.io stay on the text extraction path because they are text types whose extraction keys and security policies already exist (draw.io is detected as text/plain); legacy .vdx is XML text and also stays.
+    archive-guard: xhtml entries detected as SVG are accepted so real EPUB covers pass.
+constraints:
+  - Remove LibreOffice integration entirely - code, doctor output, apko package, nooffice image variant, compose file, scripts, README
+  - Always save the full-document preview as a .bdf derived asset (single-file BDF) for every supported PDF/Office upload
+  - Go toolchain is raised to 1.27 (go.mod, Dockerfiles, CI) as bdf requires
+  - Legacy binary Office (.doc/.xls/.ppt) and ODF are refused at intake through deny_file_types defaults; no thumbnail/text fallback
+  - Thumbnails of OOXML always render through bdf; the embedded OOXML thumbnail is no longer used
+  - bdf thumbnail output goes through the existing AVIF/WebP re-encode and policy:preview-format-policy
+  - Fonts come from bdf (embedded font support and its bundled subsets); no font packages added to the image
+  - Password-protected PDF/Office uploaded without a password is rejected with a password-required error; the client retries with the password in metadata; a wrong password rejects the upload and stores nothing. With a correct password it is accepted and shown with a lock mark instead of a thumbnail; no search text is extracted or stored and no metadata beyond the lock state
+  - The preview .bdf of a protected document is sealed with the same password (bdf NewPasswordLock) so only that password opens it
+  - Whether a failed conversion cancels the whole upload is a config flag (proposed name document_processing.fail_upload_on_error); the flag is not an on/off switch for the feature itself
+  - PDF/Office-independent extractors (pdftotext fallback for other types, external_command, OCR, webhook, EXIF/metadata) remain as user customization points
+  - Thumbnail generation and search-text extraction for supported PDF/Office types are built in with no on/off switch
+  - Remove thumbnails.enabled / text_extraction.enabled style toggles and env vars THUMBNAILS_ENABLED / TEXT_EXTRACTION_ENABLED for these types (schema, config structs, README, demo)
+  - Refusal stays possible per file type through the existing allow_file_types / deny_file_types intake policy (rejected at upload, not silently skipped)
+  - Text and thumbnails of password-protected input must not be stored in plain form (bdf warns that thumbnails and SearchText expose content outside the document)
+  - Conversion runs with bounded input size, page count and timeout under policy:resource-limit-policy and policy:processor-execution-policy
+non_goals:
+  - Keeping LibreOffice as optional fallback
+  - Per-feature opt-out flags for PDF/Office
+  - Supporting legacy binary Office or ODF
+  - Rendering PDF/Office preview pages beyond thumbnail and search text in this milestone
+capabilities:
+  bdf-thumbnail-pdf-office:
+    state: implemented
+  bdf-preview-asset:
+    state: implemented
+  protected-document-lock:
+    state: implemented
+  bdf-search-text-pdf-office:
+    state: implemented
+  libreoffice-removal:
+    state: implemented
+acceptance:
+  thumbnail-first-page:
+    text: A PDF, docx, pptx and xlsx upload produces a thumbnail from the first page only, without spawning any external process.
+  search-text:
+    text: The same uploads produce extracted search text equal to bdf SearchText output, bounded by max output bytes.
+  no-libreoffice:
+    text: No code, config, image definition, compose file, script or doc references soffice/libreoffice.
+  type-refusal:
+    text: Denying a type via deny_file_types rejects it at intake; no switch exists to accept it without thumbnails/text.
+  bdf-saved:
+    text: Each supported PDF/Office upload stores a .bdf derived asset next to the thumbnail, served through the derived-asset API.
+  protected-doc:
+    text: A password-protected file without password is rejected as password-required, with a wrong password is rejected, and with the right password yields a lock-mark placeholder, no search text, and a .bdf that opens only with the upload password.
+  failure-flag:
+    text: With the flag on, a conversion failure cancels the upload; with it off, the upload succeeds and the derived asset is marked failed.
+  legacy-refused:
+    text: .doc/.xls/.ppt/ODF uploads are rejected at intake.
+  memory-bound:
+    verified_by: [not-measured-memory]
+    text: Peak memory on a large PDF/xlsx fixture is lower than the LibreOffice path and stays within a stated bound.
+verification:
+  docpreview-unit:
+    state: passed
+    method: unit
+    test: internal/docpreview/docpreview_test.go
+    authority: observed
+  server-integration:
+    state: passed
+    method: integration
+    test: internal/server/document_test.go
+    authority: observed
+  not-measured-memory:
+    state: not_run
+    method: manual
+    authority: observed
+open_questions:
+  psd-default-image-policy:
+    text: The default image sanitization mode rejects Photoshop files (no metadata sanitizer, same as TIFF/AVIF/HEIC) so .psd needs a per-file-type accept_as_is to reach bdf. Decide whether to change the default.
+    state: open
+  error-flag-default:
+    text: Default of the fail-upload-on-conversion-error flag and its scope.
+    state: answered
+    resolution: Default false, global, set in security.yaml document_processing.fail_upload_on_error and env DOCUMENT_PROCESSING_FAIL_UPLOAD_ON_ERROR (user confirmed defaults 2026-10-07).
+  default-office-sanitizer-rejects-real-ooxml:
+    text: The Office sanitizer rejected every OOXML part containing "http://" (namespace declarations).
+    state: answered
+    resolution: Fixed - URLs are no longer treated as active content; external relationships (TargetMode External), printerSettings, embeddings and macros are still rejected by the default policy.
+  encrypted-ooxml-inspection:
+    text: Password-protected OOXML (OLE container) skips ZIP structural/active-content inspection because its parts are unreadable; ClamAV and size limits still apply.
+    state: deferred
+    resolution: Accepted for now; revisit if untrusted encrypted Office files must be inspected after decryption.
+relations:
+  - relation: supersedes
+    to: requirement:expanded-thumbnail-source-support
+  - relation: constrained_by
+    to: policy:preview-generation-policy
+  - relation: constrained_by
+    to: policy:search-extraction-policy
+  - relation: constrained_by
+    to: policy:file-type-sanitization-policy
+  - relation: refines
+    to: system:document-converter
+  - relation: refines
+    to: system:text-extractor
+  - relation: mentions
+    to: flow:document-preview-generation
+  - relation: mentions
+    to: flow:text-extraction-generation
+  - relation: mentions
+    to: system:linux-tool-worker-image
+history:
+  initial:
+    summary: Requirement drafted from user request 2026-10-07; replaces soffice forwarding.

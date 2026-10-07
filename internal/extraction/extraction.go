@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +20,23 @@ import (
 	"unicode/utf8"
 
 	"streamuploader/internal/config"
+	"streamuploader/internal/docpreview"
 )
 
 type Content struct {
 	Texts    map[string]string      `json:"texts,omitempty"`
 	Sources  map[string]Source      `json:"sources,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	// Pages holds the text page by page (PDF, Office); Texts keeps the
+	// joined text. A page number counts from 1; a sheet is page 0.
+	Pages []PageText `json:"pages,omitempty"`
+}
+
+// PageText is the text of one page, slide or sheet of a view.
+type PageText struct {
+	View string `json:"view,omitempty"`
+	Page int    `json:"page,omitempty"`
+	Text string `json:"text"`
 }
 
 type Source struct {
@@ -48,7 +58,6 @@ type Result struct {
 
 type Plan struct {
 	Enabled           bool
-	PDFToTextPath     string
 	ExternalCommand   []string
 	OCRCommand        []string
 	ExternalAvailable bool
@@ -83,11 +92,6 @@ func ProbePlan(policy config.TextExtractionPolicy) Plan {
 		plan.Summary = "disabled"
 		return plan
 	}
-	if path, err := exec.LookPath("pdftotext"); err == nil {
-		plan.PDFToTextPath = path
-	} else {
-		plan.UnavailableNotes = append(plan.UnavailableNotes, "pdftotext unavailable")
-	}
 	if command, ok := resolveCommand(policy.ExternalCommand); ok {
 		plan.ExternalCommand = command
 		plan.ExternalAvailable = true
@@ -112,7 +116,6 @@ func CurrentPlan() Plan {
 
 func ToolSummaries(plan Plan) []ToolSummary {
 	return []ToolSummary{
-		{Kind: "pdf_text", Backend: "pdftotext", Available: plan.PDFToTextPath != "", Path: plan.PDFToTextPath},
 		{Kind: "external_text", Backend: "external_command", Available: plan.ExternalAvailable, Path: commandName(plan.ExternalCommand)},
 		{Kind: "ocr", Backend: "ocr_command", Available: plan.OCRAvailable, Path: commandName(plan.OCRCommand)},
 	}
@@ -155,13 +158,6 @@ func Generate(ctx context.Context, _ string, contentType string, reader io.Reade
 	case isTextLike(baseType):
 		textKey = "text"
 		text, warnings = normalizeBytes(body, policy.MaxOutputBytes)
-	case isOOXML(baseType):
-		backend = "ooxml_parser"
-		textKey = "extracted"
-		text, warnings, err = extractOOXML(body, baseType, policy)
-	case baseType == "application/pdf":
-		textKey = "extracted"
-		text, warnings, backend, err = extractPDFText(ctx, body, policy, plan)
 	case strings.HasPrefix(baseType, "image/"):
 		backend = "image_metadata"
 		if policy.EnableOCR && plan.OCRAvailable {
@@ -241,18 +237,6 @@ func extractMetadataTexts(body []byte, contentType string) (map[string]string, m
 	texts := map[string]string{}
 	metadata := map[string]interface{}{}
 	switch {
-	case isOOXML(contentType):
-		ooxmlTexts, ooxmlMetadata := extractOOXMLCoreProperties(body)
-		for key, value := range ooxmlTexts {
-			texts[key] = value
-		}
-		for key, value := range ooxmlMetadata {
-			metadata[key] = value
-		}
-	case contentType == "application/pdf":
-		for key, value := range extractPDFInfo(body) {
-			texts[key] = value
-		}
 	case contentType == "image/png":
 		for key, value := range extractPNGTextMetadata(body) {
 			texts[key] = value
@@ -261,36 +245,6 @@ func extractMetadataTexts(body []byte, contentType string) (map[string]string, m
 		for key, value := range extractXMPTextMetadata(body) {
 			texts[key] = value
 		}
-	}
-	return texts, metadata
-}
-
-func extractOOXMLCoreProperties(body []byte) (map[string]string, map[string]interface{}) {
-	reader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		return nil, nil
-	}
-	text := extractZipXMLNamedText(reader, "docProps/core.xml")
-	texts := map[string]string{}
-	metadata := map[string]interface{}{}
-	if title := firstXMLValue(text, "title"); title != "" {
-		texts["title"] = title
-	}
-	if description := firstXMLValue(text, "description"); description != "" {
-		texts["description"] = description
-	} else if subject := firstXMLValue(text, "subject"); subject != "" {
-		texts["description"] = subject
-	}
-	for _, key := range []string{"creator", "keywords", "lastModifiedBy"} {
-		if value := firstXMLValue(text, key); value != "" {
-			metadata[key] = value
-		}
-	}
-	if len(texts) == 0 {
-		texts = nil
-	}
-	if len(metadata) == 0 {
-		metadata = nil
 	}
 	return texts, metadata
 }
@@ -331,32 +285,6 @@ func firstXMLValue(body, localName string) string {
 }
 
 var pdfInfoPattern = regexp.MustCompile(`/(Title|Subject|Keywords|Author)\s*\((?:\\.|[^\\)])*\)`)
-
-func extractPDFInfo(body []byte) map[string]string {
-	out := map[string]string{}
-	for _, match := range pdfInfoPattern.FindAll(body, 100) {
-		parts := bytes.SplitN(match, []byte("("), 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimPrefix(strings.Fields(string(parts[0]))[0], "/")
-		value := unescapePDFString(string(parts[1][:len(parts[1])-1]))
-		switch key {
-		case "Title":
-			out["title"] = value
-		case "Subject":
-			out["description"] = value
-		case "Keywords", "Author":
-			if out["description"] == "" {
-				out["description"] = value
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
 
 func extractPNGTextMetadata(body []byte) map[string]string {
 	if len(body) < 8 || !bytes.Equal(body[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10}) {
@@ -454,6 +382,9 @@ func Filter(content Content, include map[string]bool) Content {
 	if include["sources"] {
 		out.Sources = content.Sources
 	}
+	if include["pages"] {
+		out.Pages = content.Pages
+	}
 	for key, value := range content.Texts {
 		if include[key] {
 			if out.Texts == nil {
@@ -469,7 +400,10 @@ func TaskKindsForContentType(contentType string, policy config.TextExtractionPol
 	plan := CurrentPlan()
 	baseType := baseContentType(contentType)
 	var kinds []string
-	if isTextLike(baseType) || isOOXML(baseType) || baseType == "application/pdf" || plan.ExternalAvailable {
+	if isDocument(baseType) {
+		return nil
+	}
+	if isTextLike(baseType) || plan.ExternalAvailable {
 		kinds = append(kinds, "text_extraction")
 	}
 	if policy.ExtractMetadata && (strings.HasPrefix(baseType, "image/") || isOOXML(baseType) || baseType == "application/pdf") {
@@ -501,6 +435,12 @@ func isTextLike(contentType string) bool {
 		strings.HasSuffix(contentType, "+xml") ||
 		contentType == "application/javascript" ||
 		contentType == "application/x-ndjson"
+}
+
+// isDocument reports the types the server processes in-process with bdf
+// (internal/docpreview) instead of this package.
+func isDocument(contentType string) bool {
+	return docpreview.Supported(contentType)
 }
 
 func isOOXML(contentType string) bool {
@@ -540,38 +480,6 @@ func normalizeWhitespace(value string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func extractOOXML(body []byte, contentType string, policy config.TextExtractionPolicy) (string, []string, error) {
-	reader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		return "", nil, err
-	}
-	var names []string
-	switch contentType {
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		names = []string{"word/document.xml"}
-	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		names = []string{"xl/sharedStrings.xml"}
-	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		for _, f := range reader.File {
-			if strings.HasPrefix(f.Name, "ppt/slides/slide") && strings.HasSuffix(f.Name, ".xml") {
-				names = append(names, f.Name)
-			}
-		}
-		sort.Strings(names)
-	}
-	var parts []string
-	for _, name := range names {
-		if text := extractZipXMLText(reader, name); text != "" {
-			parts = append(parts, text)
-		}
-	}
-	text, warnings := normalizeBytes([]byte(strings.Join(parts, "\n")), policy.MaxOutputBytes)
-	if text == "" {
-		warnings = append(warnings, "no_ooxml_text_found")
-	}
-	return text, warnings, nil
-}
-
 func extractZipXMLText(reader *zip.Reader, name string) string {
 	for _, f := range reader.File {
 		if f.Name != name {
@@ -602,44 +510,6 @@ func extractZipXMLText(reader *zip.Reader, name string) string {
 }
 
 var pdfStringPattern = regexp.MustCompile(`\((?:\\.|[^\\)])*\)`)
-
-func extractPDFText(ctx context.Context, body []byte, policy config.TextExtractionPolicy, plan Plan) (string, []string, string, error) {
-	text, warnings, err := runPDFToText(ctx, body, policy, plan)
-	if plan.PDFToTextPath != "" && err == nil && strings.TrimSpace(text) != "" {
-		return text, warnings, "pdftotext", nil
-	}
-	fallbackText, fallbackWarnings, fallbackErr := extractPDFLiteralText(body, policy.MaxOutputBytes)
-	if plan.PDFToTextPath == "" {
-		fallbackWarnings = append([]string{"pdftotext_unavailable"}, fallbackWarnings...)
-	} else if err != nil {
-		fallbackWarnings = append([]string{"pdftotext_unavailable_or_failed"}, fallbackWarnings...)
-	}
-	warnings = append(warnings, fallbackWarnings...)
-	return fallbackText, warnings, "pdf_literal_parser", fallbackErr
-}
-
-func runPDFToText(ctx context.Context, body []byte, policy config.TextExtractionPolicy, plan Plan) (string, []string, error) {
-	if plan.PDFToTextPath == "" {
-		return "", nil, exec.ErrNotFound
-	}
-	timeout := policy.ExternalTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, plan.PDFToTextPath, "-", "-")
-	cmd.Stdin = bytes.NewReader(body)
-	out, err := cmd.Output()
-	if cmdCtx.Err() != nil {
-		return "", nil, cmdCtx.Err()
-	}
-	if err != nil {
-		return "", nil, err
-	}
-	text, warnings := normalizeBytes(out, policy.MaxOutputBytes)
-	return text, warnings, nil
-}
 
 func extractPDFLiteralText(body []byte, maxOutputBytes int64) (string, []string, error) {
 	matches := pdfStringPattern.FindAll(body, 10000)
@@ -716,9 +586,6 @@ func summarizePlan(plan Plan) string {
 		return "disabled"
 	}
 	parts := []string{}
-	if plan.PDFToTextPath != "" {
-		parts = append(parts, "pdftotext")
-	}
 	if plan.ExternalAvailable {
 		parts = append(parts, "external-command")
 	}
