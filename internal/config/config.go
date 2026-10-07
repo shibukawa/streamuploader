@@ -49,6 +49,7 @@ type Config struct {
 	Logging                 LoggingPolicy
 	Thumbnails              ThumbnailPolicy
 	TextExtraction          TextExtractionPolicy
+	DocumentProcessing      DocumentProcessingPolicy
 }
 
 type SecurityPolicy struct {
@@ -64,6 +65,21 @@ type SecurityPolicy struct {
 	Logging              LoggingPolicy              `yaml:"logging"`
 	Thumbnails           ThumbnailPolicy            `yaml:"thumbnails"`
 	TextExtraction       TextExtractionPolicy       `yaml:"text_extraction"`
+	DocumentProcessing   DocumentProcessingPolicy   `yaml:"document_processing"`
+}
+
+// DocumentProcessingPolicy tunes the built-in PDF/Office processing (bdf
+// preview, thumbnail and search text). The processing itself cannot be
+// switched off; accept or refuse a file type through mime_magic instead.
+type DocumentProcessingPolicy struct {
+	// FailUploadOnError cancels the upload when a document cannot be
+	// converted. Conversion then runs before the upload is accepted.
+	FailUploadOnError bool `yaml:"fail_upload_on_error"`
+	// MaxInputBytes bounds the document read into memory for conversion.
+	MaxInputBytes int64 `yaml:"max_input_bytes"`
+	// ExecutionMode is async or sequential; sequential is forced when
+	// FailUploadOnError is set.
+	ExecutionMode string `yaml:"execution_mode"`
 }
 
 type MimeMagicPolicy struct {
@@ -448,6 +464,10 @@ func Load() Config {
 	security.TextExtraction.OCRCommand = env("TEXT_EXTRACTION_OCR_COMMAND", security.TextExtraction.OCRCommand)
 	security.TextExtraction.ExtractMetadata = envBool("TEXT_EXTRACTION_EXTRACT_METADATA", security.TextExtraction.ExtractMetadata)
 	security.TextExtraction.IncludePlainText = envBool("TEXT_EXTRACTION_INCLUDE_PLAIN_TEXT", security.TextExtraction.IncludePlainText)
+	security.DocumentProcessing.FailUploadOnError = envBool("DOCUMENT_PROCESSING_FAIL_UPLOAD_ON_ERROR", security.DocumentProcessing.FailUploadOnError)
+	security.DocumentProcessing.MaxInputBytes = envInt64("DOCUMENT_PROCESSING_MAX_INPUT_BYTES", security.DocumentProcessing.MaxInputBytes)
+	security.DocumentProcessing.ExecutionMode = env("DOCUMENT_PROCESSING_EXECUTION_MODE", security.DocumentProcessing.ExecutionMode)
+	normalizeDocumentProcessingPolicy(&security.DocumentProcessing)
 	normalizeExtendedPolicies(&security)
 	normalizeClamAVPolicy(&security.ClamAV)
 	return Config{
@@ -487,6 +507,7 @@ func Load() Config {
 		Logging:                 security.Logging,
 		Thumbnails:              security.Thumbnails,
 		TextExtraction:          security.TextExtraction,
+		DocumentProcessing:      security.DocumentProcessing,
 	}
 }
 
@@ -634,6 +655,10 @@ func DefaultSecurityPolicy() SecurityPolicy {
 			ExtractMetadata:  true,
 			IncludePlainText: true,
 		},
+		DocumentProcessing: DocumentProcessingPolicy{
+			MaxInputBytes: 64 << 20,
+			ExecutionMode: "async",
+		},
 	}
 }
 
@@ -741,6 +766,24 @@ func normalizeExtendedPolicies(policy *SecurityPolicy) {
 	}
 	normalizeThumbnailPolicy(&policy.Thumbnails)
 	normalizeTextExtractionPolicy(&policy.TextExtraction)
+	normalizeDocumentProcessingPolicy(&policy.DocumentProcessing)
+}
+
+func normalizeDocumentProcessingPolicy(policy *DocumentProcessingPolicy) {
+	defaults := DefaultSecurityPolicy().DocumentProcessing
+	if policy.MaxInputBytes <= 0 {
+		policy.MaxInputBytes = defaults.MaxInputBytes
+	}
+	if policy.MaxInputBytes > 512<<20 {
+		policy.MaxInputBytes = 512 << 20
+	}
+	policy.ExecutionMode = strings.ToLower(strings.TrimSpace(policy.ExecutionMode))
+	if policy.ExecutionMode != "async" && policy.ExecutionMode != "sequential" {
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	if policy.FailUploadOnError {
+		policy.ExecutionMode = "sequential"
+	}
 }
 
 func normalizeThumbnailPolicy(policy *ThumbnailPolicy) {
@@ -1175,11 +1218,16 @@ var mimeFileTypes = map[string][]string{
 	"jpeg2000":     {"image/jp2", "image/jpx"},
 	"psd":          {"image/vnd.adobe.photoshop", "image/x-photoshop"},
 	"photoshop":    {"image/vnd.adobe.photoshop", "image/x-photoshop"},
+	"psb":          {"image/vnd.adobe.photoshop", "image/x-photoshop"},
 	"tga":          {"image/x-tga", "image/tga"},
 	"pdf":          {"application/pdf"},
 	"docx":         {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
 	"xlsx":         {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 	"pptx":         {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	"epub":         {"application/epub+zip"},
+	"parquet":      {"application/vnd.apache.parquet", "application/x-parquet", "application/parquet"},
+	"vsdx":         {"application/vnd.ms-visio.drawing.main+xml", "application/vnd.ms-visio.drawing"},
+	"visio":        {"application/vnd.ms-visio.drawing.main+xml", "application/vnd.ms-visio.drawing"},
 	"odt":          {"application/vnd.oasis.opendocument.text"},
 	"ods":          {"application/vnd.oasis.opendocument.spreadsheet"},
 	"odp":          {"application/vnd.oasis.opendocument.presentation"},
@@ -1428,6 +1476,11 @@ func SecurityPolicyJSONSchema() string {
 					"minimum": 1,
 					"maximum": 60,
 				},
+			}),
+			"document_processing": policyObjectSchema(map[string]any{
+				"fail_upload_on_error": map[string]any{"type": "boolean"},
+				"max_input_bytes":      map[string]any{"type": "integer", "minimum": 1, "maximum": 536870912},
+				"execution_mode":       map[string]any{"type": "string", "enum": []string{"async", "sequential"}},
 			}),
 			"text_extraction": policyObjectSchema(map[string]any{
 				"enabled":            map[string]any{"type": "boolean"},

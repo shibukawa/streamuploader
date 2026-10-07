@@ -31,6 +31,7 @@ import (
 
 	"streamuploader/auth"
 	"streamuploader/internal/config"
+	"streamuploader/internal/docpreview"
 	"streamuploader/internal/extraction"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
@@ -102,6 +103,16 @@ func New(cfg config.Config, store storage.Store) *Server {
 	}
 	if cfg.HTTPCache.Mode == "" {
 		cfg.HTTPCache = config.DefaultSecurityPolicy().HTTPCache
+	}
+	defaultDocument := config.DefaultSecurityPolicy().DocumentProcessing
+	if cfg.DocumentProcessing.MaxInputBytes <= 0 {
+		cfg.DocumentProcessing.MaxInputBytes = defaultDocument.MaxInputBytes
+	}
+	if cfg.DocumentProcessing.ExecutionMode == "" {
+		cfg.DocumentProcessing.ExecutionMode = defaultDocument.ExecutionMode
+	}
+	if cfg.DocumentProcessing.FailUploadOnError {
+		cfg.DocumentProcessing.ExecutionMode = "sequential"
 	}
 	defaultTextExtraction := config.DefaultSecurityPolicy().TextExtraction
 	if cfg.TextExtraction.ExecutionMode == "" {
@@ -206,6 +217,7 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
 		s.streamSharedObject(w, r, true)
 	})
 	mux.HandleFunc("GET "+s.fileBase+"/{key}/thumbnail", s.streamThumbnail)
+	mux.HandleFunc("GET "+s.fileBase+"/{key}/preview", s.streamPreview)
 	mux.HandleFunc("GET "+s.fileBase+"/{key}/content", func(w http.ResponseWriter, r *http.Request) {
 		s.streamFrontendObject(w, r, false)
 	})
@@ -611,16 +623,32 @@ func (s *Server) streamSharedObject(w http.ResponseWriter, r *http.Request, atta
 }
 
 func (s *Server) streamThumbnail(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.Thumbnails.Enabled {
-		writeError(w, http.StatusNotFound, "not_found", "thumbnail generation is disabled")
-		return
-	}
 	key := r.PathValue("key")
 	if strings.TrimSpace(key) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 		return
 	}
+	if !s.cfg.Thumbnails.Enabled {
+		// PDF/Office thumbnails exist even when image thumbnails are off.
+		if _, err := s.store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: key + s.cfg.Thumbnails.ObjectKeySuffix}); err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "thumbnail not found")
+			return
+		}
+	}
 	s.streamObject(w, r, key+s.cfg.Thumbnails.ObjectKeySuffix, path.Base(key), "", false)
+}
+
+func (s *Server) streamPreview(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if strings.TrimSpace(key) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		return
+	}
+	s.streamObject(w, r, docpreview.ObjectKey(key), path.Base(key)+docpreview.Extension, docpreview.ContentType, false)
+}
+
+func (s *Server) previewURL(objectKey string) string {
+	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + s.fileBase + "/" + url.PathEscape(objectKey) + "/preview"
 }
 
 func (s *Server) streamFrontendObject(w http.ResponseWriter, r *http.Request, attachment bool) {
@@ -877,6 +905,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	if archiveKind == archiveUnknown {
 		archiveKind = archiveKindFromMagic(inspectedPrefix)
 	}
+	if archiveKind == archiveZip && isEncryptedOfficePackage(inspectedPrefix) {
+		archiveKind = archiveUnknown // password-protected OOXML is not a ZIP
+	}
 	body = io.MultiReader(bytes.NewReader(inspection.prefix), limited)
 	if inspection.detectedContentType != "" && contentType == "" {
 		contentType = inspection.detectedContentType
@@ -884,6 +915,28 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			item.ContentType = contentType
 			item.UpdatedAt = time.Now().UTC()
 		})
+	}
+	// A password-protected Office file is recognizable from its first bytes
+	// (an OLE container instead of a ZIP), so ask for the password before
+	// the whole file is read, sanitized and staged.
+	if earlyFormat := docpreview.Candidate(contentType, target.originalName, inspectedPrefix); earlyFormat != "" {
+		var err error
+		if r.Header.Get(documentPasswordHeader) == "" && isEncryptedOfficePackage(inspectedPrefix) {
+			err = s.documentFailure(docpreview.ErrPasswordRequired)
+		} else if !isEncryptedOfficePackage(inspectedPrefix) {
+			// The first bytes already rule out some formats (a .parquet
+			// file that does not start with PAR1, an EPUB without its
+			// mimetype entry): refuse before reading the rest.
+			if perr := docpreview.CheckPrefix(earlyFormat, inspectedPrefix); perr != nil {
+				err = s.documentFailure(perr)
+			}
+		}
+		if err != nil {
+			s.failUpload(uploadKey, err.Error())
+			status, code := securityErrorResponse(err)
+			writeError(w, status, code, err.Error())
+			return
+		}
 	}
 	sanitized, err := applyFileSanitization(body, contentType, target.originalName, s.cfg.Security)
 	if err != nil {
@@ -898,7 +951,10 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	}
 	documentFullScanUpload := fileRequiresPostUploadFullScan(contentType, target.originalName, s.cfg.Security)
 	archiveUpload := s.cfg.Security.ArchiveGuard.Enabled && archiveKind != archiveUnknown
-	securityStagedUpload := archiveUpload || s.cfg.Security.ClamAV.Enabled || documentFullScanUpload
+	docFormat := docpreview.Candidate(contentType, target.originalName, inspectedPrefix)
+	docUpload := docFormat != ""
+	docPassword := r.Header.Get(documentPasswordHeader)
+	securityStagedUpload := archiveUpload || s.cfg.Security.ClamAV.Enabled || documentFullScanUpload || docUpload
 	objectKey := target.objectKey
 	if securityStagedUpload {
 		objectKey = temporaryUploadObjectKey(target.objectKey, uploadKey)
@@ -993,6 +1049,24 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			return
 		}
 	}
+	var docJob *documentJob
+	var docProtected bool
+	if docUpload {
+		var err error
+		var docFallback bool
+		docJob, docProtected, docFallback, err = s.prepareDocument(uploadCtx, objectKey, contentType, target.originalName, docFormat, docPassword)
+		if docFallback {
+			// A text file that is not what its name suggested (a .csv that
+			// is not a table): handle it as plain text.
+			docUpload, docProtected = false, false
+		} else if err != nil {
+			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
+			s.failUpload(uploadKey, err.Error())
+			status, code := securityErrorResponse(err)
+			writeError(w, status, code, err.Error())
+			return
+		}
+	}
 	if securityStagedUpload {
 		copyResult, err := s.store.CopyObject(uploadCtx, storage.CopyInput{
 			Bucket:      s.cfg.Bucket,
@@ -1023,7 +1097,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		item.ChecksumSHA256 = hex.EncodeToString(measured.hash.Sum(nil))
 		item.UploadedAt = &now
 		item.UpdatedAt = now
-		if s.thumbnailEligible(contentType) {
+		if docUpload {
+			s.documentAssets(item, docProtected)
+		} else if s.thumbnailEligible(contentType) {
 			item.Thumbnail = &model.DerivedAsset{
 				Kind:      "image_thumbnail",
 				ObjectKey: item.ObjectKey + s.cfg.Thumbnails.ObjectKeySuffix,
@@ -1031,7 +1107,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 				Status:    "pending",
 			}
 		}
-		if extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
+		if !docUpload && extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
 			item.ExtractedContent = &model.DerivedAsset{
 				Kind:        "extracted_content",
 				ObjectKey:   extraction.ArtifactObjectKey(item.ObjectKey, s.cfg.TextExtraction),
@@ -1041,7 +1117,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		}
 		uploaded = cloneUpload(item)
 	})
-	if s.thumbnailEligible(contentType) {
+	if docUpload {
+		uploaded = s.scheduleDocument(uploadKey, target.objectKey, contentType, docJob, uploadCtx)
+	} else if s.thumbnailEligible(contentType) {
 		if s.cfg.Thumbnails.ExecutionMode == "sequential" {
 			uploaded = s.finishThumbnailUpload(uploadKey, thumbnailJob, uploadCtx, contentType)
 		} else {
@@ -1055,7 +1133,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			go s.finishThumbnailUpload(uploadKey, thumbnailJob, context.Background(), contentType)
 		}
 	}
-	if extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
+	if !docUpload && extraction.ShouldSchedule(contentType, s.cfg.TextExtraction) {
 		if s.cfg.TextExtraction.ExecutionMode == "sequential" {
 			uploaded = s.finishTextExtraction(uploadKey, uploadCtx, contentType)
 		} else {
@@ -1772,7 +1850,7 @@ func (s *Server) uploadsForKeys(keys []string) ([]*model.UploadItem, bool) {
 }
 
 func (s *Server) thumbnailEligible(contentType string) bool {
-	if !s.cfg.Thumbnails.Enabled {
+	if !s.cfg.Thumbnails.Enabled || docpreview.Supported(contentType) {
 		return false
 	}
 	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
@@ -1781,11 +1859,7 @@ func (s *Server) thumbnailEligible(contentType string) bool {
 		"image/tiff", "image/x-tiff", "image/bmp", "image/svg+xml",
 		"image/heif", "image/heic", "image/heif-sequence", "image/heic-sequence",
 		"image/jxl", "image/jp2", "image/jpx", "image/jpm", "image/jpf",
-		"image/vnd.adobe.photoshop", "image/x-photoshop", "image/x-tga", "image/tga",
-		"application/pdf",
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"image/x-tga", "image/tga",
 		"video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska":
 		return true
 	default:
@@ -2461,7 +2535,21 @@ func declaredCompatibleWithDetected(declared, detected, originalName string) boo
 	if declared == "" || detected == "" {
 		return false
 	}
+	// A password-protected OOXML package is an OLE compound file, not a ZIP.
+	encryptedOOXML := []string{"application/x-ole-storage"}
+	// Illustrator files are PDF- or PostScript-based.
+	illustrator := []string{"application/pdf", "application/postscript"}
+	visio := []string{"application/vnd.ms-visio.drawing.main+xml"}
 	compatible := map[string][]string{
+		// EPUB cover pages are often an SVG image wrapped in XHTML.
+		"application/xhtml+xml":             {"image/svg+xml"},
+		"application/vnd.ms-visio.drawing":  visio,
+		"application/illustrator":           illustrator,
+		"application/vnd.adobe.illustrator": illustrator,
+		"application/postscript":            {"application/pdf"},
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   encryptedOOXML,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         encryptedOOXML,
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": encryptedOOXML,
 		"text/plain": {
 			"application/json",
 			"application/x-python",
@@ -2778,7 +2866,7 @@ func includeSet(values []string) map[string]bool {
 	out := map[string]bool{}
 	for _, part := range parts {
 		switch part {
-		case "text", "extracted", "title", "description", "ocr", "metadata", "sources":
+		case "text", "extracted", "title", "description", "ocr", "metadata", "sources", "pages":
 			out[part] = true
 		}
 	}
@@ -2812,6 +2900,10 @@ func cloneUpload(item *model.UploadItem) *model.UploadItem {
 	if item.ExtractedContent != nil {
 		extractedCopy := *item.ExtractedContent
 		copyItem.ExtractedContent = &extractedCopy
+	}
+	if item.Preview != nil {
+		previewCopy := *item.Preview
+		copyItem.Preview = &previewCopy
 	}
 	return &copyItem
 }

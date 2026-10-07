@@ -134,7 +134,7 @@ func applyFileSanitization(reader io.Reader, contentType, originalName string, p
 		if mode == "sanitize_when_supported" {
 			return sanitizedBody{}, securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "Office document sanitization is not supported"}
 		}
-		if mode == "reject_active_content" || mode == "secure_default" {
+		if (mode == "reject_active_content" || mode == "secure_default") && !isEncryptedOfficePackage(body) {
 			if err := inspectOfficeOpenXML(body, contentType, originalName, policy.ResourceLimits); err != nil {
 				return sanitizedBody{}, err
 			}
@@ -227,6 +227,9 @@ func inspectStoredFileObject(reader io.Reader, size int64, contentType, original
 		if mode == "sanitize_when_supported" {
 			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "sanitizer_unavailable", message: "Office document sanitization is not supported"}
 		}
+		if isEncryptedOfficePackage(body) {
+			return nil
+		}
 		return inspectOfficeOpenXML(body, contentType, originalName, policy.ResourceLimits)
 	case isOpenDocument(contentType, originalName):
 		if mode == "sanitize_when_supported" {
@@ -291,7 +294,7 @@ func enforceResourceLimits(body []byte, contentType, originalName string, policy
 		return securityUploadError{status: http.StatusRequestEntityTooLarge, code: "resource_limit_exceeded", message: "uploaded file exceeds configured maximum file size"}
 	}
 	if isImage(contentType, originalName) && !isSVG(contentType, originalName) {
-		cfg, _, err := image.DecodeConfig(bytes.NewReader(body))
+		cfg, err := imageConfig(body)
 		if err != nil {
 			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "image structure could not be parsed"}
 		}
@@ -320,6 +323,9 @@ func validateStructure(body []byte, contentType, originalName string, policy con
 		if !bytes.HasPrefix(bytes.TrimSpace(body), []byte("%PDF-")) {
 			return securityUploadError{status: http.StatusUnsupportedMediaType, code: "structural_validation_failed", message: "PDF header is invalid"}
 		}
+	case isOfficeOpenXML(contentType, originalName) && isEncryptedOfficePackage(body):
+		// Password-protected package: an OLE container, validated by bdf
+		// together with the password.
 	case isOfficeOpenXML(contentType, originalName):
 		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 		if err != nil {
@@ -1213,7 +1219,7 @@ func readZipEntry(entry *zip.File, maxBytes int64) ([]byte, error) {
 
 func officeDangerousPart(name string) bool {
 	dangerousFragments := []string{
-		"vbaproject.bin", "/activex/", "/embeddings/", "oleobject", "externalLinks/", "printersettings/",
+		"vbaproject.bin", "/activex/", "/embeddings/", "oleobject", "externalLinks/",
 	}
 	for _, fragment := range dangerousFragments {
 		if strings.Contains(name, strings.ToLower(fragment)) {
@@ -1227,8 +1233,9 @@ func officeXMLHasDangerousContent(data []byte) bool {
 	lower := bytes.ToLower(data)
 	for _, marker := range [][]byte{
 		[]byte(`targetmode="external"`),
-		[]byte("http://"),
-		[]byte("https://"),
+		// URLs alone are not active content: every OOXML part declares
+		// namespaces such as http://schemas.openxmlformats.org/... .
+		// External targets are caught by TargetMode="External" above.
 		[]byte("oleobject"),
 		[]byte("activex"),
 		[]byte("vba"),
@@ -1492,4 +1499,27 @@ func hasAnyExtension(name string, extensions ...string) bool {
 func parseIntAttr(value string) int64 {
 	n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	return n
+}
+
+// isEncryptedOfficePackage reports a password-protected OOXML file: an OLE
+// compound file wrapping an encrypted package, whose parts cannot be read
+// for inspection. It is only converted by bdf with the right password.
+func isEncryptedOfficePackage(body []byte) bool {
+	return bytes.HasPrefix(body, []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
+}
+
+// imageConfig reads the dimensions of an image. Photoshop files (.psd and
+// .psb) have no Go decoder; their size comes from the file header, and bdf
+// applies its own limits when it converts them.
+func imageConfig(body []byte) (image.Config, error) {
+	if len(body) >= 22 && string(body[:4]) == "8BPS" && body[4] == 0 && (body[5] == 1 || body[5] == 2) {
+		height := int(binary.BigEndian.Uint32(body[14:18]))
+		width := int(binary.BigEndian.Uint32(body[18:22]))
+		if width <= 0 || height <= 0 {
+			return image.Config{}, errors.New("invalid Photoshop dimensions")
+		}
+		return image.Config{Width: width, Height: height}, nil
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(body))
+	return cfg, err
 }

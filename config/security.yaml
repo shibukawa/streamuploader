@@ -182,3 +182,9 @@ text_extraction:
   ocr_command: ""
   extract_metadata: true
   include_plain_text: true
+document_processing:
+  # PDF and OOXML Office thumbnails, the .bdf preview and search text are
+  # always generated in-process. Refuse a type with mime_magic.deny_file_types.
+  fail_upload_on_error: false
+  max_input_bytes: 67108864
+  execution_mode: async
