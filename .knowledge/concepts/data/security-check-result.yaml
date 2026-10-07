@@ -1,0 +1,184 @@
+id: data:security-check-result
+type: data
+title: Security Check Result
+summary: Security check result records lightweight file inspection outcomes before
+  optional malware scanning.
+facts:
+  legacy_body: "Security check result records lightweight file inspection outcomes\
+    \ before optional malware scanning.\n\n```yaml\nfields:\n  declared_content_type:\
+    \ string optional\n  detected_content_type: string\n  normalized_declared_content_type:\
+    \ string optional\n  normalized_detected_content_type: string\n  detected_extension:\
+    \ string optional\n  detector:\n    enum:\n      - go_http_detect_content_type\n\
+    \      - gabriel_vasile_mimetype\n      - h2non_filetype\n      - libmagic\n \
+    \     - magika optional\n      - go_enry optional\n  confidence: number optional\n\
+    \  mismatch:\n    enum:\n      - none\n      - declared_vs_detected\n      - extension_vs_detected\n\
+    \      - polyglot_suspected\n  script_detection:\n    shebang: string optional\n\
+    \    language: string optional\n    executable_text: boolean\n  archive_detection:\n\
+    \    is_archive: boolean\n    nested: boolean optional\n    estimated_uncompressed_bytes:\
+    \ integer optional\n    counted_uncompressed_bytes: integer optional\n    compression_ratio:\
+    \ number optional\n    entry_count: integer optional\n    max_depth: integer optional\n\
+    \    encrypted: boolean optional\n    unsafe_path: boolean optional\n    inspection_complete:\
+    \ boolean optional\n    inspection_time_ms: integer optional\n  sanitization:\n\
+    \    mode: string optional\n    performed: boolean\n    output_size_bytes: integer\
+    \ optional\n    metadata_removed: list optional\n    preserved_metadata: list\
+    \ optional\n  structural_validation:\n    performed: boolean\n    valid: boolean\
+    \ optional\n    validator: string optional\n  resource_limits:\n    checked: boolean\n\
+    \    exceeded: list optional\n  active_content:\n    inspected: boolean\n    detected_features:\
+    \ list optional\n  decision:\n    enum:\n      - allow\n      - reject\n     \
+    \ - require_deep_scan\n      - quarantine\n  reason_codes:\n    type: list\n \
+    \   values:\n      - content_type_match\n      - content_type_mismatch\n     \
+    \ - detected_type_unknown\n      - prefix_read_failed\n      - archive_policy_pending\n\
+    \      - archive_bomb_detected\n      - archive_too_large\n      - archive_ratio_exceeded\n\
+    \      - archive_too_many_entries\n      - archive_too_deep\n      - archive_path_unsafe\n\
+    \      - archive_link_rejected\n      - archive_special_file_rejected\n      -\
+    \ archive_entry_type_mismatch\n      - archive_entry_script_rejected\n      -\
+    \ archive_inspection_timeout\n      - archive_unsupported_method\n      - file_too_large\n\
+    \      - resource_limit_exceeded\n      - structural_validation_failed\n     \
+    \ - sensitive_metadata_detected\n      - sanitizer_unavailable\n      - document_active_content_rejected\n\
+    \      - svg_active_content_rejected\n      - markup_active_content_rejected\n\
+    \      - markup_script_detected\n      - markup_iframe_detected\n      - markup_external_reference_detected\n\
+    \      - xml_external_entity_detected\n      - xml_entity_expansion_limit_exceeded\n\
+    \  error:\n    http_status: integer optional\n    code: string optional\n    message:\
+    \ string optional\nreferences:\n  - policy:file-intake-security\n  - requirement:mime-magic-consistency\n\
+    \  - decision:mime-detector-library\n  - policy:archive-bomb-protection\n  - policy:file-type-sanitization-policy\n\
+    \  - policy:resource-limit-policy\n  - policy:structural-validation-policy\n \
+    \ - policy:document-active-content-policy\n  - policy:svg-security-policy\n  -\
+    \ policy:markup-active-content-policy\n```"
+  fields:
+    declared_content_type: string optional
+    detected_content_type: string
+    normalized_declared_content_type: string optional
+    normalized_detected_content_type: string
+    detected_extension: string optional
+    detector:
+      enum:
+      - go_http_detect_content_type
+      - gabriel_vasile_mimetype
+      - h2non_filetype
+      - libmagic
+      - magika optional
+      - go_enry optional
+    confidence: number optional
+    mismatch:
+      enum:
+      - none
+      - declared_vs_detected
+      - extension_vs_detected
+      - polyglot_suspected
+    script_detection:
+      shebang: string optional
+      language: string optional
+      executable_text: boolean
+    archive_detection:
+      is_archive: boolean
+      nested: boolean optional
+      estimated_uncompressed_bytes: integer optional
+      counted_uncompressed_bytes: integer optional
+      compression_ratio: number optional
+      entry_count: integer optional
+      max_depth: integer optional
+      encrypted: boolean optional
+      unsafe_path: boolean optional
+      inspection_complete: boolean optional
+      inspection_time_ms: integer optional
+    sanitization:
+      mode: string optional
+      performed: boolean
+      output_size_bytes: integer optional
+      metadata_removed: list optional
+      preserved_metadata: list optional
+    structural_validation:
+      performed: boolean
+      valid: boolean optional
+      validator: string optional
+    resource_limits:
+      checked: boolean
+      exceeded: list optional
+    active_content:
+      inspected: boolean
+      detected_features: list optional
+    decision:
+      enum:
+      - allow
+      - reject
+      - require_deep_scan
+      - quarantine
+    reason_codes:
+      type: list
+      values:
+      - content_type_match
+      - content_type_mismatch
+      - detected_type_unknown
+      - prefix_read_failed
+      - archive_policy_pending
+      - archive_bomb_detected
+      - archive_too_large
+      - archive_ratio_exceeded
+      - archive_too_many_entries
+      - archive_too_deep
+      - archive_path_unsafe
+      - archive_link_rejected
+      - archive_special_file_rejected
+      - archive_entry_type_mismatch
+      - archive_entry_script_rejected
+      - archive_inspection_timeout
+      - archive_unsupported_method
+      - file_too_large
+      - resource_limit_exceeded
+      - structural_validation_failed
+      - sensitive_metadata_detected
+      - sanitizer_unavailable
+      - document_active_content_rejected
+      - svg_active_content_rejected
+      - markup_active_content_rejected
+      - markup_script_detected
+      - markup_iframe_detected
+      - markup_external_reference_detected
+      - xml_external_entity_detected
+      - xml_entity_expansion_limit_exceeded
+    error:
+      http_status: integer optional
+      code: string optional
+      message: string optional
+  references:
+  - policy:file-intake-security
+  - requirement:mime-magic-consistency
+  - decision:mime-detector-library
+  - policy:archive-bomb-protection
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - policy:document-active-content-policy
+  - policy:svg-security-policy
+  - policy:markup-active-content-policy
+relations:
+- relation: mentions
+  to: decision:mime-detector-library
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:document-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: policy:file-type-sanitization-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:markup-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:resource-limit-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:structural-validation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:svg-security-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:mime-magic-consistency
+  resolution: resolved

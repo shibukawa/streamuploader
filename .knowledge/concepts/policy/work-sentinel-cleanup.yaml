@@ -1,0 +1,103 @@
+id: policy:work-sentinel-cleanup
+type: policy
+title: Work Sentinel Cleanup
+summary: Work sentinel cleanup stores upload key work state in S3 object prefixes
+  without a separate database.
+facts:
+  legacy_body: "Work sentinel cleanup stores upload key work state in S3 object prefixes\
+    \ without a separate database.\n\n```yaml\npolicy:\n  goal: storage-less upload\
+    \ cleanup using S3-compatible objects only\n  prefix_layout:\n    upload_prefix:\
+    \ uploads/{upload_key}/\n    sentinel: uploads/{upload_key}/.work\n    file: uploads/{upload_key}/file\n\
+    \    derived: uploads/{upload_key}/derived/{asset_key}\n    final_marker: uploads/{upload_key}/.ready\
+    \ optional\n  sentinel_object:\n    name: .work\n    content_type: application/json\n\
+    \    fields:\n      - upload_key\n      - created_at\n      - updated_at\n   \
+    \   - expires_at\n      - status\n      - storage_allocations\n      - multipart_upload_ids\
+    \ optional\n      - part_etags optional\n      - progress_summary\n  cleanup_rule:\n\
+    \    - list prefixes containing .work\n    - if .work exists and expires_at or\
+    \ last_modified is older than threshold, delete prefix objects\n    - skip prefixes\
+    \ with .ready unless retention policy says otherwise\n    - tolerate eventual\
+    \ consistency by using grace period\n  upload_deadline_marker_cleanup:\n    marker_prefix:\
+    \ .uploading/\n    rule:\n      - list marker objects from policy:upload-key-deadline-policy\n\
+    \      - if upload_start_deadline or upload_finish_deadline has passed, clean\
+    \ stale marker and temporary upload object\n      - run as in-process server loop\
+    \ by default every 1 minute\n      - allow disabling in-process loop for production\
+    \ deployments that use cloud scheduler or dedicated worker\n      - provide cleanup-once\
+    \ command mode that performs marker cleanup and exits\n  ready_behavior:\n   \
+    \ - remove .work or replace with .ready after upload facts are durable\n    -\
+    \ cleanup orphaned uploaded objects when application metadata is never submitted\
+    \ and retention policy allows it\n  constraints:\n    - no local filesystem required\
+    \ for durable state\n    - no separate database required for cleanup\n    - no\
+    \ in-memory-only upload state\n    - S3 upload uses service-side multipart upload,\
+    \ not presigned URLs\n    - cleanup worker must be idempotent\nreferences:\n \
+    \ - system:s3-storage\n  - data:upload-batch\n  - data:upload-deadline-config\n\
+    \  - policy:upload-key-deadline-policy\n  - decision:serverless-upload-state\n\
+    ```"
+  policy:
+    goal: storage-less upload cleanup using S3-compatible objects only
+    prefix_layout:
+      upload_prefix: uploads/{upload_key}/
+      sentinel: uploads/{upload_key}/.work
+      file: uploads/{upload_key}/file
+      derived: uploads/{upload_key}/derived/{asset_key}
+      final_marker: uploads/{upload_key}/.ready optional
+    sentinel_object:
+      name: .work
+      content_type: application/json
+      fields:
+      - upload_key
+      - created_at
+      - updated_at
+      - expires_at
+      - status
+      - storage_allocations
+      - multipart_upload_ids optional
+      - part_etags optional
+      - progress_summary
+    cleanup_rule:
+    - list prefixes containing .work
+    - if .work exists and expires_at or last_modified is older than threshold, delete
+      prefix objects
+    - skip prefixes with .ready unless retention policy says otherwise
+    - tolerate eventual consistency by using grace period
+    upload_deadline_marker_cleanup:
+      marker_prefix: .uploading/
+      rule:
+      - list marker objects from policy:upload-key-deadline-policy
+      - if upload_start_deadline or upload_finish_deadline has passed, clean stale
+        marker and temporary upload object
+      - run as in-process server loop by default every 1 minute
+      - allow disabling in-process loop for production deployments that use cloud
+        scheduler or dedicated worker
+      - provide cleanup-once command mode that performs marker cleanup and exits
+    ready_behavior:
+    - remove .work or replace with .ready after upload facts are durable
+    - cleanup orphaned uploaded objects when application metadata is never submitted
+      and retention policy allows it
+    constraints:
+    - no local filesystem required for durable state
+    - no separate database required for cleanup
+    - no in-memory-only upload state
+    - S3 upload uses service-side multipart upload, not presigned URLs
+    - cleanup worker must be idempotent
+  references:
+  - system:s3-storage
+  - data:upload-batch
+  - data:upload-deadline-config
+  - policy:upload-key-deadline-policy
+  - decision:serverless-upload-state
+relations:
+- relation: mentions
+  to: data:upload-batch
+  resolution: resolved
+- relation: mentions
+  to: data:upload-deadline-config
+  resolution: resolved
+- relation: mentions
+  to: decision:serverless-upload-state
+  resolution: resolved
+- relation: mentions
+  to: policy:upload-key-deadline-policy
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

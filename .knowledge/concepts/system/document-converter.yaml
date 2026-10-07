@@ -1,0 +1,95 @@
+id: system:document-converter
+type: system
+title: Document Converter
+summary: Document converter is an isolated worker using embedded thumbnail extraction,
+  headless LibreOffice when needed, and a PDF renderer to create previews.
+facts:
+  legacy_body: "Document converter is an isolated worker using embedded thumbnail\
+    \ extraction, headless LibreOffice when needed, and a PDF renderer to create previews.\n\
+    \n```yaml\ncomponents:\n  embedded_thumbnail_extractor:\n    purpose:\n      -\
+    \ read Office package thumbnail before LibreOffice conversion\n      - read legacy\
+    \ Office summary thumbnail when a configured tool supports it\n    behavior:\n\
+    \      - validate extracted image under thumbnail limits\n      - re-encode through\
+    \ policy:preview-format-policy\n      - prefer AVIF output and WebP fallback per\
+    \ policy:preview-format-policy\n      - fall back to LibreOffice when absent,\
+    \ too small, corrupt, or unsafe\n  office_to_pdf:\n    tool: LibreOffice headless\n\
+    \    command_style: convert to PDF in temporary directory\n  pdf_renderer:\n \
+    \   preferred: MuPDF mutool draw\n    candidates:\n      - MuPDF\n      - Poppler\
+    \ fallback when explicitly installed\n      - ImageMagick with strict policy\n\
+    \      - qlmanage on macOS as optional thumbnail fallback\n      - sips on macOS\
+    \ as optional first-page thumbnail fallback when supported\n    primary_use:\n\
+    \      - render validated PDFs and LibreOffice-normalized documents to preview\
+    \ images\n      - keep PDF preview in document pipeline instead of generic image\
+    \ thumbnail pipeline\n    fallback_use:\n      - allow sips or qlmanage after\
+    \ PDF validation for low-friction local development\n      - report backend as\
+    \ macOS fallback so production deployments can prefer deterministic renderers\n\
+    constraints:\n  - run outside request path when possible\n  - isolate process\
+    \ and temporary files\n  - disable network access\n  - limit CPU, memory, wall\
+    \ time, page count, pixel count, and output size\n  - remove macros and active\
+    \ content from generated artifacts\n  - never pass unvalidated PDF to sips, qlmanage,\
+    \ or generic image conversion\n  - treat conversion failure as preview failure,\
+    \ not original file corruption\nreferences:\n  - flow:document-preview-generation\n\
+    \  - data:thumbnail-generation-config\n  - requirement:expanded-thumbnail-source-support\n\
+    \  - system:external-tool-registry\n  - policy:tool-backend-selection-policy\n\
+    ```"
+  components:
+    embedded_thumbnail_extractor:
+      purpose:
+      - read Office package thumbnail before LibreOffice conversion
+      - read legacy Office summary thumbnail when a configured tool supports it
+      behavior:
+      - validate extracted image under thumbnail limits
+      - re-encode through policy:preview-format-policy
+      - prefer AVIF output and WebP fallback per policy:preview-format-policy
+      - fall back to LibreOffice when absent, too small, corrupt, or unsafe
+    office_to_pdf:
+      tool: LibreOffice headless
+      command_style: convert to PDF in temporary directory
+    pdf_renderer:
+      preferred: MuPDF mutool draw
+      candidates:
+      - MuPDF
+      - Poppler fallback when explicitly installed
+      - ImageMagick with strict policy
+      - qlmanage on macOS as optional thumbnail fallback
+      - sips on macOS as optional first-page thumbnail fallback when supported
+      primary_use:
+      - render validated PDFs and LibreOffice-normalized documents to preview images
+      - keep PDF preview in document pipeline instead of generic image thumbnail pipeline
+      fallback_use:
+      - allow sips or qlmanage after PDF validation for low-friction local development
+      - report backend as macOS fallback so production deployments can prefer deterministic
+        renderers
+  constraints:
+  - run outside request path when possible
+  - isolate process and temporary files
+  - disable network access
+  - limit CPU, memory, wall time, page count, pixel count, and output size
+  - remove macros and active content from generated artifacts
+  - never pass unvalidated PDF to sips, qlmanage, or generic image conversion
+  - treat conversion failure as preview failure, not original file corruption
+  references:
+  - flow:document-preview-generation
+  - data:thumbnail-generation-config
+  - requirement:expanded-thumbnail-source-support
+  - system:external-tool-registry
+  - policy:tool-backend-selection-policy
+relations:
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:preview-format-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:expanded-thumbnail-source-support
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved

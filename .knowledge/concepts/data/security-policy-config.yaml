@@ -1,0 +1,981 @@
+id: data:security-policy-config
+type: data
+title: Security Policy Config
+summary: Security policy config is a YAML file loaded at streamuploader startup for
+  file intake filtering.
+facts:
+  legacy_body: "Security policy config is a YAML file loaded at streamuploader startup\
+    \ for file intake filtering.\n\n```yaml\nsource:\n  env_path:\n    primary: SU_SECURITY_CONFIG\n\
+    \    legacy_compat: SECURITY_CONFIG\n  read_time: process startup before listening\n\
+    \  missing_path: use built-in defaults\n  invalid_yaml: fail startup\n  validation:\n\
+    \    method: built-in JSON Schema before unmarshalling policy\n    unknown_keys:\
+    \ fail startup\n    wrong_types: fail startup\n  env_only_security:\n    clamav:\n\
+    \      enabled_by: SU_CLAMAV_HOST or CLAMAV_HOST set to host:port\n      disabled_by_default:\
+    \ true\n      reason: scanner location is deployment environment specific\n  \
+    \    optional_env:\n        - SU_CLAMAV_ENABLED\n        - SU_CLAMAV_SCAN_TIMEOUT_MS\n\
+    \        - SU_CLAMAV_STREAM_CHUNK_BYTES\n  runtime_limits:\n    max_upload_keys_per_owner:\n\
+    \      env: SU_MAX_UPLOAD_KEYS_PER_OWNER\n      legacy_compat: MAX_UPLOAD_KEYS_PER_OWNER\n\
+    \      default: 1000\n      meaning: maximum active key_created or uploading upload\
+    \ keys per owner cookie\nschema:\n  mime_magic:\n    enabled:\n      type: bool\n\
+    \      default: true\n      meaning: opt-out switch for declared MIME versus magic-header\
+    \ check\n    prefix_bytes:\n      type: integer\n      default: 3072\n      constraints:\n\
+    \        min: 512\n        max: 1048576\n    reject_script_uploads:\n      type:\
+    \ bool\n      default: true\n    allowed_script_types:\n      type: map string\
+    \ bool\n      default: {}\n      meaning: opt-in accepted script families detected\
+    \ from shebang\n      example:\n        shell: true\n        python: true\n  \
+    \      powershell: true\n        batch: true\n        make: true\n    allowed_script_extensions:\n\
+    \      type: map string bool\n      default: {}\n      meaning: opt-in accepted\
+    \ script filename extensions when extension policy is desired\n      example:\n\
+    \        sh: true\n        py: true\n        ps1: true\n        bat: true\n  \
+    \      makefile: true\n    allow_mime_types:\n      type: map string bool\n  \
+    \    default: {}\n      meaning: if non-empty, detected or declared MIME must\
+    \ be in list or equivalent group\n      example:\n        application/pdf: true\n\
+    \    allow_file_types:\n      type: map string bool\n      default: {}\n     \
+    \ meaning: category or short file type aliases expanded to allow_mime_types\n\
+    \      secondary_use: known extension to expected MIME map for requirement:mime-magic-consistency\
+    \ extension_content_type_match\n      example:\n        images: true\n       \
+    \ pdf: true\n      values:\n        categories:\n          - images\n        \
+    \  - documents\n          - archives\n          - audio\n          - videos\n\
+    \          - text\n        examples:\n          - png\n          - jpeg\n    \
+    \      - pdf\n          - docx\n          - xlsx\n          - pptx\n         \
+    \ - odt\n          - ods\n          - odp\n          - csv\n          - zip\n\
+    \          - tar\n    deny_mime_types:\n      type: map string bool\n      default:\
+    \ {}\n      meaning: detected or declared MIME in list is rejected before allow\
+    \ checks\n      example:\n        application/x-executable: true\n    deny_file_types:\n\
+    \      type: map string bool\n      default: {}\n      meaning: category or short\
+    \ file type aliases expanded to deny_mime_types\n      example:\n        exe:\
+    \ true\n    equivalent_mime_types:\n      type: list of list string\n      default:\n\
+    \        - [application/xml, text/xml]\n        - [image/jpeg, image/pjpeg]\n\
+    \        - [image/heic, image/heif, image/heic-sequence, image/heif-sequence]\n\
+    \        - [application/gzip, application/x-gzip]\n        - [application/rtf,\
+    \ text/rtf]\n        - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint,\
+    \ application/x-ole-storage]\n      meaning: MIME essence aliases used for mismatch,\
+    \ allow, and deny matching\n    builtin_generic_mime_compatibility:\n      meaning:\
+    \ browser generic input MIME values accepted only for declared-versus-detected\
+    \ mismatch suppression\n      security_note: not used for allow or deny matching;\
+    \ does not bypass reject_script_uploads\n      parser_note: parser validation\
+    \ is not required for MIME consistency; structured parsers run only in later processing\
+    \ or validation stages\n      browser_context:\n        basis:\n          - W3C\
+    \ File API allows empty string when file type cannot be determined\n         \
+    \ - MDN documents that browsers usually infer File.type from extension and client\
+    \ configuration, not file bytes\n        browser_families:\n          chromium_based:\
+    \ Chrome, Edge, Chromium\n          gecko_based: Firefox\n          webkit_based:\
+    \ Safari\n        expected_variance:\n          - common image/audio/video/document\
+    \ extensions usually get specific MIME\n          - developer text formats may\
+    \ arrive as text/plain or empty despite server detection as JSON/YAML/Python-specific\
+    \ MIME\n          - Safari may send reStructuredText as application/octet-stream\
+    \ while prefix detector reports text/plain\n          - Safari may send Markdown\
+    \ as text/markdown while prefix detector reports text/html when the prefix starts\
+    \ with HTML-like markup\n          - executables and opaque binaries may arrive\
+    \ as application/octet-stream or empty despite server detection as Mach-O/ELF/PE\
+    \ MIME\n      text/plain:\n        - application/json\n        - application/*+json\n\
+    \        - application/x-python\n        - application/x-ndjson\n        - application/yaml\n\
+    \        - application/x-yaml\n        - text/yaml\n        - text/x-yaml\n  \
+    \      - text/x-python\n        - text/x-script.python\n      detected_text_plain_accepts_declared:\n\
+    \        - application/json\n        - application/*+json\n        - application/yaml\n\
+    \        - application/x-yaml\n        - text/yaml\n        - text/x-yaml\n  \
+    \      - text/csv\n        - text/markdown\n        - text/html\n        - application/xhtml+xml\n\
+    \        - application/xml\n        - text/xml\n        - application/*+xml\n\
+    \        - text/x-python\n        - application/x-python\n        - text/x-script.python\n\
+    \        - text/javascript\n        - application/javascript\n        - text/x-shellscript\n\
+    \        - text/x-ruby\n        - text/x-perl\n        - application/x-httpd-php\n\
+    \        - text/x-powershell\n        - text/x-makefile\n        - application/x-bat\n\
+    \      detected_text_plain_excludes_declared:\n        - image/*\n        - audio/*\n\
+    \        - video/*\n        - application/pdf\n        - Office document MIME\n\
+    \        - archive MIME\n        - executable MIME\n        - application/octet-stream\
+    \ except extension fallback cases\n      text/markdown:\n        - text/plain\n\
+    \        - text/html\n      application/octet-stream:\n        - text/plain\n\
+    \        - application/vnd.microsoft.portable-executable\n        - application/x-coredump\n\
+    \        - application/x-dosexec\n        - application/x-elf\n        - application/x-executable\n\
+    \        - application/x-mach-binary\n        - application/x-msdownload\n   \
+    \     - application/x-object\n        - application/x-sharedlib\n    builtin_extension_fallback:\n\
+    \      meaning: filename extension or well-known basename may suppress content_type_mismatch\
+    \ for generic text formats and classify script family\n      security_note:\n\
+    \        - not used for allow or deny matching\n        - not used to accept executable\
+    \ magic signatures\n        - markup fallback still requires policy:markup-active-content-policy\n\
+    \        - script fallback still requires reject_script_uploads opt-in through\
+    \ allowed_script_types or allowed_script_extensions\n      markdown:\n       \
+    \ extensions: [md, markdown]\n        compatible:\n          text/markdown: [text/plain,\
+    \ text/html]\n      restructuredtext:\n        extensions: [rst, rest]\n     \
+    \   compatible:\n          application/octet-stream: [text/plain]\n          text/plain:\
+    \ [text/plain]\n      plain_text:\n        extensions: [txt, text]\n        compatible:\n\
+    \          application/octet-stream: [text/plain]\n      script_family_extensions:\n\
+    \        make:\n          basenames: [makefile, gnumakefile]\n        batch:\n\
+    \          extensions: [bat, cmd]\n        powershell:\n          extensions:\
+    \ [ps1, psm1, psd1]\n    extension_content_type_match:\n      meaning: known filename\
+    \ extensions must match detected or declared content type before upload acceptance\n\
+    \      source_map: allow_file_types short file type aliases and MIME expansion\
+    \ table\n      security_note:\n        - validates extension against content type;\
+    \ not only declared versus detected MIME\n        - unknown extensions are ignored\
+    \ by this check\n        - generic browser MIME compatibility may explain text/plain\
+    \ or application/octet-stream but not a concrete wrong family\n      examples:\n\
+    \        reject:\n          - file_name: photo.jpg\n            declared: image/png\n\
+    \            detected: image/png\n            reason: jpg extension expects image/jpeg\
+    \ or equivalent\n        allow:\n          - file_name: payload.json\n       \
+    \     declared: application/json\n            detected: text/plain\n         \
+    \   reason: JSON extension and declared MIME match; detector only proved generic\
+    \ text\n    archive_entry_content_type_match:\n      meaning: zip, tar, and 7z\
+    \ entry filename extensions are checked against bounded-prefix detected MIME during\
+    \ archive_guard inspection\n      prefix_limit: mime_magic.prefix_bytes\n    \
+    \  source_map: allow_file_types short file type aliases and MIME expansion table\n\
+    \      reject_errors:\n        - archive_entry_type_mismatch\n        - archive_entry_script_rejected\n\
+    \      notes:\n        - applies to non-directory zip entries after path, link,\
+    \ and declared size checks\n        - applies to regular tar entries after path,\
+    \ link, and declared size checks\n        - applies to non-directory 7z entries\
+    \ after path, link, and declared size checks\n        - unknown entry extensions\
+    \ are ignored\n        - generic text detection may satisfy known text-derived\
+    \ extensions\n        - script entry names and shebang prefixes follow mime_magic.reject_script_uploads\
+    \ and script allowlists\n    nested_archive_inspection:\n      meaning: archive\
+    \ files stored inside zip, tar, or 7z entries are recursively inspected under\
+    \ the same archive_guard limits\n      depth_limit: archive_guard.max_depth\n\
+    \      aggregate_budget:\n        - max_entries counts entries across the full\
+    \ recursive archive tree\n        - max_total_uncompressed_bytes counts declared\
+    \ or counted expanded bytes across sibling nested archives and nested compressed\
+    \ streams\n        - nested gzip, zstd, brotli, bzip2, and xz stream expansion\
+    \ is added to the same recursive budget\n      detection:\n        - filename\
+    \ archive extension\n        - archive magic bytes from bounded entry prefix\n\
+    \      reject_errors:\n        - archive_too_deep\n        - archive_too_large\n\
+    \        - archive_too_many_entries\n        - archive_path_unsafe\n        -\
+    \ archive_link_rejected\n        - archive_special_file_rejected\n        - archive_entry_type_mismatch\n\
+    \        - archive_entry_script_rejected\n    compressed_tar_wrapper_inspection:\n\
+    \      meaning: compressed streams whose filenames indicate tar wrapper are decompressed\
+    \ into tar inspector instead of only byte-counted\n      filename_patterns:\n\
+    \        gzip: [tgz, tar.gz]\n        zstd: [tar.zst, tar.zstd]\n        brotli:\
+    \ [tar.br, tar.brotli]\n        bzip2: [tbz, tbz2, tar.bz2, tar.bzip2]\n     \
+    \   xz: [txz, tar.xz]\n      enforced_checks:\n        - max_entries\n       \
+    \ - max_total_uncompressed_bytes\n        - max_single_entry_bytes\n        -\
+    \ max_filename_bytes\n        - path safety\n        - symlink and hardlink rejection\n\
+    \        - special filesystem entry rejection\n        - archive entry content\
+    \ type match for known extensions\n        - archive entry script rejection unless\
+    \ explicitly allowed\n  archive_guard:\n    enabled:\n      type: bool\n     \
+    \ default: true\n      meaning: enable policy:archive-bomb-protection for detected\
+    \ archive/container uploads\n    strict:\n      type: bool\n      default: true\n\
+    \      meaning: reject when archive inspection is incomplete, ambiguous, encrypted,\
+    \ or unsupported\n    allow_encrypted:\n      type: bool\n      default: false\n\
+    \    links:\n      type: implicit deny\n      default: reject symlink and hardlink\
+    \ entries\n      reason: uploaded archives are not allowed to encode filesystem\
+    \ links\n    special_files:\n      type: implicit deny\n      default: reject\
+    \ device, FIFO, socket, and irregular filesystem entries\n      reason: uploaded\
+    \ archives are not allowed to encode filesystem node types other than regular\
+    \ files and directories\n    max_total_uncompressed_bytes:\n      type: integer\n\
+    \      default: 536870912\n      meaning: aggregate expanded bytes across all\
+    \ entries, default 512 MiB\n    max_single_entry_bytes:\n      type: integer\n\
+    \      default: 268435456\n      meaning: expanded bytes for one entry, default\
+    \ 256 MiB\n    max_compression_ratio:\n      type: number\n      default: 100\n\
+    \      meaning: reject when estimated or counted uncompressed bytes divided by\
+    \ compressed bytes exceeds limit\n    max_entries:\n      type: integer\n    \
+    \  default: 10000\n    max_depth:\n      type: integer\n      default: 3\n   \
+    \   meaning: maximum recursive archive nesting depth inspected from uploaded archives\
+    \ and zip entries\n    max_filename_bytes:\n      type: integer\n      default:\
+    \ 512\n    max_inspection_time_ms:\n      type: integer\n      default: 5000\n\
+    \    max_probe_bytes:\n      type: integer\n      default: 67108864\n      meaning:\
+    \ maximum compressed bytes a worker may read while trying to prove allow, default\
+    \ 64 MiB\n    worker_memory_bytes:\n      type: integer\n      default: 67108864\n\
+    \      meaning: memory budget for archive inspection worker, default 64 MiB\n\
+    \    decompress_buffer_bytes:\n      type: integer\n      default: 32768\n   \
+    \   constraints:\n        min: 4096\n        max: 1048576\n      meaning: fixed\
+    \ scratch buffer for streaming decompression, not derived from claimed uncompressed\
+    \ size\n  resource_limits:\n    enabled:\n      type: bool\n      default: true\n\
+    \      meaning: enable policy:resource-limit-policy before deeper inspection or\
+    \ sanitization\n    max_file_size_bytes:\n      type: integer\n      default:\
+    \ 1073741824\n      meaning: global upload file size cap, default 1 GiB\n    max_decompressed_size_bytes:\n\
+    \      type: integer\n      default: 536870912\n    max_pdf_page_count:\n    \
+    \  type: integer\n      default: 500\n    max_image_width:\n      type: integer\n\
+    \      default: 10000\n      meaning: maximum raster image width or SVG root/viewBox\
+    \ width in CSS pixels\n    max_image_height:\n      type: integer\n      default:\
+    \ 10000\n      meaning: maximum raster image height or SVG root/viewBox height\
+    \ in CSS pixels\n    max_image_pixel_count:\n      type: integer\n      default:\
+    \ 100000000\n      meaning: maximum width multiplied by height for raster images\
+    \ and SVG root/viewBox dimensions\n    max_object_count:\n      type: integer\n\
+    \      default: 100000\n    max_xml_depth:\n      type: integer\n      default:\
+    \ 64\n    max_zip_entries:\n      type: integer\n      default: 10000\n    max_embedded_object_count:\n\
+    \      type: integer\n      default: 0\n    max_parser_time_ms:\n      type: integer\n\
+    \      default: 5000\n    max_sanitized_memory_bytes:\n      type: integer\n \
+    \     default: 67108864\n  structural_validation:\n    enabled:\n      type: bool\n\
+    \      default: true\n      meaning: enable policy:structural-validation-policy\
+    \ when validator exists for detected file type\n    strict:\n      type: bool\n\
+    \      default: true\n      meaning: reject malformed, ambiguous, or unsupported\
+    \ validation results for types requiring validation\n  file_sanitization:\n  \
+    \  enabled:\n      type: bool\n      default: true\n      meaning: enable policy:file-type-sanitization-policy\n\
+    \    default_mode:\n      type: enum\n      default: secure_default\n      values:\n\
+    \        - secure_default\n        - accept_as_is\n    per_file_type:\n      type:\
+    \ map string object\n      default: {}\n      meaning: override sanitize or inspection\
+    \ mode by file family or MIME type\n      examples:\n        image/jpeg:\n   \
+    \       mode: sanitize_metadata\n        video/quicktime:\n          mode: sanitize_metadata\n\
+    \        application/pdf:\n          mode: reject_active_content\n        image/svg+xml:\n\
+    \          mode: reject_active_or_external_content\n        text/markdown:\n \
+    \         mode: reject_active_or_external_content\n        text/html:\n      \
+    \    mode: reject_active_or_external_content\n        application/xml:\n     \
+    \     mode: reject_active_or_external_content\n        application/msword:\n \
+    \         mode: reject\n        text/rtf:\n          mode: reject\n        application/rtf:\n\
+    \          mode: reject\n      mode_values:\n        - sanitize_metadata\n   \
+    \     - reject_on_sensitive_metadata\n        - reject_active_content\n      \
+    \  - reject_active_or_external_content\n        - reject\n        - sanitize_when_supported\n\
+    \        - accept_as_is\n    image_video_metadata:\n      default_mode: sanitize_metadata\n\
+    \      preserve:\n        - Orientation\n        - ICC Profile\n      no_reencode:\
+    \ true\n    office_pdf:\n      default_mode: reject_active_content\n      full_scan_required:\
+    \ true\n    legacy_or_complex_documents:\n      default_mode: reject\n      includes:\n\
+    \        - legacy Office binary formats\n        - RTF\n    svg:\n      default_mode:\
+    \ reject_active_or_external_content\n      prefer_streaming_xml_parser: true\n\
+    \    markup:\n      default_mode: reject_active_or_external_content\n      markdown_raw_html_inspection:\
+    \ true\n      html_active_content_inspection: true\n      xml_external_entity_resolution:\
+    \ disabled\nexample:\n  mime_magic:\n    enabled: true\n    prefix_bytes: 3072\n\
+    \    reject_script_uploads: true\n    allowed_script_types:\n      shell: false\n\
+    \      python: false\n    allowed_script_extensions:\n      sh: false\n      py:\
+    \ false\n    allow_file_types:\n      images: true\n      pdf: true\n    allow_mime_types:\n\
+    \      text/plain: true\n    deny_file_types:\n      exe: true\n    deny_mime_types:\n\
+    \      application/vnd.microsoft.portable-executable: true\n      application/x-coredump:\
+    \ true\n      application/x-dosexec: true\n      application/x-elf: true\n   \
+    \   application/x-executable: true\n      application/x-mach-binary: true\n  \
+    \    application/x-msdownload: true\n      application/x-object: true\n      application/x-sharedlib:\
+    \ true\n    equivalent_mime_types:\n      - [image/jpeg, image/pjpeg]\n      -\
+    \ [application/gzip, application/x-gzip]\n  archive_guard:\n    enabled: true\n\
+    \    strict: true\n    allow_encrypted: false\n    max_total_uncompressed_bytes:\
+    \ 536870912\n    max_single_entry_bytes: 268435456\n    max_compression_ratio:\
+    \ 100\n    max_entries: 10000\n    max_depth: 3\n    max_filename_bytes: 512\n\
+    \    max_inspection_time_ms: 5000\n    max_probe_bytes: 67108864\n    worker_memory_bytes:\
+    \ 67108864\n    decompress_buffer_bytes: 32768\n  resource_limits:\n    enabled:\
+    \ true\n    max_file_size_bytes: 1073741824\n    max_decompressed_size_bytes:\
+    \ 536870912\n    max_pdf_page_count: 500\n    max_image_width: 10000\n    max_image_height:\
+    \ 10000\n    max_image_pixel_count: 100000000\n    max_object_count: 100000\n\
+    \    max_xml_depth: 64\n    max_zip_entries: 10000\n    max_embedded_object_count:\
+    \ 0\n    max_parser_time_ms: 5000\n    max_sanitized_memory_bytes: 67108864\n\
+    \  structural_validation:\n    enabled: true\n    strict: true\n  file_sanitization:\n\
+    \    enabled: true\n    default_mode: secure_default\n    per_file_type:\n   \
+    \   image/jpeg:\n        mode: sanitize_metadata\n      image/png:\n        mode:\
+    \ sanitize_metadata\n      video/quicktime:\n        mode: sanitize_metadata\n\
+    \      application/pdf:\n        mode: reject_active_content\n      application/vnd.openxmlformats-officedocument.wordprocessingml.document:\n\
+    \        mode: reject_active_content\n      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:\n\
+    \        mode: reject_active_content\n      application/vnd.openxmlformats-officedocument.presentationml.presentation:\n\
+    \        mode: reject_active_content\n      image/svg+xml:\n        mode: reject_active_or_external_content\n\
+    \      text/markdown:\n        mode: reject_active_or_external_content\n     \
+    \ text/html:\n        mode: reject_active_or_external_content\n      application/xml:\n\
+    \        mode: reject_active_or_external_content\n      application/msword:\n\
+    \        mode: reject\n      application/vnd.ms-excel:\n        mode: reject\n\
+    \      application/vnd.ms-powerpoint:\n        mode: reject\n      text/rtf:\n\
+    \        mode: reject\n      application/rtf:\n        mode: reject\n    image_video_metadata:\n\
+    \      default_mode: sanitize_metadata\n      preserve:\n        - Orientation\n\
+    \        - ICC Profile\n      no_reencode: true\n    office_pdf:\n      default_mode:\
+    \ reject_active_content\n      full_scan_required: true\n    legacy_or_complex_documents:\n\
+    \      default_mode: reject\n      includes:\n        - legacy Office binary formats\n\
+    \        - RTF\n    svg:\n      default_mode: reject_active_or_external_content\n\
+    \      prefer_streaming_xml_parser: true\n    markup:\n      default_mode: reject_active_or_external_content\n\
+    \      markdown_raw_html_inspection: true\n      html_active_content_inspection:\
+    \ true\n      xml_external_entity_resolution: disabled\nreferences:\n  - policy:file-intake-security\n\
+    \  - system:clamav\n  - requirement:mime-magic-consistency\n  - decision:mime-detector-library\n\
+    \  - policy:archive-bomb-protection\n  - policy:file-type-sanitization-policy\n\
+    \  - policy:resource-limit-policy\n  - policy:structural-validation-policy\n \
+    \ - policy:document-active-content-policy\n  - policy:svg-security-policy\n```"
+  source:
+    env_path:
+      primary: SU_SECURITY_CONFIG
+      legacy_compat: SECURITY_CONFIG
+    read_time: process startup before listening
+    missing_path: use built-in defaults
+    invalid_yaml: fail startup
+    validation:
+      method: built-in JSON Schema before unmarshalling policy
+      unknown_keys: fail startup
+      wrong_types: fail startup
+    env_only_security:
+      clamav:
+        enabled_by: SU_CLAMAV_HOST or CLAMAV_HOST set to host:port
+        disabled_by_default: true
+        reason: scanner location is deployment environment specific
+        optional_env:
+        - SU_CLAMAV_ENABLED
+        - SU_CLAMAV_SCAN_TIMEOUT_MS
+        - SU_CLAMAV_STREAM_CHUNK_BYTES
+    runtime_limits:
+      max_upload_keys_per_owner:
+        env: SU_MAX_UPLOAD_KEYS_PER_OWNER
+        legacy_compat: MAX_UPLOAD_KEYS_PER_OWNER
+        default: 1000
+        meaning: maximum active key_created or uploading upload keys per owner cookie
+  schema:
+    mime_magic:
+      enabled:
+        type: bool
+        default: true
+        meaning: opt-out switch for declared MIME versus magic-header check
+      prefix_bytes:
+        type: integer
+        default: 3072
+        constraints:
+          min: 512
+          max: 1048576
+      reject_script_uploads:
+        type: bool
+        default: true
+      allowed_script_types:
+        type: map string bool
+        default: {}
+        meaning: opt-in accepted script families detected from shebang
+        example:
+          shell: true
+          python: true
+          powershell: true
+          batch: true
+          make: true
+      allowed_script_extensions:
+        type: map string bool
+        default: {}
+        meaning: opt-in accepted script filename extensions when extension policy
+          is desired
+        example:
+          sh: true
+          py: true
+          ps1: true
+          bat: true
+          makefile: true
+      allow_mime_types:
+        type: map string bool
+        default: {}
+        meaning: if non-empty, detected or declared MIME must be in list or equivalent
+          group
+        example:
+          application/pdf: true
+      allow_file_types:
+        type: map string bool
+        default: {}
+        meaning: category or short file type aliases expanded to allow_mime_types
+        secondary_use: known extension to expected MIME map for requirement:mime-magic-consistency
+          extension_content_type_match
+        example:
+          images: true
+          pdf: true
+        values:
+          categories:
+          - images
+          - documents
+          - archives
+          - audio
+          - videos
+          - text
+          examples:
+          - png
+          - jpeg
+          - pdf
+          - docx
+          - xlsx
+          - pptx
+          - odt
+          - ods
+          - odp
+          - csv
+          - zip
+          - tar
+      deny_mime_types:
+        type: map string bool
+        default: {}
+        meaning: detected or declared MIME in list is rejected before allow checks
+        example:
+          application/x-executable: true
+      deny_file_types:
+        type: map string bool
+        default: {}
+        meaning: category or short file type aliases expanded to deny_mime_types
+        example:
+          exe: true
+      equivalent_mime_types:
+        type: list of list string
+        default:
+        - - application/xml
+          - text/xml
+        - - image/jpeg
+          - image/pjpeg
+        - - image/heic
+          - image/heif
+          - image/heic-sequence
+          - image/heif-sequence
+        - - application/gzip
+          - application/x-gzip
+        - - application/rtf
+          - text/rtf
+        - - application/msword
+          - application/vnd.ms-excel
+          - application/vnd.ms-powerpoint
+          - application/x-ole-storage
+        meaning: MIME essence aliases used for mismatch, allow, and deny matching
+      builtin_generic_mime_compatibility:
+        meaning: browser generic input MIME values accepted only for declared-versus-detected
+          mismatch suppression
+        security_note: not used for allow or deny matching; does not bypass reject_script_uploads
+        parser_note: parser validation is not required for MIME consistency; structured
+          parsers run only in later processing or validation stages
+        browser_context:
+          basis:
+          - W3C File API allows empty string when file type cannot be determined
+          - MDN documents that browsers usually infer File.type from extension and
+            client configuration, not file bytes
+          browser_families:
+            chromium_based: Chrome, Edge, Chromium
+            gecko_based: Firefox
+            webkit_based: Safari
+          expected_variance:
+          - common image/audio/video/document extensions usually get specific MIME
+          - developer text formats may arrive as text/plain or empty despite server
+            detection as JSON/YAML/Python-specific MIME
+          - Safari may send reStructuredText as application/octet-stream while prefix
+            detector reports text/plain
+          - Safari may send Markdown as text/markdown while prefix detector reports
+            text/html when the prefix starts with HTML-like markup
+          - executables and opaque binaries may arrive as application/octet-stream
+            or empty despite server detection as Mach-O/ELF/PE MIME
+        text/plain:
+        - application/json
+        - application/*+json
+        - application/x-python
+        - application/x-ndjson
+        - application/yaml
+        - application/x-yaml
+        - text/yaml
+        - text/x-yaml
+        - text/x-python
+        - text/x-script.python
+        detected_text_plain_accepts_declared:
+        - application/json
+        - application/*+json
+        - application/yaml
+        - application/x-yaml
+        - text/yaml
+        - text/x-yaml
+        - text/csv
+        - text/markdown
+        - text/html
+        - application/xhtml+xml
+        - application/xml
+        - text/xml
+        - application/*+xml
+        - text/x-python
+        - application/x-python
+        - text/x-script.python
+        - text/javascript
+        - application/javascript
+        - text/x-shellscript
+        - text/x-ruby
+        - text/x-perl
+        - application/x-httpd-php
+        - text/x-powershell
+        - text/x-makefile
+        - application/x-bat
+        detected_text_plain_excludes_declared:
+        - image/*
+        - audio/*
+        - video/*
+        - application/pdf
+        - Office document MIME
+        - archive MIME
+        - executable MIME
+        - application/octet-stream except extension fallback cases
+        text/markdown:
+        - text/plain
+        - text/html
+        application/octet-stream:
+        - text/plain
+        - application/vnd.microsoft.portable-executable
+        - application/x-coredump
+        - application/x-dosexec
+        - application/x-elf
+        - application/x-executable
+        - application/x-mach-binary
+        - application/x-msdownload
+        - application/x-object
+        - application/x-sharedlib
+      builtin_extension_fallback:
+        meaning: filename extension or well-known basename may suppress content_type_mismatch
+          for generic text formats and classify script family
+        security_note:
+        - not used for allow or deny matching
+        - not used to accept executable magic signatures
+        - markup fallback still requires policy:markup-active-content-policy
+        - script fallback still requires reject_script_uploads opt-in through allowed_script_types
+          or allowed_script_extensions
+        markdown:
+          extensions:
+          - md
+          - markdown
+          compatible:
+            text/markdown:
+            - text/plain
+            - text/html
+        restructuredtext:
+          extensions:
+          - rst
+          - rest
+          compatible:
+            application/octet-stream:
+            - text/plain
+            text/plain:
+            - text/plain
+        plain_text:
+          extensions:
+          - txt
+          - text
+          compatible:
+            application/octet-stream:
+            - text/plain
+        script_family_extensions:
+          make:
+            basenames:
+            - makefile
+            - gnumakefile
+          batch:
+            extensions:
+            - bat
+            - cmd
+          powershell:
+            extensions:
+            - ps1
+            - psm1
+            - psd1
+      extension_content_type_match:
+        meaning: known filename extensions must match detected or declared content
+          type before upload acceptance
+        source_map: allow_file_types short file type aliases and MIME expansion table
+        security_note:
+        - validates extension against content type; not only declared versus detected
+          MIME
+        - unknown extensions are ignored by this check
+        - generic browser MIME compatibility may explain text/plain or application/octet-stream
+          but not a concrete wrong family
+        examples:
+          reject:
+          - file_name: photo.jpg
+            declared: image/png
+            detected: image/png
+            reason: jpg extension expects image/jpeg or equivalent
+          allow:
+          - file_name: payload.json
+            declared: application/json
+            detected: text/plain
+            reason: JSON extension and declared MIME match; detector only proved generic
+              text
+      archive_entry_content_type_match:
+        meaning: zip, tar, and 7z entry filename extensions are checked against bounded-prefix
+          detected MIME during archive_guard inspection
+        prefix_limit: mime_magic.prefix_bytes
+        source_map: allow_file_types short file type aliases and MIME expansion table
+        reject_errors:
+        - archive_entry_type_mismatch
+        - archive_entry_script_rejected
+        notes:
+        - applies to non-directory zip entries after path, link, and declared size
+          checks
+        - applies to regular tar entries after path, link, and declared size checks
+        - applies to non-directory 7z entries after path, link, and declared size
+          checks
+        - unknown entry extensions are ignored
+        - generic text detection may satisfy known text-derived extensions
+        - script entry names and shebang prefixes follow mime_magic.reject_script_uploads
+          and script allowlists
+      nested_archive_inspection:
+        meaning: archive files stored inside zip, tar, or 7z entries are recursively
+          inspected under the same archive_guard limits
+        depth_limit: archive_guard.max_depth
+        aggregate_budget:
+        - max_entries counts entries across the full recursive archive tree
+        - max_total_uncompressed_bytes counts declared or counted expanded bytes across
+          sibling nested archives and nested compressed streams
+        - nested gzip, zstd, brotli, bzip2, and xz stream expansion is added to the
+          same recursive budget
+        detection:
+        - filename archive extension
+        - archive magic bytes from bounded entry prefix
+        reject_errors:
+        - archive_too_deep
+        - archive_too_large
+        - archive_too_many_entries
+        - archive_path_unsafe
+        - archive_link_rejected
+        - archive_special_file_rejected
+        - archive_entry_type_mismatch
+        - archive_entry_script_rejected
+      compressed_tar_wrapper_inspection:
+        meaning: compressed streams whose filenames indicate tar wrapper are decompressed
+          into tar inspector instead of only byte-counted
+        filename_patterns:
+          gzip:
+          - tgz
+          - tar.gz
+          zstd:
+          - tar.zst
+          - tar.zstd
+          brotli:
+          - tar.br
+          - tar.brotli
+          bzip2:
+          - tbz
+          - tbz2
+          - tar.bz2
+          - tar.bzip2
+          xz:
+          - txz
+          - tar.xz
+        enforced_checks:
+        - max_entries
+        - max_total_uncompressed_bytes
+        - max_single_entry_bytes
+        - max_filename_bytes
+        - path safety
+        - symlink and hardlink rejection
+        - special filesystem entry rejection
+        - archive entry content type match for known extensions
+        - archive entry script rejection unless explicitly allowed
+    archive_guard:
+      enabled:
+        type: bool
+        default: true
+        meaning: enable policy:archive-bomb-protection for detected archive/container
+          uploads
+      strict:
+        type: bool
+        default: true
+        meaning: reject when archive inspection is incomplete, ambiguous, encrypted,
+          or unsupported
+      allow_encrypted:
+        type: bool
+        default: false
+      links:
+        type: implicit deny
+        default: reject symlink and hardlink entries
+        reason: uploaded archives are not allowed to encode filesystem links
+      special_files:
+        type: implicit deny
+        default: reject device, FIFO, socket, and irregular filesystem entries
+        reason: uploaded archives are not allowed to encode filesystem node types
+          other than regular files and directories
+      max_total_uncompressed_bytes:
+        type: integer
+        default: 536870912
+        meaning: aggregate expanded bytes across all entries, default 512 MiB
+      max_single_entry_bytes:
+        type: integer
+        default: 268435456
+        meaning: expanded bytes for one entry, default 256 MiB
+      max_compression_ratio:
+        type: number
+        default: 100
+        meaning: reject when estimated or counted uncompressed bytes divided by compressed
+          bytes exceeds limit
+      max_entries:
+        type: integer
+        default: 10000
+      max_depth:
+        type: integer
+        default: 3
+        meaning: maximum recursive archive nesting depth inspected from uploaded archives
+          and zip entries
+      max_filename_bytes:
+        type: integer
+        default: 512
+      max_inspection_time_ms:
+        type: integer
+        default: 5000
+      max_probe_bytes:
+        type: integer
+        default: 67108864
+        meaning: maximum compressed bytes a worker may read while trying to prove
+          allow, default 64 MiB
+      worker_memory_bytes:
+        type: integer
+        default: 67108864
+        meaning: memory budget for archive inspection worker, default 64 MiB
+      decompress_buffer_bytes:
+        type: integer
+        default: 32768
+        constraints:
+          min: 4096
+          max: 1048576
+        meaning: fixed scratch buffer for streaming decompression, not derived from
+          claimed uncompressed size
+    resource_limits:
+      enabled:
+        type: bool
+        default: true
+        meaning: enable policy:resource-limit-policy before deeper inspection or sanitization
+      max_file_size_bytes:
+        type: integer
+        default: 1073741824
+        meaning: global upload file size cap, default 1 GiB
+      max_decompressed_size_bytes:
+        type: integer
+        default: 536870912
+      max_pdf_page_count:
+        type: integer
+        default: 500
+      max_image_width:
+        type: integer
+        default: 10000
+        meaning: maximum raster image width or SVG root/viewBox width in CSS pixels
+      max_image_height:
+        type: integer
+        default: 10000
+        meaning: maximum raster image height or SVG root/viewBox height in CSS pixels
+      max_image_pixel_count:
+        type: integer
+        default: 100000000
+        meaning: maximum width multiplied by height for raster images and SVG root/viewBox
+          dimensions
+      max_object_count:
+        type: integer
+        default: 100000
+      max_xml_depth:
+        type: integer
+        default: 64
+      max_zip_entries:
+        type: integer
+        default: 10000
+      max_embedded_object_count:
+        type: integer
+        default: 0
+      max_parser_time_ms:
+        type: integer
+        default: 5000
+      max_sanitized_memory_bytes:
+        type: integer
+        default: 67108864
+    structural_validation:
+      enabled:
+        type: bool
+        default: true
+        meaning: enable policy:structural-validation-policy when validator exists
+          for detected file type
+      strict:
+        type: bool
+        default: true
+        meaning: reject malformed, ambiguous, or unsupported validation results for
+          types requiring validation
+    file_sanitization:
+      enabled:
+        type: bool
+        default: true
+        meaning: enable policy:file-type-sanitization-policy
+      default_mode:
+        type: enum
+        default: secure_default
+        values:
+        - secure_default
+        - accept_as_is
+      per_file_type:
+        type: map string object
+        default: {}
+        meaning: override sanitize or inspection mode by file family or MIME type
+        examples:
+          image/jpeg:
+            mode: sanitize_metadata
+          video/quicktime:
+            mode: sanitize_metadata
+          application/pdf:
+            mode: reject_active_content
+          image/svg+xml:
+            mode: reject_active_or_external_content
+          text/markdown:
+            mode: reject_active_or_external_content
+          text/html:
+            mode: reject_active_or_external_content
+          application/xml:
+            mode: reject_active_or_external_content
+          application/msword:
+            mode: reject
+          text/rtf:
+            mode: reject
+          application/rtf:
+            mode: reject
+        mode_values:
+        - sanitize_metadata
+        - reject_on_sensitive_metadata
+        - reject_active_content
+        - reject_active_or_external_content
+        - reject
+        - sanitize_when_supported
+        - accept_as_is
+      image_video_metadata:
+        default_mode: sanitize_metadata
+        preserve:
+        - Orientation
+        - ICC Profile
+        no_reencode: true
+      office_pdf:
+        default_mode: reject_active_content
+        full_scan_required: true
+      legacy_or_complex_documents:
+        default_mode: reject
+        includes:
+        - legacy Office binary formats
+        - RTF
+      svg:
+        default_mode: reject_active_or_external_content
+        prefer_streaming_xml_parser: true
+      markup:
+        default_mode: reject_active_or_external_content
+        markdown_raw_html_inspection: true
+        html_active_content_inspection: true
+        xml_external_entity_resolution: disabled
+  example:
+    mime_magic:
+      enabled: true
+      prefix_bytes: 3072
+      reject_script_uploads: true
+      allowed_script_types:
+        shell: false
+        python: false
+      allowed_script_extensions:
+        sh: false
+        py: false
+      allow_file_types:
+        images: true
+        pdf: true
+      allow_mime_types:
+        text/plain: true
+      deny_file_types:
+        exe: true
+      deny_mime_types:
+        application/vnd.microsoft.portable-executable: true
+        application/x-coredump: true
+        application/x-dosexec: true
+        application/x-elf: true
+        application/x-executable: true
+        application/x-mach-binary: true
+        application/x-msdownload: true
+        application/x-object: true
+        application/x-sharedlib: true
+      equivalent_mime_types:
+      - - image/jpeg
+        - image/pjpeg
+      - - application/gzip
+        - application/x-gzip
+    archive_guard:
+      enabled: true
+      strict: true
+      allow_encrypted: false
+      max_total_uncompressed_bytes: 536870912
+      max_single_entry_bytes: 268435456
+      max_compression_ratio: 100
+      max_entries: 10000
+      max_depth: 3
+      max_filename_bytes: 512
+      max_inspection_time_ms: 5000
+      max_probe_bytes: 67108864
+      worker_memory_bytes: 67108864
+      decompress_buffer_bytes: 32768
+    resource_limits:
+      enabled: true
+      max_file_size_bytes: 1073741824
+      max_decompressed_size_bytes: 536870912
+      max_pdf_page_count: 500
+      max_image_width: 10000
+      max_image_height: 10000
+      max_image_pixel_count: 100000000
+      max_object_count: 100000
+      max_xml_depth: 64
+      max_zip_entries: 10000
+      max_embedded_object_count: 0
+      max_parser_time_ms: 5000
+      max_sanitized_memory_bytes: 67108864
+    structural_validation:
+      enabled: true
+      strict: true
+    file_sanitization:
+      enabled: true
+      default_mode: secure_default
+      per_file_type:
+        image/jpeg:
+          mode: sanitize_metadata
+        image/png:
+          mode: sanitize_metadata
+        video/quicktime:
+          mode: sanitize_metadata
+        application/pdf:
+          mode: reject_active_content
+        application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+          mode: reject_active_content
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+          mode: reject_active_content
+        application/vnd.openxmlformats-officedocument.presentationml.presentation:
+          mode: reject_active_content
+        image/svg+xml:
+          mode: reject_active_or_external_content
+        text/markdown:
+          mode: reject_active_or_external_content
+        text/html:
+          mode: reject_active_or_external_content
+        application/xml:
+          mode: reject_active_or_external_content
+        application/msword:
+          mode: reject
+        application/vnd.ms-excel:
+          mode: reject
+        application/vnd.ms-powerpoint:
+          mode: reject
+        text/rtf:
+          mode: reject
+        application/rtf:
+          mode: reject
+      image_video_metadata:
+        default_mode: sanitize_metadata
+        preserve:
+        - Orientation
+        - ICC Profile
+        no_reencode: true
+      office_pdf:
+        default_mode: reject_active_content
+        full_scan_required: true
+      legacy_or_complex_documents:
+        default_mode: reject
+        includes:
+        - legacy Office binary formats
+        - RTF
+      svg:
+        default_mode: reject_active_or_external_content
+        prefer_streaming_xml_parser: true
+      markup:
+        default_mode: reject_active_or_external_content
+        markdown_raw_html_inspection: true
+        html_active_content_inspection: true
+        xml_external_entity_resolution: disabled
+  references:
+  - policy:file-intake-security
+  - system:clamav
+  - requirement:mime-magic-consistency
+  - decision:mime-detector-library
+  - policy:archive-bomb-protection
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - policy:document-active-content-policy
+  - policy:svg-security-policy
+relations:
+- relation: mentions
+  to: decision:mime-detector-library
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:document-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: policy:file-type-sanitization-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:markup-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:resource-limit-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:structural-validation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:svg-security-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:mime-magic-consistency
+  resolution: resolved
+- relation: mentions
+  to: system:clamav
+  resolution: resolved

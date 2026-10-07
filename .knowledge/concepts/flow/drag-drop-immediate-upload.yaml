@@ -1,0 +1,68 @@
+id: flow:drag-drop-immediate-upload
+type: flow
+title: Drag Drop Immediate Upload
+summary: Drag and drop immediate upload starts file transfer as soon as files are
+  selected, before final form submit.
+facts:
+  legacy_body: "Drag and drop immediate upload starts file transfer as soon as files\
+    \ are selected, before final form submit.\n\n```yaml\nflow:\n  trigger: user selects\
+    \ or drops files in client UI\n  steps:\n    - name: create_upload_keys\n    \
+    \  actions:\n        - create one upload key per dropped file\n        - allocate\
+    \ storage folder and object key using policy:storage-key-allocation-policy\n \
+    \       - return folder plus file name key to client\n        - attach client\
+    \ temporary id for UI correlation\n    - name: upload_immediately\n      actions:\n\
+    \        - start transfer to service content endpoint immediately\n        - show\
+    \ per-file progress from browser upload progress and api:session-progress-api\n\
+    \        - allow metadata form editing while uploads continue\n    - name: submit_metadata_later\n\
+    \      actions:\n        - user submits form after metadata is ready\n       \
+    \ - wait for required upload keys through api:upload-api\n        - send metadata\
+    \ and returned file facts to system:application-server\n  rationale:\n    - input\
+    \ type file plus traditional submit delays file transfer until final submit\n\
+    \    - immediate upload hides large file transfer time behind form editing\n \
+    \   - user-visible wait at final submit is reduced\nreferences:\n  - api:upload-api\n\
+    \  - api:session-progress-api\n  - policy:storage-key-allocation-policy\n  - data:upload-batch\n\
+    ```"
+  flow:
+    trigger: user selects or drops files in client UI
+    steps:
+    - name: create_upload_keys
+      actions:
+      - create one upload key per dropped file
+      - allocate storage folder and object key using policy:storage-key-allocation-policy
+      - return folder plus file name key to client
+      - attach client temporary id for UI correlation
+    - name: upload_immediately
+      actions:
+      - start transfer to service content endpoint immediately
+      - show per-file progress from browser upload progress and api:session-progress-api
+      - allow metadata form editing while uploads continue
+    - name: submit_metadata_later
+      actions:
+      - user submits form after metadata is ready
+      - wait for required upload keys through api:upload-api
+      - send metadata and returned file facts to system:application-server
+    rationale:
+    - input type file plus traditional submit delays file transfer until final submit
+    - immediate upload hides large file transfer time behind form editing
+    - user-visible wait at final submit is reduced
+  references:
+  - api:upload-api
+  - api:session-progress-api
+  - policy:storage-key-allocation-policy
+  - data:upload-batch
+relations:
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:upload-batch
+  resolution: resolved
+- relation: mentions
+  to: policy:storage-key-allocation-policy
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved

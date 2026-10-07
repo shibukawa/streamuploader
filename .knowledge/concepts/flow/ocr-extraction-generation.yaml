@@ -1,0 +1,112 @@
+id: flow:ocr-extraction-generation
+type: flow
+title: OCR Extraction Generation
+summary: OCR extraction generation creates searchable text from image-only documents
+  or images when policy enables OCR.
+facts:
+  legacy_body: "OCR extraction generation creates searchable text from image-only\
+    \ documents or images when policy enables OCR.\n\n```yaml\nflow:\n  trigger: policy:search-extraction-policy\
+    \ selects OCR for accepted file\n  steps:\n    - create pending task:\n      \
+    \  actions:\n          - allocate ocr_text data:derived-asset\n          - use\
+    \ artifact object key source object key plus .text.json unless policy overrides\n\
+    \          - create data:async-task-marker with kind ocr_extraction for async\
+    \ execution\n    - rasterize input:\n        pdf: render selected pages with bounded\
+    \ DPI\n        image: decode bounded image\n        office: use normalized_pdf\
+    \ from flow:document-preview-generation when available\n    - preprocess optional:\n\
+    \        - grayscale\n        - deskew\n        - resize within pixel limit\n\
+    \    - run OCR backend:\n        preferred: tesseract\n        fallback: system:local-command-processor\
+    \ when configured\n        inputs: bounded raster pages\n        outputs:\n  \
+    \        - plain text\n          - hOCR or TSV optional\n          - data:processor-result\
+    \ when local command backend is used\n    - normalize and chunk recognized text:\n\
+    \        output: texts.ocr in data:extracted-content JSON\n    - store ocr_text\
+    \ artifact:\n        object_key: source object key plus .text.json\n        merge_behavior:\
+    \ preserve existing texts.title, texts.description, texts.text, and texts.extracted\
+    \ keys from text extraction when present\n    - complete pending task:\n     \
+    \   actions:\n          - update data:derived-asset generated, skipped, or failed\n\
+    \          - delete data:async-task-marker after terminal success or terminal\
+    \ failure\nlimits:\n  - page count\n  - pixels per page\n  - total pixels\n  -\
+    \ wall time\n  - CPU and memory\n  - output size\nreferences:\n  - data:extracted-content\n\
+    \  - data:processor-result\n  - system:ocr-engine\n  - system:local-command-processor\n\
+    \  - system:document-converter\n  - policy:search-extraction-policy\n  - policy:processor-execution-policy\n\
+    ```"
+  flow:
+    trigger: policy:search-extraction-policy selects OCR for accepted file
+    steps:
+    - create pending task:
+        actions:
+        - allocate ocr_text data:derived-asset
+        - use artifact object key source object key plus .text.json unless policy
+          overrides
+        - create data:async-task-marker with kind ocr_extraction for async execution
+    - rasterize input:
+        pdf: render selected pages with bounded DPI
+        image: decode bounded image
+        office: use normalized_pdf from flow:document-preview-generation when available
+    - preprocess optional:
+      - grayscale
+      - deskew
+      - resize within pixel limit
+    - run OCR backend:
+        preferred: tesseract
+        fallback: system:local-command-processor when configured
+        inputs: bounded raster pages
+        outputs:
+        - plain text
+        - hOCR or TSV optional
+        - data:processor-result when local command backend is used
+    - normalize and chunk recognized text:
+        output: texts.ocr in data:extracted-content JSON
+    - store ocr_text artifact:
+        object_key: source object key plus .text.json
+        merge_behavior: preserve existing texts.title, texts.description, texts.text,
+          and texts.extracted keys from text extraction when present
+    - complete pending task:
+        actions:
+        - update data:derived-asset generated, skipped, or failed
+        - delete data:async-task-marker after terminal success or terminal failure
+  limits:
+  - page count
+  - pixels per page
+  - total pixels
+  - wall time
+  - CPU and memory
+  - output size
+  references:
+  - data:extracted-content
+  - data:processor-result
+  - system:ocr-engine
+  - system:local-command-processor
+  - system:document-converter
+  - policy:search-extraction-policy
+  - policy:processor-execution-policy
+relations:
+- relation: mentions
+  to: data:async-task-marker
+  resolution: resolved
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: data:processor-result
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:search-extraction-policy
+  resolution: resolved
+- relation: mentions
+  to: system:document-converter
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved
+- relation: mentions
+  to: system:ocr-engine
+  resolution: resolved

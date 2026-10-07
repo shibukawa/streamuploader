@@ -1,0 +1,82 @@
+id: policy:preview-format-policy
+type: policy
+title: Preview Format Policy
+summary: Preview format policy selects efficient generated preview encodings by source
+  content and visual characteristics.
+facts:
+  legacy_body: "Preview format policy selects efficient generated preview encodings\
+    \ by source content and visual characteristics.\n\n```yaml\npolicy:\n  static_image_outputs:\n\
+    \    lossy:\n      preferred: image/avif\n      fallback:\n        - image/webp\n\
+    \        - image/jpeg\n      use_for:\n        - photo-like images\n        -\
+    \ thumbnails where exact pixels are not required\n    lossless:\n      preferred:\
+    \ image/avif when data:thumbnail-generation-config lossless_policy is force_avif_reduction\n\
+    \      alternative_preferred: image/webp when data:thumbnail-generation-config\
+    \ lossless_policy is webp_lossless\n      fallback:\n        - image/webp\n  \
+    \      - image/png\n        - image/jpeg when alpha is not required and no lossless\
+    \ output is available\n      use_for:\n        - flat graphics\n        - screenshots\n\
+    \        - diagrams\n        - SVG raster previews requiring sharp edges\n  animated_outputs:\n\
+    \    preferred:\n      - image/webp\n      - image/avif when target clients support\
+    \ animated AVIF\n    fallback:\n      - image/gif\n      - image/apng\n  controls:\n\
+    \    - thumbnail size defaults to 400x400 from data:thumbnail-generation-config\n\
+    \    - preserve alpha only when needed\n    - avoid upscaling\n    - cap dimensions\
+    \ and output bytes\n    - allow per-tenant or per-role override\n    - allow backend-driven\
+    \ fallback when selected encoder or tool cannot produce preferred output\nreferences:\n\
+    \  - flow:image-thumbnail-generation\n  - flow:svg-preview-generation\n  - flow:video-preview-generation\n\
+    \  - data:thumbnail-generation-config\n```"
+  policy:
+    static_image_outputs:
+      lossy:
+        preferred: image/avif
+        fallback:
+        - image/webp
+        - image/jpeg
+        use_for:
+        - photo-like images
+        - thumbnails where exact pixels are not required
+      lossless:
+        preferred: image/avif when data:thumbnail-generation-config lossless_policy
+          is force_avif_reduction
+        alternative_preferred: image/webp when data:thumbnail-generation-config lossless_policy
+          is webp_lossless
+        fallback:
+        - image/webp
+        - image/png
+        - image/jpeg when alpha is not required and no lossless output is available
+        use_for:
+        - flat graphics
+        - screenshots
+        - diagrams
+        - SVG raster previews requiring sharp edges
+    animated_outputs:
+      preferred:
+      - image/webp
+      - image/avif when target clients support animated AVIF
+      fallback:
+      - image/gif
+      - image/apng
+    controls:
+    - thumbnail size defaults to 400x400 from data:thumbnail-generation-config
+    - preserve alpha only when needed
+    - avoid upscaling
+    - cap dimensions and output bytes
+    - allow per-tenant or per-role override
+    - allow backend-driven fallback when selected encoder or tool cannot produce preferred
+      output
+  references:
+  - flow:image-thumbnail-generation
+  - flow:svg-preview-generation
+  - flow:video-preview-generation
+  - data:thumbnail-generation-config
+relations:
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: flow:image-thumbnail-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:svg-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:video-preview-generation
+  resolution: resolved

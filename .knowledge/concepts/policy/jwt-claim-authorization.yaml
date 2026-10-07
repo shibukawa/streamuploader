@@ -1,0 +1,51 @@
+id: policy:jwt-claim-authorization
+type: policy
+title: JWT Claim Authorization
+summary: JWT claim authorization validates bearer tokens and evaluates configured
+  claim rules before object access or session operations.
+facts:
+  legacy_body: "JWT claim authorization validates bearer tokens and evaluates configured\
+    \ claim rules before object access or session operations.\n\n```yaml\npolicy:\n\
+    \  token_validation:\n    - verify signature using configured issuer keys or JWKS\n\
+    \    - validate iss, aud, exp, nbf, iat\n    - reject missing or malformed bearer\
+    \ token when auth is required\n  claim_rules:\n    examples:\n      owner_match:\n\
+    \        - claim sub equals object owner id\n      tenant_match:\n        - claim\
+    \ tenant_id equals session tenant id\n      role_or_scope:\n        - scope contains\
+    \ file:read\n        - roles contains uploader_admin\n      custom_claim:\n  \
+    \      - claim value matches configured metadata field\n  decisions:\n    - allow\n\
+    \    - deny\n    - issue_presigned_download\n    - proxy_download\n  audit:\n\
+    \    - subject\n    - tenant\n    - object_key or display_key\n    - decision\n\
+    \    - reason\nreferences:\n  - policy:object-access-policy\n```"
+  policy:
+    token_validation:
+    - verify signature using configured issuer keys or JWKS
+    - validate iss, aud, exp, nbf, iat
+    - reject missing or malformed bearer token when auth is required
+    claim_rules:
+      examples:
+        owner_match:
+        - claim sub equals object owner id
+        tenant_match:
+        - claim tenant_id equals session tenant id
+        role_or_scope:
+        - scope contains file:read
+        - roles contains uploader_admin
+        custom_claim:
+        - claim value matches configured metadata field
+    decisions:
+    - allow
+    - deny
+    - issue_presigned_download
+    - proxy_download
+    audit:
+    - subject
+    - tenant
+    - object_key or display_key
+    - decision
+    - reason
+  references:
+  - policy:object-access-policy
+relations:
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved

@@ -1,0 +1,60 @@
+id: data:metadata-payload
+type: data
+title: Metadata Payload
+summary: Metadata payload is application-owned client JSON enriched with streamuploader
+  file facts.
+facts:
+  legacy_body: "Metadata payload is application-owned client JSON enriched with streamuploader\
+    \ file facts.\n\n```yaml\nshape:\n  client_metadata: object\n  upload_batch:\n\
+    \    batch_key: string optional\n  files:\n    type: list of data:file-item summaries\n\
+    \    include:\n      - display_key\n      - object_key\n      - storage_prefix\n\
+    \  derived_assets:\n    type: list of data:derived-asset summaries when generated\
+    \ or required\n  security:\n    aggregate_decision: allow or reject\n    per_file_results:\
+    \ list\nvalidation:\n  - system:application-server rejects unknown or oversized\
+    \ metadata fields according to app contract\n  - never trust client-supplied content\
+    \ type without prefix inspection\nreferences:\n  - requirement:application-metadata-submit\n\
+    \  - policy:file-intake-security\n  - data:upload-batch\n  - data:derived-asset\n\
+    ```"
+  shape:
+    client_metadata: object
+    upload_batch:
+      batch_key: string optional
+    files:
+      type: list of data:file-item summaries
+      include:
+      - display_key
+      - object_key
+      - storage_prefix
+    derived_assets:
+      type: list of data:derived-asset summaries when generated or required
+    security:
+      aggregate_decision: allow or reject
+      per_file_results: list
+  validation:
+  - system:application-server rejects unknown or oversized metadata fields according
+    to app contract
+  - never trust client-supplied content type without prefix inspection
+  references:
+  - requirement:application-metadata-submit
+  - policy:file-intake-security
+  - data:upload-batch
+  - data:derived-asset
+relations:
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: data:upload-batch
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:application-metadata-submit
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved

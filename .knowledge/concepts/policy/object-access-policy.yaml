@@ -1,0 +1,173 @@
+id: policy:object-access-policy
+type: policy
+title: Object Access Policy
+summary: Object access policy selects one of four download modes for uploaded objects.
+facts:
+  legacy_body: "Object access policy selects one of four download modes for uploaded\
+    \ objects.\n\n```yaml\naccess_modes:\n  direct_public_bucket:\n    description:\
+    \ client downloads through public S3 or CDN URL\n    authorization:\n      - bucket\
+    \ or CDN policy grants read access\n      - object_key knowledge is sufficient\
+    \ in demo\n    best_for:\n      - local demo\n      - public assets\n      - low\
+    \ API server bandwidth\n    constraints:\n      - bucket is public or fronted\
+    \ by public read layer\n      - no streamuploader authorization per download\n\
+    \      - object key and bucket endpoint are visible\n  s3_presigned_download:\n\
+    \    description: backend API asks S3 for short-lived presigned GET URL\n    authorization:\n\
+    \      - application backend or backend control caller decides eligibility\n \
+    \     - generated URL is bearer capability until expiry\n    best_for:\n     \
+    \ - private files with temporary direct S3 delivery\n      - reduced API server\
+    \ egress\n    constraints:\n      - S3 endpoint remains visible\n      - audit\
+    \ issuance separately from object access\n  api_proxy_download:\n    description:\
+    \ streamuploader frontend API streams object bytes from S3\n    authorization:\n\
+    \      - config allow_frontend_file_access must be true\n      - optional application\
+    \ authorization before exposing URL\n    best_for:\n      - hiding bucket endpoint\n\
+    \      - download audit\n      - uniform browser URL surface\n    constraints:\n\
+    \      - API server egress and latency cost\n      - range requests and cache\
+    \ headers must be implemented deliberately\n      - zip archive generation must\
+    \ enforce count and byte limits\n  shared_key_proxy_download:\n    description:\
+    \ backend API creates shared key and frontend API resolves it to a target object\n\
+    \    authorization:\n      - config enable_shared_key must be true\n      - shared\
+    \ key entropy from shared_key_bits\n      - shared key record stored in S3 control\
+    \ prefix\n    best_for:\n      - opaque share links without exposing object key\n\
+    \      - demo of streamuploader-managed access token\n      - revocable or expiring\
+    \ object access\n    constraints:\n      - shared key is bearer capability\n \
+    \     - requires api:shared-key-api and policy:shared-key-policy\n      - frontend\
+    \ file access must be enabled for byte serving\ndefault:\n  demo_public: direct_public_bucket\n\
+    \  private_low_egress: s3_presigned_download\n  private_bucket_hidden: api_proxy_download\n\
+    \  opaque_share: shared_key_proxy_download\nrequired_options:\n  allow_frontend_file_access:\n\
+    \    type: bool\n    default: false\n    affects:\n      - api_proxy_download\n\
+    \      - shared_key_proxy_download\n  enable_shared_key:\n    type: bool\n   \
+    \ default: false\n    affects:\n      - shared_key_proxy_download\n  shared_key_bits:\n\
+    \    type: int\n    default: 128\n    minimum: 96\n    recommended: 128\n    affects:\n\
+    \      - data:shared-key-record key entropy\n  max_archive_files:\n    type: int\n\
+    \    default: 100\n    affects:\n      - api:download-api get_zip_archive\n  max_archive_bytes:\n\
+    \    type: int64\n    default: 1073741824\n    affects:\n      - api:download-api\
+    \ get_zip_archive\ndownload_mode_mapping:\n  public_share: direct_public_bucket\n\
+    \  private_share: s3_presigned_download\n  strict_private: api_proxy_download\n\
+    references:\n  - data:file-item\n  - data:derived-asset\n  - data:shared-key-record\n\
+    \  - policy:storage-key-allocation-policy\n  - policy:shared-key-policy\n  - api:shared-key-api\n\
+    \  - api:download-api\n  - policy:audit-log-policy\n```"
+  access_modes:
+    direct_public_bucket:
+      description: client downloads through public S3 or CDN URL
+      authorization:
+      - bucket or CDN policy grants read access
+      - object_key knowledge is sufficient in demo
+      best_for:
+      - local demo
+      - public assets
+      - low API server bandwidth
+      constraints:
+      - bucket is public or fronted by public read layer
+      - no streamuploader authorization per download
+      - object key and bucket endpoint are visible
+    s3_presigned_download:
+      description: backend API asks S3 for short-lived presigned GET URL
+      authorization:
+      - application backend or backend control caller decides eligibility
+      - generated URL is bearer capability until expiry
+      best_for:
+      - private files with temporary direct S3 delivery
+      - reduced API server egress
+      constraints:
+      - S3 endpoint remains visible
+      - audit issuance separately from object access
+    api_proxy_download:
+      description: streamuploader frontend API streams object bytes from S3
+      authorization:
+      - config allow_frontend_file_access must be true
+      - optional application authorization before exposing URL
+      best_for:
+      - hiding bucket endpoint
+      - download audit
+      - uniform browser URL surface
+      constraints:
+      - API server egress and latency cost
+      - range requests and cache headers must be implemented deliberately
+      - zip archive generation must enforce count and byte limits
+    shared_key_proxy_download:
+      description: backend API creates shared key and frontend API resolves it to
+        a target object
+      authorization:
+      - config enable_shared_key must be true
+      - shared key entropy from shared_key_bits
+      - shared key record stored in S3 control prefix
+      best_for:
+      - opaque share links without exposing object key
+      - demo of streamuploader-managed access token
+      - revocable or expiring object access
+      constraints:
+      - shared key is bearer capability
+      - requires api:shared-key-api and policy:shared-key-policy
+      - frontend file access must be enabled for byte serving
+  default:
+    demo_public: direct_public_bucket
+    private_low_egress: s3_presigned_download
+    private_bucket_hidden: api_proxy_download
+    opaque_share: shared_key_proxy_download
+  required_options:
+    allow_frontend_file_access:
+      type: bool
+      default: false
+      affects:
+      - api_proxy_download
+      - shared_key_proxy_download
+    enable_shared_key:
+      type: bool
+      default: false
+      affects:
+      - shared_key_proxy_download
+    shared_key_bits:
+      type: int
+      default: 128
+      minimum: 96
+      recommended: 128
+      affects:
+      - data:shared-key-record key entropy
+    max_archive_files:
+      type: int
+      default: 100
+      affects:
+      - api:download-api get_zip_archive
+    max_archive_bytes:
+      type: int64
+      default: 1073741824
+      affects:
+      - api:download-api get_zip_archive
+  download_mode_mapping:
+    public_share: direct_public_bucket
+    private_share: s3_presigned_download
+    strict_private: api_proxy_download
+  references:
+  - data:file-item
+  - data:derived-asset
+  - data:shared-key-record
+  - policy:storage-key-allocation-policy
+  - policy:shared-key-policy
+  - api:shared-key-api
+  - api:download-api
+  - policy:audit-log-policy
+relations:
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:shared-key-api
+  resolution: resolved
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: data:shared-key-record
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:shared-key-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:storage-key-allocation-policy
+  resolution: resolved

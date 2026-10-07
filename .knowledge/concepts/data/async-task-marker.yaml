@@ -1,0 +1,68 @@
+id: data:async-task-marker
+type: data
+title: Async Task Marker
+summary: Async task marker is a small S3 object used as durable pending state for
+  post-accept processors.
+facts:
+  legacy_body: "Async task marker is a small S3 object used as durable pending state\
+    \ for post-accept processors.\n\n```yaml\nstorage:\n  prefix: .streamuploader/tasks/\n\
+    \  key_derivation:\n    input:\n      - kind\n      - object_key\n    algorithm:\
+    \ sha256(kind + NUL + object_key)\n    suffix: .json\nfields:\n  object_key: source\
+    \ object key\n  kind: processor kind from policy:worker-queue-policy\n  status:\
+    \ queued or running\n  created_at: RFC3339Nano\n  updated_at: RFC3339Nano\nlifecycle:\n\
+    \  create:\n    - when asynchronous processor starts\n    - before backend-visible\
+    \ pending work can outlive the request\n  delete:\n    - after processor reaches\
+    \ terminal success\n    - after processor reaches terminal failure\n    - during\
+    \ stale work cleanup when task owner decides work is abandoned\nwait_semantics:\n\
+    \  marker_exists: pending\n  marker_absent: complete or not scheduled\nfuture_task_kinds:\n\
+    \  - ocr_extraction\n  - text_extraction\n  - metadata_extraction\n  - download_variant\n\
+    references:\n  - api:async-task-wait-api\n  - policy:worker-queue-policy\n  -\
+    \ policy:work-sentinel-cleanup\n  - data:processor-result\n```"
+  storage:
+    prefix: .streamuploader/tasks/
+    key_derivation:
+      input:
+      - kind
+      - object_key
+      algorithm: sha256(kind + NUL + object_key)
+      suffix: .json
+  fields:
+    object_key: source object key
+    kind: processor kind from policy:worker-queue-policy
+    status: queued or running
+    created_at: RFC3339Nano
+    updated_at: RFC3339Nano
+  lifecycle:
+    create:
+    - when asynchronous processor starts
+    - before backend-visible pending work can outlive the request
+    delete:
+    - after processor reaches terminal success
+    - after processor reaches terminal failure
+    - during stale work cleanup when task owner decides work is abandoned
+  wait_semantics:
+    marker_exists: pending
+    marker_absent: complete or not scheduled
+  future_task_kinds:
+  - ocr_extraction
+  - text_extraction
+  - metadata_extraction
+  - download_variant
+  references:
+  - api:async-task-wait-api
+  - policy:worker-queue-policy
+  - policy:work-sentinel-cleanup
+  - data:processor-result
+relations:
+- relation: mentions
+  to: api:async-task-wait-api
+  resolution: resolved
+- relation: mentions
+  to: data:processor-result
+  resolution: resolved
+- relation: mentions
+  to: policy:work-sentinel-cleanup
+  resolution: resolved
+- relation: mentions
+  to: policy:worker-queue-policy
+  resolution: resolved

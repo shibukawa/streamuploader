@@ -1,0 +1,106 @@
+id: policy:download-variant-policy
+type: policy
+title: Download Variant Policy
+summary: Download variant policy creates or promotes delivery-optimized compressed
+  objects according to storage and compatibility goals.
+facts:
+  legacy_body: "Download variant policy creates or promotes delivery-optimized compressed\
+    \ objects according to storage and compatibility goals.\n\n```yaml\npolicy:\n\
+    \  default: keep_original_and_generate_variant\n  storage_modes:\n    keep_original_and_generate_variant:\n\
+    \      behavior:\n        - original object remains canonical\n        - compressed\
+    \ variants are derived assets linked to data:file-item\n      tradeoff: higher\
+    \ storage, broad compatibility\n    replace_original_same_key:\n      behavior:\n\
+    \        - rewrite original object key with compressed bytes\n        - set Content-Encoding\
+    \ to zstd on that object\n        - keep Content-Type as original media type\n\
+    \      tradeoff: lower storage, requires clients or serving layer to support encoding\n\
+    \    promote_variant_delete_original:\n      behavior:\n        - write compressed\
+    \ variant under separate key\n        - update metadata payload to promoted compressed\
+    \ key\n        - delete original after successful promotion\n      tradeoff: lower\
+    \ storage, capability URL changes unless display key is remapped\n  compression:\n\
+    \    zstd:\n      generate_when:\n        - source content type is compressible\n\
+    \        - source size exceeds threshold\n        - expected download frequency\
+    \ justifies worker cost\n      content_encoding: zstd\n      object_metadata:\n\
+    \        Content-Type: original content type\n        Content-Encoding: zstd\n\
+    \        Vary: Accept-Encoding when served through HTTP layer\n      avoid_for:\n\
+    \        - images such as jpeg, png, avif, webp, heic\n        - video\n     \
+    \   - audio\n        - archives such as zip, gzip, zstd, xz, 7z\n        - Office\
+    \ Open XML and OpenDocument files when already zip containers\n        - PDFs\
+    \ when sampling shows poor compression benefit\n        - encrypted or random-like\
+    \ content\n        - very small files\n    gzip:\n      generate_when:\n     \
+    \   - legacy client support is required\n  serving:\n    - choose variant based\
+    \ on Accept-Encoding and client support\n    - fall back to original when zstd\
+    \ is unsupported\n    - do not set Content-Encoding unless object bytes are actually\
+    \ encoded\n    - replacement modes require product acceptance that raw capability\
+    \ URLs may require encoding support\n  cleanup:\n    - delete variants with parent\
+    \ session prefix when uncommitted\n    - expire unused variants by lifecycle policy\
+    \ when configured\nreferences:\n  - data:derived-asset\n  - flow:download-variant-generation\n\
+    \  - system:s3-storage\n```"
+  policy:
+    default: keep_original_and_generate_variant
+    storage_modes:
+      keep_original_and_generate_variant:
+        behavior:
+        - original object remains canonical
+        - compressed variants are derived assets linked to data:file-item
+        tradeoff: higher storage, broad compatibility
+      replace_original_same_key:
+        behavior:
+        - rewrite original object key with compressed bytes
+        - set Content-Encoding to zstd on that object
+        - keep Content-Type as original media type
+        tradeoff: lower storage, requires clients or serving layer to support encoding
+      promote_variant_delete_original:
+        behavior:
+        - write compressed variant under separate key
+        - update metadata payload to promoted compressed key
+        - delete original after successful promotion
+        tradeoff: lower storage, capability URL changes unless display key is remapped
+    compression:
+      zstd:
+        generate_when:
+        - source content type is compressible
+        - source size exceeds threshold
+        - expected download frequency justifies worker cost
+        content_encoding: zstd
+        object_metadata:
+          Content-Type: original content type
+          Content-Encoding: zstd
+          Vary: Accept-Encoding when served through HTTP layer
+        avoid_for:
+        - images such as jpeg, png, avif, webp, heic
+        - video
+        - audio
+        - archives such as zip, gzip, zstd, xz, 7z
+        - Office Open XML and OpenDocument files when already zip containers
+        - PDFs when sampling shows poor compression benefit
+        - encrypted or random-like content
+        - very small files
+      gzip:
+        generate_when:
+        - legacy client support is required
+    serving:
+    - choose variant based on Accept-Encoding and client support
+    - fall back to original when zstd is unsupported
+    - do not set Content-Encoding unless object bytes are actually encoded
+    - replacement modes require product acceptance that raw capability URLs may require
+      encoding support
+    cleanup:
+    - delete variants with parent session prefix when uncommitted
+    - expire unused variants by lifecycle policy when configured
+  references:
+  - data:derived-asset
+  - flow:download-variant-generation
+  - system:s3-storage
+relations:
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: flow:download-variant-generation
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

@@ -1,0 +1,198 @@
+id: policy:file-type-sanitization-policy
+type: policy
+title: File Type Sanitization Policy
+summary: File type sanitization policy applies configurable per-family inspection
+  and sanitize behavior before durable upload acceptance.
+facts:
+  legacy_body: "File type sanitization policy applies configurable per-family inspection\
+    \ and sanitize behavior before durable upload acceptance.\n\n```yaml\nrules:\n\
+    \  default_posture: secure_by_default\n  config_source: data:security-policy-config\
+    \ file_sanitization\n  upload_path:\n    - run resource limits from policy:resource-limit-policy\
+    \ before deeper parsing\n    - run structural validation from policy:structural-validation-policy\
+    \ when parser exists\n    - run prefix or chunk-only checks before storage upload\
+    \ when bounded reads are enough\n    - run sanitizer before upload processing\
+    \ when original bytes must be transformed\n    - do not use io.MultiWriter for\
+    \ sanitize transforms\n    - sanitized bytes become the bytes streamed to system:s3-storage\n\
+    \    - in-memory sanitized buffer is allowed only within configured memory limit\n\
+    \    - for full-scan formats, store candidate bytes to sibling .tmp key or bounded\
+    \ work file and commit final key only after allow\n  images_and_videos:\n    scope:\n\
+    \      - EXIF-capable image formats\n      - EXIF-capable video formats\n    default:\
+    \ sanitize_metadata\n    preserve_metadata_whitelist:\n      - Orientation\n \
+    \     - ICC Profile\n    remove_metadata:\n      - GPS location\n      - capture\
+    \ timestamp\n      - camera or device model\n      - serial numbers\n      - author\n\
+    \      - comments\n      - identifying EXIF, XMP, IPTC, QuickTime, or container\
+    \ tags\n    constraints:\n      - do not re-encode media\n      - preserve media\
+    \ payload bytes when possible\n      - reject if sanitizer would require lossy\
+    \ rewrite or unsupported container rewrite\n      - apply max file size and image\
+    \ dimension limits\n    optional_modes:\n      accept_as_is: no metadata inspection\
+    \ or sanitize\n      reject_on_sensitive_metadata: reject when privacy-sensitive\
+    \ metadata exists\n  office_and_pdf:\n    scope:\n      - docx\n      - xlsx\n\
+    \      - pptx\n      - pdf\n    default: reject_active_content\n    behavior:\n\
+    \      - full file scan required\n      - full scan may run in parallel worker\
+    \ after request body is staged\n      - reject unsupported active or executable\
+    \ content\n      - optional sanitize only when implementation can remove feature\
+    \ without corrupting file\n    references:\n      - policy:document-active-content-policy\n\
+    \  legacy_or_complex_documents:\n    scope:\n      - doc\n      - xls\n      -\
+    \ ppt\n      - rtf\n    default: reject\n    reason: legacy or complex rich document\
+    \ formats have larger attack surface and unreliable inspection\n    optional_modes:\n\
+    \      accept_as_is: store without inspection or sanitization\n  svg:\n    default:\
+    \ reject_active_or_external_content\n    behavior:\n      - use SAX or streaming\
+    \ XML parser when implementation supports it\n      - otherwise treat as full-scan\
+    \ format and inspect before final commit\n    references:\n      - policy:svg-security-policy\n\
+    \  markup:\n    scope:\n      - markdown\n      - html\n      - xml\n    default:\
+    \ reject_active_or_external_content\n    behavior:\n      - reject Markdown raw\
+    \ HTML containing script, iframe, or other active HTML\n      - reject HTML script,\
+    \ iframe, embedded content, event handlers, JavaScript URLs, and external loads\n\
+    \      - reject XML external entity, external DTD subset, XInclude, and unsafe\
+    \ entity expansion features\n      - disable XML external entity resolution in\
+    \ parser configuration\n      - treat as full-scan text formats before final commit\
+    \ when default mode applies\n    references:\n      - policy:markup-active-content-policy\n\
+    \  reject:\n    - configured maximum file size exceeded\n    - resource parser\
+    \ limit exceeded\n    - structural validation failed\n    - active content found\
+    \ in default reject-active policy\n    - sanitizer unavailable for required sanitize\
+    \ mode\n    - sanitized output exceeds configured limits\n  result:\n    reject_http_status:\
+    \ 415\n    reject_error_code: file_sanitization_policy_violation\nreferences:\n\
+    \  - data:security-policy-config\n  - policy:file-intake-security\n  - flow:security-gated-upload-acceptance\n\
+    \  - policy:metadata-stripping-policy\n  - policy:resource-limit-policy\n  - policy:structural-validation-policy\n\
+    \  - policy:document-active-content-policy\n  - policy:svg-security-policy\n \
+    \ - policy:markup-active-content-policy\n  - system:s3-storage\n```"
+  rules:
+    default_posture: secure_by_default
+    config_source: data:security-policy-config file_sanitization
+    upload_path:
+    - run resource limits from policy:resource-limit-policy before deeper parsing
+    - run structural validation from policy:structural-validation-policy when parser
+      exists
+    - run prefix or chunk-only checks before storage upload when bounded reads are
+      enough
+    - run sanitizer before upload processing when original bytes must be transformed
+    - do not use io.MultiWriter for sanitize transforms
+    - sanitized bytes become the bytes streamed to system:s3-storage
+    - in-memory sanitized buffer is allowed only within configured memory limit
+    - for full-scan formats, store candidate bytes to sibling .tmp key or bounded
+      work file and commit final key only after allow
+    images_and_videos:
+      scope:
+      - EXIF-capable image formats
+      - EXIF-capable video formats
+      default: sanitize_metadata
+      preserve_metadata_whitelist:
+      - Orientation
+      - ICC Profile
+      remove_metadata:
+      - GPS location
+      - capture timestamp
+      - camera or device model
+      - serial numbers
+      - author
+      - comments
+      - identifying EXIF, XMP, IPTC, QuickTime, or container tags
+      constraints:
+      - do not re-encode media
+      - preserve media payload bytes when possible
+      - reject if sanitizer would require lossy rewrite or unsupported container rewrite
+      - apply max file size and image dimension limits
+      optional_modes:
+        accept_as_is: no metadata inspection or sanitize
+        reject_on_sensitive_metadata: reject when privacy-sensitive metadata exists
+    office_and_pdf:
+      scope:
+      - docx
+      - xlsx
+      - pptx
+      - pdf
+      default: reject_active_content
+      behavior:
+      - full file scan required
+      - full scan may run in parallel worker after request body is staged
+      - reject unsupported active or executable content
+      - optional sanitize only when implementation can remove feature without corrupting
+        file
+      references:
+      - policy:document-active-content-policy
+    legacy_or_complex_documents:
+      scope:
+      - doc
+      - xls
+      - ppt
+      - rtf
+      default: reject
+      reason: legacy or complex rich document formats have larger attack surface and
+        unreliable inspection
+      optional_modes:
+        accept_as_is: store without inspection or sanitization
+    svg:
+      default: reject_active_or_external_content
+      behavior:
+      - use SAX or streaming XML parser when implementation supports it
+      - otherwise treat as full-scan format and inspect before final commit
+      references:
+      - policy:svg-security-policy
+    markup:
+      scope:
+      - markdown
+      - html
+      - xml
+      default: reject_active_or_external_content
+      behavior:
+      - reject Markdown raw HTML containing script, iframe, or other active HTML
+      - reject HTML script, iframe, embedded content, event handlers, JavaScript URLs,
+        and external loads
+      - reject XML external entity, external DTD subset, XInclude, and unsafe entity
+        expansion features
+      - disable XML external entity resolution in parser configuration
+      - treat as full-scan text formats before final commit when default mode applies
+      references:
+      - policy:markup-active-content-policy
+    reject:
+    - configured maximum file size exceeded
+    - resource parser limit exceeded
+    - structural validation failed
+    - active content found in default reject-active policy
+    - sanitizer unavailable for required sanitize mode
+    - sanitized output exceeds configured limits
+    result:
+      reject_http_status: 415
+      reject_error_code: file_sanitization_policy_violation
+  references:
+  - data:security-policy-config
+  - policy:file-intake-security
+  - flow:security-gated-upload-acceptance
+  - policy:metadata-stripping-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - policy:document-active-content-policy
+  - policy:svg-security-policy
+  - policy:markup-active-content-policy
+  - system:s3-storage
+relations:
+- relation: mentions
+  to: data:security-policy-config
+  resolution: resolved
+- relation: mentions
+  to: flow:security-gated-upload-acceptance
+  resolution: resolved
+- relation: mentions
+  to: policy:document-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: policy:markup-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:metadata-stripping-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:resource-limit-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:structural-validation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:svg-security-policy
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

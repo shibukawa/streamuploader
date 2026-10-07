@@ -1,0 +1,68 @@
+id: data:upload-batch
+type: data
+title: Upload Batch
+summary: Upload batch is an internal or request-scoped view over upload keys used
+  to wait for multiple files.
+facts:
+  legacy_body: "Upload batch is an internal or request-scoped view over upload keys\
+    \ used to wait for multiple files.\n\n```yaml\nfields:\n  batch_key: optional\
+    \ opaque batch key or server-side wait id\n  status:\n    enum:\n      - created\n\
+    \      - receiving_files\n      - ready\n      - failed\n      - expired\n  files:\n\
+    \    type: list of data:file-item\n  expected_files:\n    min_count: configurable\n\
+    \    max_count: configurable\n    required_roles: configurable\n  expires_at:\
+    \ timestamp\n  progress:\n    total_files: integer\n    uploaded_files: integer\n\
+    \    total_bytes: integer optional\n    uploaded_bytes: integer optional\n   \
+    \ current_events:\n      type: list of recent progress event ids\n  work_sentinel_key:\
+    \ S3 .work object key\nremoved:\n  - no application metadata draft is stored\n\
+    \  - no upstream record id is stored\n  - no commit idempotency key is needed\n\
+    references:\n  - api:upload-api\n  - api:session-progress-api\n  - flow:session-assembly\n\
+    \  - policy:work-sentinel-cleanup\n```"
+  fields:
+    batch_key: optional opaque batch key or server-side wait id
+    status:
+      enum:
+      - created
+      - receiving_files
+      - ready
+      - failed
+      - expired
+    files:
+      type: list of data:file-item
+    expected_files:
+      min_count: configurable
+      max_count: configurable
+      required_roles: configurable
+    expires_at: timestamp
+    progress:
+      total_files: integer
+      uploaded_files: integer
+      total_bytes: integer optional
+      uploaded_bytes: integer optional
+      current_events:
+        type: list of recent progress event ids
+    work_sentinel_key: S3 .work object key
+  removed:
+  - no application metadata draft is stored
+  - no upstream record id is stored
+  - no commit idempotency key is needed
+  references:
+  - api:upload-api
+  - api:session-progress-api
+  - flow:session-assembly
+  - policy:work-sentinel-cleanup
+relations:
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: flow:session-assembly
+  resolution: resolved
+- relation: mentions
+  to: policy:work-sentinel-cleanup
+  resolution: resolved

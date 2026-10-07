@@ -1,0 +1,68 @@
+id: decision:serverless-upload-state
+type: decision
+title: Serverless Upload State
+summary: Serverless upload nodes must not depend on local upload state.
+facts:
+  legacy_body: "Serverless upload nodes must not depend on local upload state.\n\n\
+    ```yaml\ndecision:\n  selected:\n    - stateless_service_nodes\n    - durable_work_state_in_s3\n\
+    \    - service_side_sdk_multipart_upload\n  state_locations:\n    s3_work_sentinel:\n\
+    \      stores:\n        - session status\n        - storage key allocation\n \
+    \       - multipart upload id when resumable service-side multipart is used\n\
+    \        - part numbers and ETags when needed for completion\n        - file security\
+    \ and progress summary\n    s3_multipart_service:\n      stores:\n        - uploaded\
+    \ parts\n        - upload id state recoverable by list parts\n  transfer_policy:\n\
+    \    - do not use presigned URLs for S3 upload\n    - handling node streams request\
+    \ body to S3 with AWS SDK multipart upload\n    - persist multipart upload id\
+    \ and completed part ETags when resumability across nodes is needed\n  concurrency:\n\
+    \    - update .work with optimistic ETag or equivalent conditional write where\
+    \ available\n    - make progress updates idempotent\n    - allow any node to resume\
+    \ from .work plus S3 multipart state\n  rationale:\n    - serverless instances\
+    \ can be replaced at any time\n    - durable minimal state belongs in policy:work-sentinel-cleanup\
+    \ .work object\n    - S3 is close to the service, so server-side multipart upload\
+    \ avoids hidden URL state\nreferences:\n  - policy:work-sentinel-cleanup\n  -\
+    \ decision:upload-transport-boundary\n  - system:s3-storage\n```"
+  decision:
+    selected:
+    - stateless_service_nodes
+    - durable_work_state_in_s3
+    - service_side_sdk_multipart_upload
+    state_locations:
+      s3_work_sentinel:
+        stores:
+        - session status
+        - storage key allocation
+        - multipart upload id when resumable service-side multipart is used
+        - part numbers and ETags when needed for completion
+        - file security and progress summary
+      s3_multipart_service:
+        stores:
+        - uploaded parts
+        - upload id state recoverable by list parts
+    transfer_policy:
+    - do not use presigned URLs for S3 upload
+    - handling node streams request body to S3 with AWS SDK multipart upload
+    - persist multipart upload id and completed part ETags when resumability across
+      nodes is needed
+    concurrency:
+    - update .work with optimistic ETag or equivalent conditional write where available
+    - make progress updates idempotent
+    - allow any node to resume from .work plus S3 multipart state
+    rationale:
+    - serverless instances can be replaced at any time
+    - durable minimal state belongs in policy:work-sentinel-cleanup .work object
+    - S3 is close to the service, so server-side multipart upload avoids hidden URL
+      state
+  references:
+  - policy:work-sentinel-cleanup
+  - decision:upload-transport-boundary
+  - system:s3-storage
+relations:
+- relation: mentions
+  to: decision:upload-transport-boundary
+  resolution: resolved
+- relation: mentions
+  to: policy:work-sentinel-cleanup
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

@@ -1,0 +1,323 @@
+id: policy:file-intake-security
+type: policy
+title: File Intake Security
+summary: File intake policy rejects risky uploads before durable storage whenever
+  the decision can be made from bounded stream prefix inspection.
+facts:
+  legacy_body: "File intake policy rejects risky uploads before durable storage whenever\
+    \ the decision can be made from bounded stream prefix inspection.\n\n```yaml\n\
+    rules:\n  default_posture: whitelist\n  prefix_inspection:\n    read_limit_bytes:\
+    \ data:security-policy-config mime_magic.prefix_bytes default 3072\n    checks:\n\
+    \      - system:content-detector lightweight type detection\n      - magic number\
+    \ detection\n      - known dangerous executable signatures\n      - shebang and\
+    \ script language detection\n      - archive or polyglot indicators when relevant\n\
+    \      - declared versus detected content type mismatch\n      - known filename\
+    \ extension versus detected or declared content type mismatch\n    stream_handling:\n\
+    \      - read at most configured prefix bytes from http request body\n      -\
+    \ detect type from prefix bytes only on request path\n      - replay prefix before\
+    \ remaining body with rule:prefix-replay\n      - send replayed stream to system:s3-storage\
+    \ only after allow decision\n  declared_mime_consistency:\n    enabled: default\
+    \ true, opt out through data:security-policy-config mime_magic.enabled false\n\
+    \    source_order:\n      - create_upload_key content_type\n      - upload request\
+    \ Content-Type header\n    normalization:\n      - parse media type and ignore\
+    \ parameters such as charset\n      - compare canonical MIME essence values\n\
+    \      - allow configured equivalent groups for common aliases\n      - allow\
+    \ built-in browser generic MIME compatibility before mismatch rejection:\n   \
+    \       text/plain:\n            includes: JSON, JSON suffix MIME, NDJSON, YAML,\
+    \ Python source MIME and Python MIME aliases\n          text/markdown:\n     \
+    \       includes: text/plain and text/html for Markdown files whose prefix looks\
+    \ like HTML\n          detected_text_plain:\n            includes: declared known\
+    \ text-derived MIME such as JSON, YAML, CSV, Markdown, HTML/XML, source text\n\
+    \            excludes: image, PDF, Office, archive, executable, opaque binary\
+    \ declarations\n          application/octet-stream:\n            includes: generic\
+    \ text fallback for text extensions plus Mach-O, ELF, ELF object/core/shared library,\
+    \ PE/MS portable executable and download MIME\n          scope: MIME mismatch\
+    \ suppression only\n          parser_policy: do not require parser validation\
+    \ during MIME consistency; downstream processors may parse strictly when they\
+    \ need structured semantics\n      - allow extension fallback before mismatch\
+    \ rejection:\n          markdown:\n            extensions: [.md, .markdown]\n\
+    \            declared_detected_pairs:\n              - [text/markdown, text/plain]\n\
+    \              - [text/markdown, text/html]\n            required_followup: policy:markup-active-content-policy\
+    \ markdown inspection\n          restructuredtext:\n            extensions: [.rst,\
+    \ .rest]\n            declared_detected_pairs:\n              - [application/octet-stream,\
+    \ text/plain]\n              - [text/plain, text/plain]\n          makefile:\n\
+    \            basenames: [Makefile, GNUmakefile]\n            script_family: make\n\
+    \          windows_script:\n            extensions: [.bat, .cmd, .ps1, .psm1,\
+    \ .psd1]\n            script_family:\n              bat_cmd: batch\n         \
+    \     ps: powershell\n            required_followup: reject_script_uploads unless\
+    \ matching script family or extension is explicitly allowed\n    filtering:\n\
+    \      config_source: data:security-policy-config\n      allow_mime_types: optional\
+    \ whitelist, empty means no whitelist\n      allow_file_types: category or short-name\
+    \ whitelist expanded to MIME types\n      deny_mime_types: explicit reject list\n\
+    \      deny_file_types: category or short-name deny list expanded to MIME types\n\
+    \      equivalent_mime_types: configured alias groups\n      generic_mime_compatibility:\
+    \ built-in mismatch-only mapping, not used for allow or deny matching\n      extension_fallback:\
+    \ built-in mismatch-only and script-family mapping, not used for allow or deny\
+    \ matching\n    extension_consistency:\n      scope: filename extensions known\
+    \ by data:security-policy-config allow_file_types aliases\n      rule:\n     \
+    \   - derive expected MIME set from last filename extension\n        - allow when\
+    \ detected MIME matches expected MIME or configured equivalent group\n       \
+    \ - allow when declared MIME matches expected MIME and generic browser MIME compatibility\
+    \ explains detected MIME\n        - skip when extension is unknown to policy\n\
+    \      rejects:\n        - image/png bytes uploaded as .jpg when declared or detected\
+    \ type is image/png\n        - application/pdf bytes uploaded with known non-pdf\
+    \ extension\n      error:\n        http_status: 415\n        code: file_extension_mismatch\n\
+    \    archive_entry_consistency:\n      scope: zip, tar, and 7z entries with known\
+    \ filename extensions\n      rule:\n        - archive guard reads only bounded\
+    \ prefix bytes from each entry\n        - detected entry MIME must match entry\
+    \ extension expected MIME or configured equivalent group\n        - script entry\
+    \ names or shebang prefixes are rejected unless explicitly allowed\n        -\
+    \ generic text detection is allowed for text-derived extensions using the same\
+    \ compatibility rules\n        - unknown entry extensions are ignored by this\
+    \ check\n      error:\n        http_status: 415\n        codes:\n          - archive_entry_type_mismatch\n\
+    \          - archive_entry_script_rejected\n    reject_when:\n      - declared\
+    \ MIME exists and detected MIME conflicts\n      - known filename extension conflicts\
+    \ with detected and declared MIME\n      - zip, tar, or 7z entry known filename\
+    \ extension conflicts with detected entry MIME\n      - zip, tar, or 7z entry\
+    \ appears script-like and scripts are not explicitly allowed\n      - detected\
+    \ or declared MIME matches deny list\n      - allow list exists and neither detected\
+    \ nor declared MIME is allowed\n      - detected MIME is unknown in strict mode\n\
+    \      - content appears executable, script, or archive disallowed by later policy\n\
+    \    error:\n      http_status: 415\n      code: content_type_mismatch\n     \
+    \ response: JSON error\n  allowlist:\n    managed_by: configuration\n    values:\n\
+    \      - media type\n      - extension only as secondary hint\n      - magic signature\n\
+    \  optional_scan:\n    engine: system:clamav\n    mode:\n      - stream scan when\
+    \ available\n      - asynchronous scan only when product accepts quarantine workflow\n\
+    \  reject:\n    - executable formats unless explicitly allowed\n    - shell script\
+    \ or other script uploaded under non-script media type\n    - unknown type when\
+    \ whitelist mode is strict\n    - file exceeding configured size limit\n    -\
+    \ archive violating policy:archive-bomb-protection\n    - file exceeding policy:resource-limit-policy\n\
+    \    - file failing policy:structural-validation-policy\n    - file rejected by\
+    \ policy:file-type-sanitization-policy\n    - Markdown, HTML, or XML rejected\
+    \ by policy:markup-active-content-policy\n  references:\n    - rule:prefix-replay\n\
+    \    - requirement:streaming-upload\n    - requirement:mime-magic-consistency\n\
+    \    - data:security-policy-config\n    - system:content-detector\n    - decision:mime-detector-library\n\
+    \    - policy:archive-bomb-protection\n    - policy:file-type-sanitization-policy\n\
+    \    - policy:resource-limit-policy\n    - policy:structural-validation-policy\n\
+    \    - policy:document-active-content-policy\n    - policy:svg-security-policy\n\
+    \    - policy:markup-active-content-policy\n    - data:security-check-result\n\
+    ```"
+  rules:
+    default_posture: whitelist
+    prefix_inspection:
+      read_limit_bytes: data:security-policy-config mime_magic.prefix_bytes default
+        3072
+      checks:
+      - system:content-detector lightweight type detection
+      - magic number detection
+      - known dangerous executable signatures
+      - shebang and script language detection
+      - archive or polyglot indicators when relevant
+      - declared versus detected content type mismatch
+      - known filename extension versus detected or declared content type mismatch
+      stream_handling:
+      - read at most configured prefix bytes from http request body
+      - detect type from prefix bytes only on request path
+      - replay prefix before remaining body with rule:prefix-replay
+      - send replayed stream to system:s3-storage only after allow decision
+    declared_mime_consistency:
+      enabled: default true, opt out through data:security-policy-config mime_magic.enabled
+        false
+      source_order:
+      - create_upload_key content_type
+      - upload request Content-Type header
+      normalization:
+      - parse media type and ignore parameters such as charset
+      - compare canonical MIME essence values
+      - allow configured equivalent groups for common aliases
+      - allow built-in browser generic MIME compatibility before mismatch rejection:
+          text/plain:
+            includes: JSON, JSON suffix MIME, NDJSON, YAML, Python source MIME and
+              Python MIME aliases
+          text/markdown:
+            includes: text/plain and text/html for Markdown files whose prefix looks
+              like HTML
+          detected_text_plain:
+            includes: declared known text-derived MIME such as JSON, YAML, CSV, Markdown,
+              HTML/XML, source text
+            excludes: image, PDF, Office, archive, executable, opaque binary declarations
+          application/octet-stream:
+            includes: generic text fallback for text extensions plus Mach-O, ELF,
+              ELF object/core/shared library, PE/MS portable executable and download
+              MIME
+          scope: MIME mismatch suppression only
+          parser_policy: do not require parser validation during MIME consistency;
+            downstream processors may parse strictly when they need structured semantics
+      - allow extension fallback before mismatch rejection:
+          markdown:
+            extensions:
+            - .md
+            - .markdown
+            declared_detected_pairs:
+            - - text/markdown
+              - text/plain
+            - - text/markdown
+              - text/html
+            required_followup: policy:markup-active-content-policy markdown inspection
+          restructuredtext:
+            extensions:
+            - .rst
+            - .rest
+            declared_detected_pairs:
+            - - application/octet-stream
+              - text/plain
+            - - text/plain
+              - text/plain
+          makefile:
+            basenames:
+            - Makefile
+            - GNUmakefile
+            script_family: make
+          windows_script:
+            extensions:
+            - .bat
+            - .cmd
+            - .ps1
+            - .psm1
+            - .psd1
+            script_family:
+              bat_cmd: batch
+              ps: powershell
+            required_followup: reject_script_uploads unless matching script family
+              or extension is explicitly allowed
+      filtering:
+        config_source: data:security-policy-config
+        allow_mime_types: optional whitelist, empty means no whitelist
+        allow_file_types: category or short-name whitelist expanded to MIME types
+        deny_mime_types: explicit reject list
+        deny_file_types: category or short-name deny list expanded to MIME types
+        equivalent_mime_types: configured alias groups
+        generic_mime_compatibility: built-in mismatch-only mapping, not used for allow
+          or deny matching
+        extension_fallback: built-in mismatch-only and script-family mapping, not
+          used for allow or deny matching
+      extension_consistency:
+        scope: filename extensions known by data:security-policy-config allow_file_types
+          aliases
+        rule:
+        - derive expected MIME set from last filename extension
+        - allow when detected MIME matches expected MIME or configured equivalent
+          group
+        - allow when declared MIME matches expected MIME and generic browser MIME
+          compatibility explains detected MIME
+        - skip when extension is unknown to policy
+        rejects:
+        - image/png bytes uploaded as .jpg when declared or detected type is image/png
+        - application/pdf bytes uploaded with known non-pdf extension
+        error:
+          http_status: 415
+          code: file_extension_mismatch
+      archive_entry_consistency:
+        scope: zip, tar, and 7z entries with known filename extensions
+        rule:
+        - archive guard reads only bounded prefix bytes from each entry
+        - detected entry MIME must match entry extension expected MIME or configured
+          equivalent group
+        - script entry names or shebang prefixes are rejected unless explicitly allowed
+        - generic text detection is allowed for text-derived extensions using the
+          same compatibility rules
+        - unknown entry extensions are ignored by this check
+        error:
+          http_status: 415
+          codes:
+          - archive_entry_type_mismatch
+          - archive_entry_script_rejected
+      reject_when:
+      - declared MIME exists and detected MIME conflicts
+      - known filename extension conflicts with detected and declared MIME
+      - zip, tar, or 7z entry known filename extension conflicts with detected entry
+        MIME
+      - zip, tar, or 7z entry appears script-like and scripts are not explicitly allowed
+      - detected or declared MIME matches deny list
+      - allow list exists and neither detected nor declared MIME is allowed
+      - detected MIME is unknown in strict mode
+      - content appears executable, script, or archive disallowed by later policy
+      error:
+        http_status: 415
+        code: content_type_mismatch
+        response: JSON error
+    allowlist:
+      managed_by: configuration
+      values:
+      - media type
+      - extension only as secondary hint
+      - magic signature
+    optional_scan:
+      engine: system:clamav
+      mode:
+      - stream scan when available
+      - asynchronous scan only when product accepts quarantine workflow
+    reject:
+    - executable formats unless explicitly allowed
+    - shell script or other script uploaded under non-script media type
+    - unknown type when whitelist mode is strict
+    - file exceeding configured size limit
+    - archive violating policy:archive-bomb-protection
+    - file exceeding policy:resource-limit-policy
+    - file failing policy:structural-validation-policy
+    - file rejected by policy:file-type-sanitization-policy
+    - Markdown, HTML, or XML rejected by policy:markup-active-content-policy
+    references:
+    - rule:prefix-replay
+    - requirement:streaming-upload
+    - requirement:mime-magic-consistency
+    - data:security-policy-config
+    - system:content-detector
+    - decision:mime-detector-library
+    - policy:archive-bomb-protection
+    - policy:file-type-sanitization-policy
+    - policy:resource-limit-policy
+    - policy:structural-validation-policy
+    - policy:document-active-content-policy
+    - policy:svg-security-policy
+    - policy:markup-active-content-policy
+    - data:security-check-result
+relations:
+- relation: mentions
+  to: data:security-check-result
+  resolution: resolved
+- relation: mentions
+  to: data:security-policy-config
+  resolution: resolved
+- relation: mentions
+  to: decision:mime-detector-library
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:document-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:file-type-sanitization-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:markup-active-content-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:resource-limit-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:structural-validation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:svg-security-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:mime-magic-consistency
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved
+- relation: mentions
+  to: rule:prefix-replay
+  resolution: resolved
+- relation: mentions
+  to: system:clamav
+  resolution: resolved
+- relation: mentions
+  to: system:content-detector
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

@@ -1,0 +1,75 @@
+id: decision:derived-asset-readiness-policy
+type: decision
+title: Derived Asset Readiness Policy
+summary: Preview generation should not block original file upload acceptance by default;
+  pending previews are represented by no-cache placeholders.
+facts:
+  legacy_body: "Preview generation should not block original file upload acceptance\
+    \ by default; pending previews are represented by no-cache placeholders.\n\n```yaml\n\
+    decision:\n  default: async_after_original_upload\n  rationale:\n    - preview\
+    \ failures should not block generic file upload flows\n    - image and document\
+    \ processing can be slower and more failure-prone than storage\n    - application\
+    \ metadata can use original file keys while previews are generated\n  modes:\n\
+    \    async_optional:\n      behavior:\n        - flow:security-gated-upload-acceptance\
+    \ completes original file acceptance first\n        - preview generation runs\
+    \ after or beside original file readiness\n        - pending requests return api:derived-asset-serving-api\
+    \ placeholder\n    later_application_update:\n      behavior:\n        - frontend\
+    \ may submit metadata with original file keys\n        - application may later\
+    \ patch metadata with derived asset keys if product needs it\n    required_before_metadata_submit:\n\
+    \      status: discouraged\n      behavior:\n        - use only when application\
+    \ cannot accept original file without preview\nreferences:\n  - flow:image-thumbnail-generation\n\
+    \  - flow:document-preview-generation\n  - policy:preview-generation-policy\n\
+    \  - flow:security-gated-upload-acceptance\n  - api:derived-asset-serving-api\n\
+    \  - data:derived-asset\n  - requirement:application-metadata-submit\n```"
+  decision:
+    default: async_after_original_upload
+    rationale:
+    - preview failures should not block generic file upload flows
+    - image and document processing can be slower and more failure-prone than storage
+    - application metadata can use original file keys while previews are generated
+    modes:
+      async_optional:
+        behavior:
+        - flow:security-gated-upload-acceptance completes original file acceptance
+          first
+        - preview generation runs after or beside original file readiness
+        - pending requests return api:derived-asset-serving-api placeholder
+      later_application_update:
+        behavior:
+        - frontend may submit metadata with original file keys
+        - application may later patch metadata with derived asset keys if product
+          needs it
+      required_before_metadata_submit:
+        status: discouraged
+        behavior:
+        - use only when application cannot accept original file without preview
+  references:
+  - flow:image-thumbnail-generation
+  - flow:document-preview-generation
+  - policy:preview-generation-policy
+  - flow:security-gated-upload-acceptance
+  - api:derived-asset-serving-api
+  - data:derived-asset
+  - requirement:application-metadata-submit
+relations:
+- relation: mentions
+  to: api:derived-asset-serving-api
+  resolution: resolved
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:image-thumbnail-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:security-gated-upload-acceptance
+  resolution: resolved
+- relation: mentions
+  to: policy:preview-generation-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:application-metadata-submit
+  resolution: resolved

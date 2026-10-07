@@ -1,0 +1,119 @@
+id: api:session-progress-api
+type: api
+title: Session Progress API
+summary: Session progress API exposes upload key status through polling and a WebSocket
+  watch channel.
+facts:
+  legacy_body: "Session progress API exposes upload key status through polling and\
+    \ a WebSocket watch channel.\n\n```yaml\nendpoints:\n  status:\n    method: GET\n\
+    \    path: \"{api:upload-api base_path}/keys/{upload_key}\"\n    response: data:file-item\n\
+    \  watch_websocket:\n    method: GET\n    path: \"{api:upload-api base_path}/watch\"\
+    \n    protocol: websocket\n    client_messages:\n      watch:\n        type: watch\n\
+    \        upload_keys: list of upload_key\n        behavior:\n          - add keys\
+    \ to watched set\n          - idempotent for already watched keys\n      unwatch:\n\
+    \        type: unwatch\n        upload_keys: list of upload_key\n        behavior:\n\
+    \          - remove keys from watched set\n      ping:\n        type: ping\n \
+    \       client_id: optional string\n    server_messages:\n      snapshot:\n  \
+    \      type: snapshot\n        upload_key: upload_key\n        item: data:file-item\n\
+    \        sent_when:\n          - key is first watched\n          - client reconnects\
+    \ and watches again\n      progress:\n        type: progress\n        upload_key:\
+    \ upload_key\n        uploaded_bytes: integer\n        size_bytes: integer optional\n\
+    \        status: uploading\n        display_rule:\n          - when post-upload\
+    \ synchronous security gate is pending, uploaded_bytes must be capped below full\
+    \ size, default 98 percent\n          - only terminal uploaded state may expose\
+    \ full byte completion for gated uploads\n      state:\n        type: state\n\
+    \        upload_key: upload_key\n        status: key_created, uploaded, clean,\
+    \ rejected, failed, expired\n        item: data:file-item optional when final\
+    \ facts are available\n      error:\n        type: error\n        upload_key:\
+    \ upload_key optional\n        code: string\n        message: string\nbehavior:\n\
+    \  - polling status is the source of truth\n  - WebSocket watch is used when browser\
+    \ should receive frequent updates while the watched upload key set changes\n \
+    \ - wait endpoint remains blocking JSON for simple forms\n  - client can add upload\
+    \ keys to an existing WebSocket without reopening the connection\n  - server should\
+    \ send an initial snapshot for every newly watched key\n  - server should send\
+    \ terminal state once and keep it available through polling status\n  - browser\
+    \ progress bars must not turn completed or success-colored solely because request\
+    \ bytes reached storage while synchronous scan or staging gates are still pending\n\
+    references:\n  - data:upload-batch\n  - data:file-item\n  - flow:drag-drop-immediate-upload\n\
+    ```"
+  endpoints:
+    status:
+      method: GET
+      path: '{api:upload-api base_path}/keys/{upload_key}'
+      response: data:file-item
+    watch_websocket:
+      method: GET
+      path: '{api:upload-api base_path}/watch'
+      protocol: websocket
+      client_messages:
+        watch:
+          type: watch
+          upload_keys: list of upload_key
+          behavior:
+          - add keys to watched set
+          - idempotent for already watched keys
+        unwatch:
+          type: unwatch
+          upload_keys: list of upload_key
+          behavior:
+          - remove keys from watched set
+        ping:
+          type: ping
+          client_id: optional string
+      server_messages:
+        snapshot:
+          type: snapshot
+          upload_key: upload_key
+          item: data:file-item
+          sent_when:
+          - key is first watched
+          - client reconnects and watches again
+        progress:
+          type: progress
+          upload_key: upload_key
+          uploaded_bytes: integer
+          size_bytes: integer optional
+          status: uploading
+          display_rule:
+          - when post-upload synchronous security gate is pending, uploaded_bytes
+            must be capped below full size, default 98 percent
+          - only terminal uploaded state may expose full byte completion for gated
+            uploads
+        state:
+          type: state
+          upload_key: upload_key
+          status: key_created, uploaded, clean, rejected, failed, expired
+          item: data:file-item optional when final facts are available
+        error:
+          type: error
+          upload_key: upload_key optional
+          code: string
+          message: string
+  behavior:
+  - polling status is the source of truth
+  - WebSocket watch is used when browser should receive frequent updates while the
+    watched upload key set changes
+  - wait endpoint remains blocking JSON for simple forms
+  - client can add upload keys to an existing WebSocket without reopening the connection
+  - server should send an initial snapshot for every newly watched key
+  - server should send terminal state once and keep it available through polling status
+  - browser progress bars must not turn completed or success-colored solely because
+    request bytes reached storage while synchronous scan or staging gates are still
+    pending
+  references:
+  - data:upload-batch
+  - data:file-item
+  - flow:drag-drop-immediate-upload
+relations:
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: data:upload-batch
+  resolution: resolved
+- relation: mentions
+  to: flow:drag-drop-immediate-upload
+  resolution: resolved

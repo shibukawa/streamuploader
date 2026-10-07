@@ -1,0 +1,75 @@
+id: policy:metadata-stripping-policy
+type: policy
+title: Metadata Stripping Policy
+summary: Metadata stripping policy removes privacy-sensitive embedded metadata from
+  generated derivatives and optional originals.
+facts:
+  legacy_body: "Metadata stripping policy removes privacy-sensitive embedded metadata\
+    \ from generated derivatives and optional originals.\n\n```yaml\ntargets:\n  image:\n\
+    \    strip:\n      - EXIF GPS\n      - capture timestamp\n      - camera serial\n\
+    \      - camera or device information\n      - author\n      - software\n    \
+    \  - comments\n      - identifying EXIF, XMP, or IPTC tags\n    preserve:\n  \
+    \    - Orientation\n      - ICC Profile\n  pdf:\n    strip:\n      - author\n\
+    \      - creator\n      - producer\n      - embedded metadata when safe\n  office:\n\
+    \    strip:\n      - author\n      - revision history\n      - comments when policy\
+    \ requires\n  media:\n    strip:\n      - metadata tags\n      - GPS\n      -\
+    \ capture timestamp\n      - device identifiers\nbehavior:\n  - derived assets\
+    \ strip by default\n  - EXIF-capable uploaded images and videos sanitize metadata\
+    \ by default through policy:file-type-sanitization-policy\n  - original stripping\
+    \ is configurable and may create sanitized replacement before final storage commit\n\
+    \  - preserve Orientation and ICC Profile only when needed for correct rendering\n\
+    \  - do not re-encode media for metadata sanitize\nreferences:\n  - data:derived-asset\n\
+    \  - policy:preview-generation-policy\n  - policy:file-type-sanitization-policy\n\
+    ```"
+  targets:
+    image:
+      strip:
+      - EXIF GPS
+      - capture timestamp
+      - camera serial
+      - camera or device information
+      - author
+      - software
+      - comments
+      - identifying EXIF, XMP, or IPTC tags
+      preserve:
+      - Orientation
+      - ICC Profile
+    pdf:
+      strip:
+      - author
+      - creator
+      - producer
+      - embedded metadata when safe
+    office:
+      strip:
+      - author
+      - revision history
+      - comments when policy requires
+    media:
+      strip:
+      - metadata tags
+      - GPS
+      - capture timestamp
+      - device identifiers
+  behavior:
+  - derived assets strip by default
+  - EXIF-capable uploaded images and videos sanitize metadata by default through policy:file-type-sanitization-policy
+  - original stripping is configurable and may create sanitized replacement before
+    final storage commit
+  - preserve Orientation and ICC Profile only when needed for correct rendering
+  - do not re-encode media for metadata sanitize
+  references:
+  - data:derived-asset
+  - policy:preview-generation-policy
+  - policy:file-type-sanitization-policy
+relations:
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: policy:file-type-sanitization-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:preview-generation-policy
+  resolution: resolved

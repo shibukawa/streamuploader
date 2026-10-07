@@ -1,0 +1,88 @@
+id: data:processor-result
+type: data
+title: Processor Result
+summary: Processor result is normalized JSON returned by native or local command processors
+  and merged into file facts.
+facts:
+  legacy_body: "Processor result is normalized JSON returned by native or local command\
+    \ processors and merged into file facts.\n\n```yaml\nshape:\n  metadata:\n   \
+    \ type: object optional\n    examples:\n      - exif\n      - office\n      -\
+    \ labels\n      - translated_text\n      - openai_compatible_analysis\n      -\
+    \ summary\n      - classification\n      - custom provider normalized fields\n\
+    \  text:\n    type: object optional\n    fields:\n      plain: string optional\n\
+    \      language: BCP47 tag optional\n      pages: list optional\n      chunks:\
+    \ list optional\n  derived_assets:\n    type: list of data:derived-asset summaries\
+    \ optional\n  warnings:\n    type: list\n    item:\n      code: string\n     \
+    \ message: string\n  errors:\n    type: list\n    item:\n      code: string\n\
+    \      message: string\nmerge:\n  - processor config declares merge_path or artifact\
+    \ destination\n  - streamuploader validates JSON size and allowed top-level fields\n\
+    \  - command-specific provider responses must be normalized before stdout\n  -\
+    \ OpenAI-compatible processor responses must validate against configured JSON\
+    \ schema before merge\n  - raw provider responses may be stored only when retention\
+    \ policy allows\nreferences:\n  - system:local-command-processor\n  - system:openai-compatible-api-processor\n\
+    \  - data:openai-compatible-processor-config\n  - data:extracted-content\n  -\
+    \ data:derived-asset\n  - policy:processor-execution-policy\n```"
+  shape:
+    metadata:
+      type: object optional
+      examples:
+      - exif
+      - office
+      - labels
+      - translated_text
+      - openai_compatible_analysis
+      - summary
+      - classification
+      - custom provider normalized fields
+    text:
+      type: object optional
+      fields:
+        plain: string optional
+        language: BCP47 tag optional
+        pages: list optional
+        chunks: list optional
+    derived_assets:
+      type: list of data:derived-asset summaries optional
+    warnings:
+      type: list
+      item:
+        code: string
+        message: string
+    errors:
+      type: list
+      item:
+        code: string
+        message: string
+  merge:
+  - processor config declares merge_path or artifact destination
+  - streamuploader validates JSON size and allowed top-level fields
+  - command-specific provider responses must be normalized before stdout
+  - OpenAI-compatible processor responses must validate against configured JSON schema
+    before merge
+  - raw provider responses may be stored only when retention policy allows
+  references:
+  - system:local-command-processor
+  - system:openai-compatible-api-processor
+  - data:openai-compatible-processor-config
+  - data:extracted-content
+  - data:derived-asset
+  - policy:processor-execution-policy
+relations:
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: data:openai-compatible-processor-config
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved
+- relation: mentions
+  to: system:openai-compatible-api-processor
+  resolution: resolved

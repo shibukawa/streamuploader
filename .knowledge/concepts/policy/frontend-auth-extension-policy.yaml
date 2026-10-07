@@ -1,0 +1,112 @@
+id: policy:frontend-auth-extension-policy
+type: policy
+title: Frontend Auth Extension Policy
+summary: Frontend auth extension policy defines how browser-facing API authentication
+  may be customized.
+facts:
+  legacy_body: "Frontend auth extension policy defines how browser-facing API authentication\
+    \ may be customized.\n\n```yaml\nscope:\n  routes:\n    - api:upload-api\n   \
+    \ - api:download-api\n    - api:shared-key-api\n    - api:session-progress-api\n\
+    \  callers:\n    - browser user\n    - application frontend\n    - reverse-proxied\
+    \ application route\ngo_extension:\n  - api:auth-middleware-extension-api frontend\
+    \ middleware wraps public handler\n  - custom implementation can accept session\
+    \ cookie, JWT, OAuth proxy headers, mTLS forwarded identity, or application-specific\
+    \ signed request\nrequired_decisions:\n  create_upload_key:\n    - decide whether\
+    \ caller may create upload key\n    - provide tenant_id, upload_owner, allowed\
+    \ prefix policy, and optional role\n  upload_content:\n    - preserve upload_key\
+    \ capability check\n    - optionally bind upload key to data:auth-context upload_owner\n\
+    \  wait_watch_status:\n    - verify requested upload keys belong to caller context\
+    \ when auth is present\n  frontend_file_access:\n    - authorize object read for\
+    \ api_proxy_download and archive download\n    - honor policy:object-access-policy\
+    \ mode\n  shared_key_access:\n    - shared key remains bearer capability unless\
+    \ deployment adds caller binding\nconstraints:\n  - public frontend code must\
+    \ not contain backend secrets\n  - anonymous demo mode remains possible when deployment\
+    \ opts in\n  - CORS decision remains separate from authentication decision\n \
+    \ - auth middleware must not trust client-supplied prefix without policy:storage-key-allocation-policy\
+    \ validation\n  - auth failure must not reveal whether an object key exists\n\
+    auditing:\n  - include subject, tenant_id, route, decision, request id, and reason\n\
+    \  - exclude bearer tokens, cookies, and raw private claims\nreferences:\n  -\
+    \ api:auth-middleware-extension-api\n  - data:auth-context\n  - api:upload-api\n\
+    \  - api:download-api\n  - api:shared-key-api\n  - api:session-progress-api\n\
+    \  - policy:object-access-policy\n  - policy:storage-key-allocation-policy\n \
+    \ - policy:frontend-upload-cancel-policy\n  - policy:audit-log-policy\n```"
+  scope:
+    routes:
+    - api:upload-api
+    - api:download-api
+    - api:shared-key-api
+    - api:session-progress-api
+    callers:
+    - browser user
+    - application frontend
+    - reverse-proxied application route
+  go_extension:
+  - api:auth-middleware-extension-api frontend middleware wraps public handler
+  - custom implementation can accept session cookie, JWT, OAuth proxy headers, mTLS
+    forwarded identity, or application-specific signed request
+  required_decisions:
+    create_upload_key:
+    - decide whether caller may create upload key
+    - provide tenant_id, upload_owner, allowed prefix policy, and optional role
+    upload_content:
+    - preserve upload_key capability check
+    - optionally bind upload key to data:auth-context upload_owner
+    wait_watch_status:
+    - verify requested upload keys belong to caller context when auth is present
+    frontend_file_access:
+    - authorize object read for api_proxy_download and archive download
+    - honor policy:object-access-policy mode
+    shared_key_access:
+    - shared key remains bearer capability unless deployment adds caller binding
+  constraints:
+  - public frontend code must not contain backend secrets
+  - anonymous demo mode remains possible when deployment opts in
+  - CORS decision remains separate from authentication decision
+  - auth middleware must not trust client-supplied prefix without policy:storage-key-allocation-policy
+    validation
+  - auth failure must not reveal whether an object key exists
+  auditing:
+  - include subject, tenant_id, route, decision, request id, and reason
+  - exclude bearer tokens, cookies, and raw private claims
+  references:
+  - api:auth-middleware-extension-api
+  - data:auth-context
+  - api:upload-api
+  - api:download-api
+  - api:shared-key-api
+  - api:session-progress-api
+  - policy:object-access-policy
+  - policy:storage-key-allocation-policy
+  - policy:frontend-upload-cancel-policy
+  - policy:audit-log-policy
+relations:
+- relation: mentions
+  to: api:auth-middleware-extension-api
+  resolution: resolved
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: api:shared-key-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:auth-context
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:frontend-upload-cancel-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:storage-key-allocation-policy
+  resolution: resolved

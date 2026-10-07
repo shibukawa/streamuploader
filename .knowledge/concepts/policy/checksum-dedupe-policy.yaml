@@ -1,0 +1,52 @@
+id: policy:checksum-dedupe-policy
+type: policy
+title: Checksum Dedupe Policy
+summary: Checksum dedupe policy stores identical file content once while tracking
+  logical references safely.
+facts:
+  legacy_body: "Checksum dedupe policy stores identical file content once while tracking\
+    \ logical references safely.\n\n```yaml\npolicy:\n  checksum:\n    preferred:\
+    \ sha256\n    computed: during upload stream\n  canonical_store:\n    key_by:\
+    \ checksum and optional tenant boundary\n    object: physical blob\n  logical_reference:\n\
+    \    per_file_item:\n      - batch_key optional\n      - upload_key\n      - display_key\n\
+    \      - checksum\n      - ref_target\n  ref_count:\n    - increment after upload\
+    \ acceptance succeeds\n    - decrement on delete or expiration\n    - delete physical\
+    \ blob only when count is zero and grace period elapsed\n  race_safety:\n    -\
+    \ conditional writes or lock object for ref count updates\n    - idempotent delete\n\
+    \    - audit all ref count transitions\n  derived_assets:\n    - may be keyed\
+    \ by checksum plus transform parameters\nreferences:\n  - data:file-item\n  -\
+    \ policy:audit-log-policy\n```"
+  policy:
+    checksum:
+      preferred: sha256
+      computed: during upload stream
+    canonical_store:
+      key_by: checksum and optional tenant boundary
+      object: physical blob
+    logical_reference:
+      per_file_item:
+      - batch_key optional
+      - upload_key
+      - display_key
+      - checksum
+      - ref_target
+    ref_count:
+    - increment after upload acceptance succeeds
+    - decrement on delete or expiration
+    - delete physical blob only when count is zero and grace period elapsed
+    race_safety:
+    - conditional writes or lock object for ref count updates
+    - idempotent delete
+    - audit all ref count transitions
+    derived_assets:
+    - may be keyed by checksum plus transform parameters
+  references:
+  - data:file-item
+  - policy:audit-log-policy
+relations:
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved

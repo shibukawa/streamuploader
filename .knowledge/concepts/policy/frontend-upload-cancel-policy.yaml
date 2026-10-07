@@ -1,0 +1,69 @@
+id: policy:frontend-upload-cancel-policy
+type: policy
+title: Frontend Upload Cancel Policy
+summary: Frontend upload cancel policy permits browser cancellation only before file
+  bytes are sent.
+facts:
+  legacy_body: "Frontend upload cancel policy permits browser cancellation only before\
+    \ file bytes are sent.\n\n```yaml\nscope:\n  allowed_state: key_created\n  denied_states:\n\
+    \    - uploading\n    - uploaded\n    - failed\n    - expired\n    - canceled\n\
+    owner_binding:\n  mechanism: opaque HttpOnly cookie\n  cookie_name: streamuploader_owner\n\
+    \  stored_value: sha256(cookie value)\n  stored_places:\n    - in-memory data:file-item\
+    \ server state\n    - upload deadline marker from policy:upload-key-deadline-policy\n\
+    \  reason:\n    - IP address is unstable behind NAT, proxies, mobile networks,\
+    \ and IPv6 privacy rotation\n    - cookie binding follows the browser that requested\
+    \ upload key issuance\napi_behavior:\n  cancel:\n    method: DELETE\n    path:\
+    \ /api/upload/keys/{upload_key}\n    success_status: 204\n    errors:\n      owner_mismatch:\
+    \ 403\n      upload_already_started: 409\n      upload_key_expired: 410\nside_effects:\n\
+    \  - delete upload deadline marker\n  - set upload state to canceled\n  - notify\
+    \ websocket watchers\n  - do not delete uploaded object because uploaded state\
+    \ cannot be canceled through this API\nreferences:\n  - api:upload-api\n  - data:file-item\n\
+    \  - policy:upload-key-deadline-policy\n```"
+  scope:
+    allowed_state: key_created
+    denied_states:
+    - uploading
+    - uploaded
+    - failed
+    - expired
+    - canceled
+  owner_binding:
+    mechanism: opaque HttpOnly cookie
+    cookie_name: streamuploader_owner
+    stored_value: sha256(cookie value)
+    stored_places:
+    - in-memory data:file-item server state
+    - upload deadline marker from policy:upload-key-deadline-policy
+    reason:
+    - IP address is unstable behind NAT, proxies, mobile networks, and IPv6 privacy
+      rotation
+    - cookie binding follows the browser that requested upload key issuance
+  api_behavior:
+    cancel:
+      method: DELETE
+      path: /api/upload/keys/{upload_key}
+      success_status: 204
+      errors:
+        owner_mismatch: 403
+        upload_already_started: 409
+        upload_key_expired: 410
+  side_effects:
+  - delete upload deadline marker
+  - set upload state to canceled
+  - notify websocket watchers
+  - do not delete uploaded object because uploaded state cannot be canceled through
+    this API
+  references:
+  - api:upload-api
+  - data:file-item
+  - policy:upload-key-deadline-policy
+relations:
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: policy:upload-key-deadline-policy
+  resolution: resolved

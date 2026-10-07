@@ -1,0 +1,79 @@
+id: system:media-converter
+type: system
+title: Media Converter
+summary: Media converter is an isolated worker using selected media backend such as
+  ffmpeg or macOS avconvert.
+facts:
+  legacy_body: "Media converter is an isolated worker using selected media backend\
+    \ such as ffmpeg or macOS avconvert.\n\n```yaml\ncomponents:\n  probe:\n    preferred_tool:\
+    \ ffprobe\n    purpose:\n      - validate container and streams\n      - detect\
+    \ duration, resolution, frame rate, and codec\n      - detect attached pictures\
+    \ or cover art\n  still_thumbnail:\n    preferred_tool: ffmpeg\n    selection:\n\
+    \      - use attached picture when present and valid\n      - otherwise extract\
+    \ up to first 10 keyframes\n      - score normalized still candidates by encoded\
+    \ byte size\n      - choose largest candidate after rejecting black or duplicate\
+    \ frames\n      - draw play triangle overlay after final resize\n  transcode:\n\
+    \    preferred_tool: ffmpeg\n    fallback_tool: avconvert on macOS for simple\
+    \ preview when configured\n    outputs:\n      - animated_webp preferred\n   \
+    \   - animated_avif optional\n      - animated_gif compatibility\n      - animated_png\
+    \ compatibility when acceptable\nconstraints:\n  - run outside request path\n\
+    \  - isolate process and temporary files\n  - disable network protocols in ffmpeg\n\
+    \  - limit CPU, memory, wall time, input duration, frame count, pixel count, and\
+    \ output size\n  - strip audio and metadata from generated previews\n  - treat\
+    \ conversion failure as preview failure, not original file corruption\nreferences:\n\
+    \  - flow:video-preview-generation\n  - data:thumbnail-generation-config\n  -\
+    \ requirement:expanded-thumbnail-source-support\n  - system:external-tool-registry\n\
+    \  - policy:tool-backend-selection-policy\n```"
+  components:
+    probe:
+      preferred_tool: ffprobe
+      purpose:
+      - validate container and streams
+      - detect duration, resolution, frame rate, and codec
+      - detect attached pictures or cover art
+    still_thumbnail:
+      preferred_tool: ffmpeg
+      selection:
+      - use attached picture when present and valid
+      - otherwise extract up to first 10 keyframes
+      - score normalized still candidates by encoded byte size
+      - choose largest candidate after rejecting black or duplicate frames
+      - draw play triangle overlay after final resize
+    transcode:
+      preferred_tool: ffmpeg
+      fallback_tool: avconvert on macOS for simple preview when configured
+      outputs:
+      - animated_webp preferred
+      - animated_avif optional
+      - animated_gif compatibility
+      - animated_png compatibility when acceptable
+  constraints:
+  - run outside request path
+  - isolate process and temporary files
+  - disable network protocols in ffmpeg
+  - limit CPU, memory, wall time, input duration, frame count, pixel count, and output
+    size
+  - strip audio and metadata from generated previews
+  - treat conversion failure as preview failure, not original file corruption
+  references:
+  - flow:video-preview-generation
+  - data:thumbnail-generation-config
+  - requirement:expanded-thumbnail-source-support
+  - system:external-tool-registry
+  - policy:tool-backend-selection-policy
+relations:
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: flow:video-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:expanded-thumbnail-source-support
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved

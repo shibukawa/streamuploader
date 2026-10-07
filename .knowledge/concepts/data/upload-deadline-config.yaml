@@ -1,0 +1,104 @@
+id: data:upload-deadline-config
+type: data
+title: Upload Deadline Config
+summary: Upload deadline config controls S3-backed upload key start and finish deadlines
+  plus cleanup execution.
+facts:
+  legacy_body: "Upload deadline config controls S3-backed upload key start and finish\
+    \ deadlines plus cleanup execution.\n\n```yaml\nsource:\n  yaml:\n    location:\
+    \ service config or security policy yaml if implementation keeps a single policy\
+    \ file\n    section: upload_deadlines\n    validation:\n      - fail startup for\
+    \ unknown keys\n      - durations must be positive when enabled\n  env_overrides:\n\
+    \    finish_deadline:\n      - UPLOAD_FINISH_TIMEOUT\n      - UPLOAD_FINISH_TIMEOUT_SECONDS\n\
+    \    cleanup_interval:\n      - UPLOAD_CLEANUP_INTERVAL\n      - UPLOAD_CLEANUP_INTERVAL_SECONDS\n\
+    schema:\n  upload_deadlines:\n    enabled:\n      type: bool\n      default: true\n\
+    \    marker_prefix:\n      type: string\n      default: .uploading/\n    start_timeout:\n\
+    \      type: duration\n      default: 10s\n      meaning: max delay between key\
+    \ creation and first upload byte acceptance\n    finish_timeout:\n      type:\
+    \ duration\n      default: 1m\n      meaning: max wall-clock duration from key\
+    \ creation or configured start point to upload completion\n      env_override:\
+    \ true\n    cleanup:\n      enabled:\n        type: bool\n        default: true\n\
+    \        meaning: run in-process cleanup loop when server is long-lived\n    \
+    \  interval:\n        type: duration\n        default: 1m\n        env_override:\
+    \ true\n      startup_run:\n        type: bool\n        default: true\n      command_mode:\n\
+    \        type: string\n        values:\n          - server_loop\n          - cleanup_once\n\
+    \          - disabled\n        meaning: cleanup_once runs cleanup and exits for\
+    \ cloud scheduler or batch worker deployments\nexample:\n  upload_deadlines:\n\
+    \    enabled: true\n    marker_prefix: .uploading/\n    start_timeout: 10s\n \
+    \   finish_timeout: 1m\n    cleanup:\n      enabled: true\n      interval: 1m\n\
+    \      startup_run: true\n      command_mode: server_loop\nreferences:\n  - policy:upload-key-deadline-policy\n\
+    \  - policy:work-sentinel-cleanup\n```"
+  source:
+    yaml:
+      location: service config or security policy yaml if implementation keeps a single
+        policy file
+      section: upload_deadlines
+      validation:
+      - fail startup for unknown keys
+      - durations must be positive when enabled
+    env_overrides:
+      finish_deadline:
+      - UPLOAD_FINISH_TIMEOUT
+      - UPLOAD_FINISH_TIMEOUT_SECONDS
+      cleanup_interval:
+      - UPLOAD_CLEANUP_INTERVAL
+      - UPLOAD_CLEANUP_INTERVAL_SECONDS
+  schema:
+    upload_deadlines:
+      enabled:
+        type: bool
+        default: true
+      marker_prefix:
+        type: string
+        default: .uploading/
+      start_timeout:
+        type: duration
+        default: 10s
+        meaning: max delay between key creation and first upload byte acceptance
+      finish_timeout:
+        type: duration
+        default: 1m
+        meaning: max wall-clock duration from key creation or configured start point
+          to upload completion
+        env_override: true
+      cleanup:
+        enabled:
+          type: bool
+          default: true
+          meaning: run in-process cleanup loop when server is long-lived
+        interval:
+          type: duration
+          default: 1m
+          env_override: true
+        startup_run:
+          type: bool
+          default: true
+        command_mode:
+          type: string
+          values:
+          - server_loop
+          - cleanup_once
+          - disabled
+          meaning: cleanup_once runs cleanup and exits for cloud scheduler or batch
+            worker deployments
+  example:
+    upload_deadlines:
+      enabled: true
+      marker_prefix: .uploading/
+      start_timeout: 10s
+      finish_timeout: 1m
+      cleanup:
+        enabled: true
+        interval: 1m
+        startup_run: true
+        command_mode: server_loop
+  references:
+  - policy:upload-key-deadline-policy
+  - policy:work-sentinel-cleanup
+relations:
+- relation: mentions
+  to: policy:upload-key-deadline-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:work-sentinel-cleanup
+  resolution: resolved

@@ -1,0 +1,88 @@
+id: system:ocr-engine
+type: system
+title: OCR Engine
+summary: OCR engine extracts text from raster images and image-only document pages.
+facts:
+  legacy_body: "OCR engine extracts text from raster images and image-only document\
+    \ pages.\n\n```yaml\nbackends:\n  tesseract:\n    startup_probe: configured OCR\
+    \ command or tesseract-like command path\n    execution: resolved command path\
+    \ from startup extraction plan\n    capabilities:\n      - image OCR\n      -\
+    \ PDF page OCR after rasterization\n      - language pack dependent OCR\n  cloud_ocr_via_local_command:\n\
+    \    optional: true\n    capabilities:\n      - higher accuracy OCR when product\
+    \ policy permits external service use\n    note: implemented through system:local-command-processor,\
+    \ not native provider webhook\n  document_ai_via_local_command:\n    optional:\
+    \ true\n    capabilities:\n      - layout aware OCR\n      - table and form extraction\n\
+    \    note: command owns provider auth, request shape, and response normalization\n\
+    constraints:\n  - opt-in because OCR is CPU intensive and may expose private content\
+    \ to index systems\n  - run in isolated worker\n  - resolve OCR command availability\
+    \ at startup, not per extraction request\n  - require configured languages\n \
+    \ - cap pages, pixels, wall time, CPU, memory, and output size\n  - store confidence\
+    \ and language when backend provides them\nstartup_logging:\n  - report OCR command\
+    \ availability in text_extraction_tool logs\nreferences:\n  - flow:ocr-extraction-generation\n\
+    \  - data:extracted-content\n  - policy:search-extraction-policy\n  - system:external-tool-registry\n\
+    \  - system:external-processing-delegates\n  - system:local-command-processor\n\
+    \  - policy:external-delegation-policy\n  - policy:processor-execution-policy\n\
+    ```"
+  backends:
+    tesseract:
+      startup_probe: configured OCR command or tesseract-like command path
+      execution: resolved command path from startup extraction plan
+      capabilities:
+      - image OCR
+      - PDF page OCR after rasterization
+      - language pack dependent OCR
+    cloud_ocr_via_local_command:
+      optional: true
+      capabilities:
+      - higher accuracy OCR when product policy permits external service use
+      note: implemented through system:local-command-processor, not native provider
+        webhook
+    document_ai_via_local_command:
+      optional: true
+      capabilities:
+      - layout aware OCR
+      - table and form extraction
+      note: command owns provider auth, request shape, and response normalization
+  constraints:
+  - opt-in because OCR is CPU intensive and may expose private content to index systems
+  - run in isolated worker
+  - resolve OCR command availability at startup, not per extraction request
+  - require configured languages
+  - cap pages, pixels, wall time, CPU, memory, and output size
+  - store confidence and language when backend provides them
+  startup_logging:
+  - report OCR command availability in text_extraction_tool logs
+  references:
+  - flow:ocr-extraction-generation
+  - data:extracted-content
+  - policy:search-extraction-policy
+  - system:external-tool-registry
+  - system:external-processing-delegates
+  - system:local-command-processor
+  - policy:external-delegation-policy
+  - policy:processor-execution-policy
+relations:
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: flow:ocr-extraction-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:external-delegation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:search-extraction-policy
+  resolution: resolved
+- relation: mentions
+  to: system:external-processing-delegates
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved

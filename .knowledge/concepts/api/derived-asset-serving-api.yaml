@@ -1,0 +1,82 @@
+id: api:derived-asset-serving-api
+type: api
+title: Derived Asset Serving API
+summary: Derived asset serving API returns generated assets through api:download-api
+  file routes when ready and no-cache placeholders while generation is pending.
+facts:
+  legacy_body: "Derived asset serving API returns generated assets through api:download-api\
+    \ file routes when ready and no-cache placeholders while generation is pending.\n\
+    \n```yaml\nendpoints:\n  get_derived_asset:\n    method: GET\n    path: /api/file/{key}/variants/{variant_key}/content\n\
+    \    behavior:\n      generated:\n        - return generated object or redirect/proxy\
+    \ to object storage\n        - use normal cache headers according to asset policy\n\
+    \      pending:\n        - return placeholder from policy:placeholder-serving-policy\n\
+    \        - set Cache-Control: no-store, no-cache, max-age=0\n        - set Retry-After\
+    \ or status hint when useful\n      failed:\n        - return failure placeholder\n\
+    \        - set Cache-Control: no-store, no-cache, max-age=0\n  status:\n    method:\
+    \ GET\n    path: \"{api:upload-api base_path}/keys/{upload_key}\"\n    behavior:\n\
+    \      - exposes data:derived-asset status\n  thumbnail:\n    method: GET\n  \
+    \  path: /api/file/{key}/thumbnail\n    alternate_path: /api/file/{key}/thumbnail/{preset}\n\
+    \    behavior:\n      - return thumbnail data:derived-asset when ready\n     \
+    \ - return placeholder while pending when policy:placeholder-serving-policy permits\n\
+    \      - default preset resolves object key suffix /thumbnail\n      - set content\
+    \ type from generated data:derived-asset\nreferences:\n  - data:derived-asset\n\
+    \  - data:thumbnail-generation-config\n  - api:session-progress-api\n  - api:download-api\n\
+    \  - policy:placeholder-serving-policy\n  - policy:object-access-policy\n```"
+  endpoints:
+    get_derived_asset:
+      method: GET
+      path: /api/file/{key}/variants/{variant_key}/content
+      behavior:
+        generated:
+        - return generated object or redirect/proxy to object storage
+        - use normal cache headers according to asset policy
+        pending:
+        - return placeholder from policy:placeholder-serving-policy
+        - set Cache-Control: no-store, no-cache, max-age=0
+        - set Retry-After or status hint when useful
+        failed:
+        - return failure placeholder
+        - set Cache-Control: no-store, no-cache, max-age=0
+    status:
+      method: GET
+      path: '{api:upload-api base_path}/keys/{upload_key}'
+      behavior:
+      - exposes data:derived-asset status
+    thumbnail:
+      method: GET
+      path: /api/file/{key}/thumbnail
+      alternate_path: /api/file/{key}/thumbnail/{preset}
+      behavior:
+      - return thumbnail data:derived-asset when ready
+      - return placeholder while pending when policy:placeholder-serving-policy permits
+      - default preset resolves object key suffix /thumbnail
+      - set content type from generated data:derived-asset
+  references:
+  - data:derived-asset
+  - data:thumbnail-generation-config
+  - api:session-progress-api
+  - api:download-api
+  - policy:placeholder-serving-policy
+  - policy:object-access-policy
+relations:
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:placeholder-serving-policy
+  resolution: resolved

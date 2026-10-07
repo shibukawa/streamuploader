@@ -1,0 +1,129 @@
+id: api:auth-middleware-extension-api
+type: api
+title: Auth Middleware Extension API
+summary: Auth middleware extension API lets deployments replace frontend and backend
+  request authentication without modifying streamuploader core.
+facts:
+  legacy_body: "Auth middleware extension API lets deployments replace frontend and\
+    \ backend request authentication without modifying streamuploader core.\n\n```yaml\n\
+    go_surface:\n  package: streamuploader/auth\n  frontend:\n    function: NewFrontendAuthMiddleware\n\
+    \    signature: func(next http.Handler, config *Config) http.Handler\n    setter:\
+    \ SetFrontendAuthMiddleware\n    wraps:\n      - browser-facing upload routes\n\
+    \      - browser-facing file and shared-key download routes\n      - reverse-proxy\
+    \ frontend routes when mounted by streamuploader\n  backend:\n    function: NewBackendAuthMiddleware\n\
+    \    signature: func(next http.Handler, config *Config) http.Handler\n    setter:\
+    \ SetBackendAuthMiddleware\n    wraps:\n      - api:backend-control-api routes\n\
+    \      - privileged internal routes mounted on backend listener\ncontract:\n \
+    \ - middleware may authenticate request before calling next\n  - middleware may\
+    \ reject with JSON HTTP error before calling next\n  - middleware may attach data:auth-context\
+    \ to request context\n  - middleware must preserve request body and path values\
+    \ for next handler\n  - middleware must be safe for concurrent requests\n  - middleware\
+    \ must not perform storage mutations\n  - middleware must not log bearer tokens,\
+    \ cookies, private keys, or full raw claims\ndefault_behavior:\n  frontend:\n\
+    \    - pass through when no custom frontend auth is configured\n    - existing\
+    \ upload capability, owner cookie, shared key, and object access policies still\
+    \ apply\n  backend:\n    - no built-in BackendAuthToken bearer check\n    - no\
+    \ built-in mTLS or service account JWT verifier\n    - pass through when no custom\
+    \ backend auth is configured\n    - deployment may rely on external network or\
+    \ gateway controls outside streamuploader\nfailure_response:\n  unauthenticated:\n\
+    \    status: 401\n    error: unauthorized\n  unauthorized:\n    status: 403\n\
+    \    error: forbidden\nintegration_modes:\n  - linked package init calls streamuploader/auth\
+    \ setter at startup\n  - custom main calls streamuploader/auth setters before\
+    \ streamuploadercli.Main\n  - downstream fork or distribution imports deployment\
+    \ auth package\nremoved_core_mechanisms:\n  - BackendAuthToken bearer token authorization\n\
+    \  - hard-coded mTLS preference\n  - hard-coded service account JWT preference\n\
+    \  - hard-coded network boundary judgment\nconfig:\n  - auth extension reads only\
+    \ non-secret policy from Config\n  - secrets come from environment, mounted files,\
+    \ or deployment secret manager\nsample_policy:\n  - project provides no auth adapter\
+    \ package\n  - README may show inline custom main examples\n  - deployment-owned\
+    \ package may call setters before streamuploadercli.Main\nreferences:\n  - policy:frontend-auth-extension-policy\n\
+    \  - policy:backend-auth-extension-policy\n  - data:auth-context\n  - policy:auth-extension-license-exception\n\
+    \  - api:upload-api\n  - api:download-api\n  - api:backend-control-api\n```"
+  go_surface:
+    package: streamuploader/auth
+    frontend:
+      function: NewFrontendAuthMiddleware
+      signature: func(next http.Handler, config *Config) http.Handler
+      setter: SetFrontendAuthMiddleware
+      wraps:
+      - browser-facing upload routes
+      - browser-facing file and shared-key download routes
+      - reverse-proxy frontend routes when mounted by streamuploader
+    backend:
+      function: NewBackendAuthMiddleware
+      signature: func(next http.Handler, config *Config) http.Handler
+      setter: SetBackendAuthMiddleware
+      wraps:
+      - api:backend-control-api routes
+      - privileged internal routes mounted on backend listener
+  contract:
+  - middleware may authenticate request before calling next
+  - middleware may reject with JSON HTTP error before calling next
+  - middleware may attach data:auth-context to request context
+  - middleware must preserve request body and path values for next handler
+  - middleware must be safe for concurrent requests
+  - middleware must not perform storage mutations
+  - middleware must not log bearer tokens, cookies, private keys, or full raw claims
+  default_behavior:
+    frontend:
+    - pass through when no custom frontend auth is configured
+    - existing upload capability, owner cookie, shared key, and object access policies
+      still apply
+    backend:
+    - no built-in BackendAuthToken bearer check
+    - no built-in mTLS or service account JWT verifier
+    - pass through when no custom backend auth is configured
+    - deployment may rely on external network or gateway controls outside streamuploader
+  failure_response:
+    unauthenticated:
+      status: 401
+      error: unauthorized
+    unauthorized:
+      status: 403
+      error: forbidden
+  integration_modes:
+  - linked package init calls streamuploader/auth setter at startup
+  - custom main calls streamuploader/auth setters before streamuploadercli.Main
+  - downstream fork or distribution imports deployment auth package
+  removed_core_mechanisms:
+  - BackendAuthToken bearer token authorization
+  - hard-coded mTLS preference
+  - hard-coded service account JWT preference
+  - hard-coded network boundary judgment
+  config:
+  - auth extension reads only non-secret policy from Config
+  - secrets come from environment, mounted files, or deployment secret manager
+  sample_policy:
+  - project provides no auth adapter package
+  - README may show inline custom main examples
+  - deployment-owned package may call setters before streamuploadercli.Main
+  references:
+  - policy:frontend-auth-extension-policy
+  - policy:backend-auth-extension-policy
+  - data:auth-context
+  - policy:auth-extension-license-exception
+  - api:upload-api
+  - api:download-api
+  - api:backend-control-api
+relations:
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: data:auth-context
+  resolution: resolved
+- relation: mentions
+  to: policy:auth-extension-license-exception
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-auth-extension-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:frontend-auth-extension-policy
+  resolution: resolved

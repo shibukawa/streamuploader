@@ -1,0 +1,63 @@
+id: system:s3-storage
+type: system
+title: S3 Storage
+summary: S3-compatible object storage receives the uploaded file body through efficient
+  streaming mechanisms.
+facts:
+  legacy_body: "S3-compatible object storage receives the uploaded file body through\
+    \ efficient streaming mechanisms.\n\n```yaml\nintegration:\n  methods:\n    -\
+    \ multipart upload from Go service\n  required_capabilities:\n    - abort incomplete\
+    \ multipart upload\n    - list multipart upload parts when resuming or completing\n\
+    \    - object key generation controlled by service\n    - list and delete objects\
+    \ by session prefix for policy:work-sentinel-cleanup\n    - delete canonical object\
+    \ by backend control request\n    - copy object then delete source for rename\
+    \ semantics\n    - replace object body and metadata by backend control request\n\
+    \    - small sentinel object writes such as .work\n    - optional checksum metadata\n\
+    \    - optional object tags for pending or scan state\nreferences:\n  - requirement:streaming-upload\n\
+    \  - flow:session-assembly\n  - decision:upload-transport-boundary\n  - policy:work-sentinel-cleanup\n\
+    \  - api:backend-control-api\n  - policy:backend-control-plane-policy\n  - decision:serverless-upload-state\n\
+    ```"
+  integration:
+    methods:
+    - multipart upload from Go service
+    required_capabilities:
+    - abort incomplete multipart upload
+    - list multipart upload parts when resuming or completing
+    - object key generation controlled by service
+    - list and delete objects by session prefix for policy:work-sentinel-cleanup
+    - delete canonical object by backend control request
+    - copy object then delete source for rename semantics
+    - replace object body and metadata by backend control request
+    - small sentinel object writes such as .work
+    - optional checksum metadata
+    - optional object tags for pending or scan state
+  references:
+  - requirement:streaming-upload
+  - flow:session-assembly
+  - decision:upload-transport-boundary
+  - policy:work-sentinel-cleanup
+  - api:backend-control-api
+  - policy:backend-control-plane-policy
+  - decision:serverless-upload-state
+relations:
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: decision:serverless-upload-state
+  resolution: resolved
+- relation: mentions
+  to: decision:upload-transport-boundary
+  resolution: resolved
+- relation: mentions
+  to: flow:session-assembly
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-control-plane-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:work-sentinel-cleanup
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved

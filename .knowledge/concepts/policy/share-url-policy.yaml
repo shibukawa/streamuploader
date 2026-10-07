@@ -1,0 +1,48 @@
+id: policy:share-url-policy
+type: policy
+title: Share URL Policy
+summary: Share URL policy provides revocable capability-style aliases above S3 object
+  keys.
+facts:
+  legacy_body: "Share URL policy provides revocable capability-style aliases above\
+    \ S3 object keys.\n\n```yaml\npolicy:\n  alias_layer: API or CDN, not native S3\
+    \ alias\n  modes:\n    short_lived_alias:\n      - expires_at required\n     \
+    \ - optional max download count\n    revocable_alias:\n      - revoked marker\
+    \ or share record in S3 metadata store\n      - deny after revocation even if\
+    \ target exists\n    rotated_alias:\n      - create new share token\n      - revoke\
+    \ old token\n      - target object key may stay unchanged\n  storage:\n    - share\
+    \ records can live under control prefix in S3\n    - include target key, access\
+    \ mode, expiry, revoked flag, and constraints\n  audit:\n    - create\n    - resolve\n\
+    \    - deny\n    - revoke\nreferences:\n  - api:share-url-api\n  - policy:object-access-policy\n\
+    ```"
+  policy:
+    alias_layer: API or CDN, not native S3 alias
+    modes:
+      short_lived_alias:
+      - expires_at required
+      - optional max download count
+      revocable_alias:
+      - revoked marker or share record in S3 metadata store
+      - deny after revocation even if target exists
+      rotated_alias:
+      - create new share token
+      - revoke old token
+      - target object key may stay unchanged
+    storage:
+    - share records can live under control prefix in S3
+    - include target key, access mode, expiry, revoked flag, and constraints
+    audit:
+    - create
+    - resolve
+    - deny
+    - revoke
+  references:
+  - api:share-url-api
+  - policy:object-access-policy
+relations:
+- relation: mentions
+  to: api:share-url-api
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved

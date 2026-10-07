@@ -1,0 +1,116 @@
+id: data:derived-asset
+type: data
+title: Derived Asset
+summary: Derived asset represents a generated preview or normalized object linked
+  to an uploaded file item.
+facts:
+  legacy_body: "Derived asset represents a generated preview or normalized object\
+    \ linked to an uploaded file item.\n\n```yaml\nfields:\n  asset_key: opaque unique\
+    \ key\n  source_file_key: data:file-item key\n  kind:\n    enum:\n      - image_thumbnail\n\
+    \      - document_preview_page\n      - normalized_pdf\n      - video_animated_preview\n\
+    \      - compressed_download_variant\n      - hls_playlist\n      - hls_segment\n\
+    \      - extracted_text\n      - extracted_metadata\n      - ocr_text\n  object_key:\
+    \ S3 object key for generated asset\n  object_key_convention:\n    image_thumbnail_default:\
+    \ source object key plus /thumbnail\n    extracted_content_default: source object\
+    \ key plus .text.json\n  content_type: generated media type\n  content_encoding:\
+    \ optional HTTP content encoding such as zstd\n  replaces_original: boolean optional\n\
+    \  width: integer optional\n  height: integer optional\n  size_bytes: integer\
+    \ optional\n  status:\n    enum:\n      - pending\n      - generated\n      -\
+    \ skipped\n      - failed\n  placeholder:\n    cache_control: no-store, no-cache,\
+    \ max-age=0\n    returned_while: pending or failed when configured\n    mode:\
+    \ s3_placeholder_object or api_generated_placeholder\n  error_code: optional\n\
+    references:\n  - data:file-item\n  - flow:image-thumbnail-generation\n  - data:thumbnail-generation-config\n\
+    \  - flow:svg-preview-generation\n  - flow:document-preview-generation\n  - flow:video-preview-generation\n\
+    \  - flow:download-variant-generation\n  - flow:hls-generation\n  - flow:text-extraction-generation\n\
+    \  - flow:ocr-extraction-generation\n  - api:derived-asset-serving-api\n  - policy:placeholder-serving-policy\n\
+    \  - policy:object-access-policy\n```"
+  fields:
+    asset_key: opaque unique key
+    source_file_key: data:file-item key
+    kind:
+      enum:
+      - image_thumbnail
+      - document_preview_page
+      - normalized_pdf
+      - video_animated_preview
+      - compressed_download_variant
+      - hls_playlist
+      - hls_segment
+      - extracted_text
+      - extracted_metadata
+      - ocr_text
+    object_key: S3 object key for generated asset
+    object_key_convention:
+      image_thumbnail_default: source object key plus /thumbnail
+      extracted_content_default: source object key plus .text.json
+    content_type: generated media type
+    content_encoding: optional HTTP content encoding such as zstd
+    replaces_original: boolean optional
+    width: integer optional
+    height: integer optional
+    size_bytes: integer optional
+    status:
+      enum:
+      - pending
+      - generated
+      - skipped
+      - failed
+    placeholder:
+      cache_control: no-store, no-cache, max-age=0
+      returned_while: pending or failed when configured
+      mode: s3_placeholder_object or api_generated_placeholder
+    error_code: optional
+  references:
+  - data:file-item
+  - flow:image-thumbnail-generation
+  - data:thumbnail-generation-config
+  - flow:svg-preview-generation
+  - flow:document-preview-generation
+  - flow:video-preview-generation
+  - flow:download-variant-generation
+  - flow:hls-generation
+  - flow:text-extraction-generation
+  - flow:ocr-extraction-generation
+  - api:derived-asset-serving-api
+  - policy:placeholder-serving-policy
+  - policy:object-access-policy
+relations:
+- relation: mentions
+  to: api:derived-asset-serving-api
+  resolution: resolved
+- relation: mentions
+  to: data:file-item
+  resolution: resolved
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:download-variant-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:hls-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:image-thumbnail-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:ocr-extraction-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:svg-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:text-extraction-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:video-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:placeholder-serving-policy
+  resolution: resolved
