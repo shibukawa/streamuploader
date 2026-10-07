@@ -1,0 +1,62 @@
+id: decision:upload-transport-boundary
+type: decision
+title: Upload Transport Boundary
+summary: Clients must upload file bytes through this service so intake checks always
+  run before durable S3 acceptance.
+facts:
+  legacy_body: "Clients must upload file bytes through this service so intake checks\
+    \ always run before durable S3 acceptance.\n\n```yaml\ndecision:\n  selected:\
+    \ service_mediated_upload\n  client_path:\n    - client sends bytes to api:upload-api\
+    \ content endpoint\n    - service inspects prefix and enforces policy:file-intake-security\n\
+    \    - service streams accepted bytes to system:s3-storage\n  s3_transfer:\n \
+    \   allowed_implementation:\n      - AWS SDK multipart upload from service\n \
+    \   not_allowed:\n      - client-visible S3 presigned upload URL\n      - client\
+    \ direct-to-S3 upload bypassing file checks\n      - service-owned presigned S3\
+    \ part URLs\n      - HTTP streaming proxy to presigned S3 URLs\n  rationale:\n\
+    \    - otherwise clients can use S3 presigned URLs directly without this service\n\
+    \    - wrapper value is security checks, upload state, and durable file facts\n\
+    \    - service must observe bytes to compute size, checksum, and file verdict\n\
+    \    - S3 is near this service, so SDK multipart upload is simpler than hiding\
+    \ presigned URLs\nreferences:\n  - api:upload-api\n  - requirement:streaming-upload\n\
+    \  - policy:file-intake-security\n  - decision:serverless-upload-state\n```"
+  decision:
+    selected: service_mediated_upload
+    client_path:
+    - client sends bytes to api:upload-api content endpoint
+    - service inspects prefix and enforces policy:file-intake-security
+    - service streams accepted bytes to system:s3-storage
+    s3_transfer:
+      allowed_implementation:
+      - AWS SDK multipart upload from service
+      not_allowed:
+      - client-visible S3 presigned upload URL
+      - client direct-to-S3 upload bypassing file checks
+      - service-owned presigned S3 part URLs
+      - HTTP streaming proxy to presigned S3 URLs
+    rationale:
+    - otherwise clients can use S3 presigned URLs directly without this service
+    - wrapper value is security checks, upload state, and durable file facts
+    - service must observe bytes to compute size, checksum, and file verdict
+    - S3 is near this service, so SDK multipart upload is simpler than hiding presigned
+      URLs
+  references:
+  - api:upload-api
+  - requirement:streaming-upload
+  - policy:file-intake-security
+  - decision:serverless-upload-state
+relations:
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: decision:serverless-upload-state
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

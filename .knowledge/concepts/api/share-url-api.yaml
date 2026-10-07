@@ -1,0 +1,76 @@
+id: api:share-url-api
+type: api
+title: Share URL API
+summary: Share URL API is the general share-link concept; the first concrete implementation
+  is api:shared-key-api.
+facts:
+  legacy_body: "Share URL API is the general share-link concept; the first concrete\
+    \ implementation is api:shared-key-api.\n\n```yaml\nendpoints:\n  create_share:\n\
+    \    method: POST\n    path: /shares\n    body:\n      target_key: display_key\
+    \ or object_key\n      expires_at: optional timestamp\n      access_mode: policy:object-access-policy\
+    \ mode\n      constraints: optional audience, max downloads, jwt claim rules\n\
+    \    response:\n      share_id: opaque token\n      share_url: API URL, not S3\
+    \ alias\n  resolve_share:\n    method: GET\n    path: /s/{share_id}\n    behavior:\n\
+    \      - validate expiry and revocation\n      - apply optional policy:jwt-claim-authorization\n\
+    \      - redirect to S3, issue presigned URL, or proxy bytes\n  revoke_share:\n\
+    \    method: DELETE\n    path: /shares/{share_id}\n    behavior:\n      - mark\
+    \ share revoked\n      - audit event\nnotes:\n  - S3 has object keys, not general\
+    \ symlink or alias semantics\n  - API or CDN layer owns alias, revocation, and\
+    \ key rotation behavior\n  - api:shared-key-api stores minimal alias records in\
+    \ S3 and serves bytes through api:download-api\nreferences:\n  - policy:object-access-policy\n\
+    \  - policy:share-url-policy\n  - api:shared-key-api\n  - policy:audit-log-policy\n\
+    ```"
+  endpoints:
+    create_share:
+      method: POST
+      path: /shares
+      body:
+        target_key: display_key or object_key
+        expires_at: optional timestamp
+        access_mode: policy:object-access-policy mode
+        constraints: optional audience, max downloads, jwt claim rules
+      response:
+        share_id: opaque token
+        share_url: API URL, not S3 alias
+    resolve_share:
+      method: GET
+      path: /s/{share_id}
+      behavior:
+      - validate expiry and revocation
+      - apply optional policy:jwt-claim-authorization
+      - redirect to S3, issue presigned URL, or proxy bytes
+    revoke_share:
+      method: DELETE
+      path: /shares/{share_id}
+      behavior:
+      - mark share revoked
+      - audit event
+  notes:
+  - S3 has object keys, not general symlink or alias semantics
+  - API or CDN layer owns alias, revocation, and key rotation behavior
+  - api:shared-key-api stores minimal alias records in S3 and serves bytes through
+    api:download-api
+  references:
+  - policy:object-access-policy
+  - policy:share-url-policy
+  - api:shared-key-api
+  - policy:audit-log-policy
+relations:
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:shared-key-api
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:jwt-claim-authorization
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:share-url-policy
+  resolution: resolved

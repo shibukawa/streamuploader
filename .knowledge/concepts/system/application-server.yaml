@@ -1,0 +1,48 @@
+id: system:application-server
+type: system
+title: Application Server
+summary: Application server owns normal product routes, login protection, and metadata
+  persistence.
+facts:
+  legacy_body: "Application server owns normal product routes, login protection, and\
+    \ metadata persistence.\n\n```yaml\nintegration:\n  protocol: HTTP\n  roles:\n\
+    \    - serve application frontend and APIs\n    - validate and persist application\
+    \ metadata\n    - own login, session, CSRF, and authorization policy\n    - receive\
+    \ file facts returned by streamuploader from frontend\n  reverse_proxy_mode:\n\
+    \    - streamuploader may forward non-upload paths to this server\n    - same-origin\
+    \ browser use avoids CORS for simple deployments\n    - this mode does not protect\
+    \ streamuploader upload endpoints\nrequirements:\n  - stable metadata API contract\
+    \ owned by application\n  - accept streamuploader returned object_key or display_key\
+    \ values\n  - reject file facts not allowed for current user or product context\
+    \ when auth is available\nreferences:\n  - requirement:application-metadata-submit\n\
+    \  - policy:reverse-proxy-routing-policy\n  - decision:consistency-model\n```"
+  integration:
+    protocol: HTTP
+    roles:
+    - serve application frontend and APIs
+    - validate and persist application metadata
+    - own login, session, CSRF, and authorization policy
+    - receive file facts returned by streamuploader from frontend
+    reverse_proxy_mode:
+    - streamuploader may forward non-upload paths to this server
+    - same-origin browser use avoids CORS for simple deployments
+    - this mode does not protect streamuploader upload endpoints
+  requirements:
+  - stable metadata API contract owned by application
+  - accept streamuploader returned object_key or display_key values
+  - reject file facts not allowed for current user or product context when auth is
+    available
+  references:
+  - requirement:application-metadata-submit
+  - policy:reverse-proxy-routing-policy
+  - decision:consistency-model
+relations:
+- relation: mentions
+  to: decision:consistency-model
+  resolution: resolved
+- relation: mentions
+  to: policy:reverse-proxy-routing-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:application-metadata-submit
+  resolution: resolved

@@ -1,0 +1,79 @@
+id: vision:stream-upload-wrapper
+type: vision
+title: Stream Upload Wrapper
+summary: Go web service for service-mediated file uploads, upload progress watching,
+  and optional same-origin reverse proxying.
+facts:
+  legacy_body: "Go web service for service-mediated file uploads, upload progress\
+    \ watching, and optional same-origin reverse proxying.\n\n```yaml\ngoals:\n  primary:\n\
+    \    - issue upload keys to clients\n    - accept file bytes through streamuploader\
+    \ endpoints only\n    - upload file bodies to S3-compatible storage without full\
+    \ buffering\n    - wait for one or more upload keys and return durable file facts\n\
+    \    - let client submit application metadata to system:application-server with\
+    \ returned file facts\n    - keep upload path efficient for large files\n    -\
+    \ optionally reverse proxy non-upload paths to system:application-server for simple\
+    \ same-origin use\n    - support configurable native and local command processors\
+    \ for extraction, previews, OCR, HLS, and custom enrichment\n  non_goals:\n  \
+    \  - validate application metadata\n    - submit metadata to application server\n\
+    \    - provide login protection for streamuploader endpoints in simple reverse\
+    \ proxy mode\n    - natively model every external API shape\n  related:\n    -\
+    \ api:upload-api\n    - requirement:streaming-upload\n    - requirement:application-metadata-submit\n\
+    \    - flow:session-assembly\n    - policy:processor-execution-policy\n    - system:local-command-processor\n\
+    \    - policy:reverse-proxy-routing-policy\n    - policy:file-intake-security\n\
+    ```"
+  goals:
+    primary:
+    - issue upload keys to clients
+    - accept file bytes through streamuploader endpoints only
+    - upload file bodies to S3-compatible storage without full buffering
+    - wait for one or more upload keys and return durable file facts
+    - let client submit application metadata to system:application-server with returned
+      file facts
+    - keep upload path efficient for large files
+    - optionally reverse proxy non-upload paths to system:application-server for simple
+      same-origin use
+    - support configurable native and local command processors for extraction, previews,
+      OCR, HLS, and custom enrichment
+    non_goals:
+    - validate application metadata
+    - submit metadata to application server
+    - provide login protection for streamuploader endpoints in simple reverse proxy
+      mode
+    - natively model every external API shape
+    related:
+    - api:upload-api
+    - requirement:streaming-upload
+    - requirement:application-metadata-submit
+    - flow:session-assembly
+    - policy:processor-execution-policy
+    - system:local-command-processor
+    - policy:reverse-proxy-routing-policy
+    - policy:file-intake-security
+relations:
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: flow:session-assembly
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:reverse-proxy-routing-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:application-metadata-submit
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved

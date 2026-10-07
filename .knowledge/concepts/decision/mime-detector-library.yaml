@@ -1,0 +1,80 @@
+id: decision:mime-detector-library
+type: decision
+title: MIME Detector Library
+summary: Use github.com/gabriel-vasile/mimetype as the first implementation library
+  for magic-header MIME detection.
+facts:
+  legacy_body: "Use github.com/gabriel-vasile/mimetype as the first implementation\
+    \ library for magic-header MIME detection.\n\n```yaml\ndecision:\n  selected:\
+    \ github.com/gabriel-vasile/mimetype\n  rationale:\n    - pure Go library fits\
+    \ current Go service deployment\n    - Detect accepts []byte so upload path can\
+    \ inspect only bounded prefix\n    - broad magic signature coverage beyond net/http\
+    \ DetectContentType\n    - no libmagic C runtime dependency in container image\n\
+    \  implementation:\n    package: github.com/gabriel-vasile/mimetype\n    call:\
+    \ mimetype.Detect(prefixBytes).String()\n    prefix_limit_bytes: data:security-policy-config\
+    \ mime_magic.prefix_bytes default 3072\n    fallback: net/http DetectContentType(prefixBytes)\n\
+    \    normalize_declared: mime.ParseMediaType then strings.ToLower\n    replay:\
+    \ io.MultiReader(bytes.NewReader(prefixBytes), remainingBody)\n  rejected_alternatives:\n\
+    \    libmagic:\n      reason: strongest database but adds C dependency and image/runtime\
+    \ complexity\n    github.com/h2non/filetype:\n      reason: fast signatures but\
+    \ narrower MIME taxonomy for mismatch policy\n    net/http DetectContentType_only:\n\
+    \      reason: standard library only but limited and generic for many file families\n\
+    \    magika:\n      reason: useful deeper classifier but too heavy for synchronous\
+    \ upload gate\n  risks:\n    - some text, office, and container formats can be\
+    \ ambiguous from prefix only\n    - archive and polyglot handling needs separate\
+    \ policy:archive-bomb-protection\n    - equivalence mapping must avoid allowing\
+    \ executable masquerade\nreferences:\n  - requirement:mime-magic-consistency\n\
+    \  - system:content-detector\n  - rule:prefix-replay\n  - policy:file-intake-security\n\
+    ```"
+  decision:
+    selected: github.com/gabriel-vasile/mimetype
+    rationale:
+    - pure Go library fits current Go service deployment
+    - Detect accepts []byte so upload path can inspect only bounded prefix
+    - broad magic signature coverage beyond net/http DetectContentType
+    - no libmagic C runtime dependency in container image
+    implementation:
+      package: github.com/gabriel-vasile/mimetype
+      call: mimetype.Detect(prefixBytes).String()
+      prefix_limit_bytes: data:security-policy-config mime_magic.prefix_bytes default
+        3072
+      fallback: net/http DetectContentType(prefixBytes)
+      normalize_declared: mime.ParseMediaType then strings.ToLower
+      replay: io.MultiReader(bytes.NewReader(prefixBytes), remainingBody)
+    rejected_alternatives:
+      libmagic:
+        reason: strongest database but adds C dependency and image/runtime complexity
+      github.com/h2non/filetype:
+        reason: fast signatures but narrower MIME taxonomy for mismatch policy
+      net/http DetectContentType_only:
+        reason: standard library only but limited and generic for many file families
+      magika:
+        reason: useful deeper classifier but too heavy for synchronous upload gate
+    risks:
+    - some text, office, and container formats can be ambiguous from prefix only
+    - archive and polyglot handling needs separate policy:archive-bomb-protection
+    - equivalence mapping must avoid allowing executable masquerade
+  references:
+  - requirement:mime-magic-consistency
+  - system:content-detector
+  - rule:prefix-replay
+  - policy:file-intake-security
+relations:
+- relation: mentions
+  to: data:security-policy-config
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:mime-magic-consistency
+  resolution: resolved
+- relation: mentions
+  to: rule:prefix-replay
+  resolution: resolved
+- relation: mentions
+  to: system:content-detector
+  resolution: resolved

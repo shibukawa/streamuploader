@@ -1,0 +1,136 @@
+id: system:server-deployment-modes
+type: system
+title: Server Deployment Modes
+summary: Server deployment modes separate simple fronting reverse proxy use from normal
+  protected integration use.
+facts:
+  legacy_body: "Server deployment modes separate simple fronting reverse proxy use\
+    \ from normal protected integration use.\n\n```yaml\nmodes:\n  simple_fronting_reverse_proxy:\n\
+    \    description: streamuploader receives browser traffic and proxies non-upload\
+    \ paths to system:application-server\n    routing:\n      - upload endpoint defaults\
+    \ to /api/upload and is configurable\n      - matching upload endpoint is handled\
+    \ by streamuploader\n      - all other paths are reverse proxied to system:application-server\n\
+    \    cors:\n      - not required because browser sees one origin\n    headers:\n\
+    \      - preserve request id\n      - strip hop-by-hop proxy headers\n    auth:\n\
+    \      - simple mode does not login-protect streamuploader upload endpoints\n\
+    \      - application server login still protects application routes\n  protected_forwarded_upload:\n\
+    \    description: application server or edge proxy owns public traffic and forwards\
+    \ upload API calls to streamuploader\n    routing:\n      - application or edge\
+    \ proxy applies login and authorization\n      - only upload endpoint traffic\
+    \ is forwarded to streamuploader\n      - preferred for production APIs that need\
+    \ protection\n    cors:\n      - usually not required when same-origin through\
+    \ application server\n    headers:\n      - streamuploader trusts configured forwarded\
+    \ identity and request headers only from trusted proxies\n  standalone_cross_origin:\n\
+    \    description: streamuploader runs as a separate origin called directly by\
+    \ browser clients\n    routing:\n      - dedicated host or subdomain\n    cors:\n\
+    \      - governed by policy:http-cors-header-policy\n    note: use only when cross-origin\
+    \ upload API is acceptable\nconfiguration:\n  - mode\n  - public_upload_port\n\
+    \  - backend_control_port\n  - backend_control_listen_mode same_port or separate_port\n\
+    \  - upload_base_path default /api/upload\n  - application_server_base_url\n \
+    \ - public_base_url\n  - allowed_origins\n  - allowed_methods\n  - allowed_headers\n\
+    \  - exposed_headers\n  - allow_credentials\n  - max_age\n  - trusted_proxy_headers\n\
+    control_plane:\n  - privileged operations use system:backend-control-listener\n\
+    \  - backend control routes are never exposed through browser-facing reverse proxy\
+    \ paths\nhealth:\n  - api:health-api /healthz is available on public listener\n\
+    \  - api:health-api /healthz is also available on backend control listener when\
+    \ separate port is configured\nreferences:\n  - policy:http-cors-header-policy\n\
+    \  - policy:reverse-proxy-routing-policy\n  - system:backend-control-listener\n\
+    \  - system:application-server\n  - api:upload-api\n  - api:backend-control-api\n\
+    \  - api:health-api\n  - api:session-progress-api\n  - api:download-api\n```"
+  modes:
+    simple_fronting_reverse_proxy:
+      description: streamuploader receives browser traffic and proxies non-upload
+        paths to system:application-server
+      routing:
+      - upload endpoint defaults to /api/upload and is configurable
+      - matching upload endpoint is handled by streamuploader
+      - all other paths are reverse proxied to system:application-server
+      cors:
+      - not required because browser sees one origin
+      headers:
+      - preserve request id
+      - strip hop-by-hop proxy headers
+      auth:
+      - simple mode does not login-protect streamuploader upload endpoints
+      - application server login still protects application routes
+    protected_forwarded_upload:
+      description: application server or edge proxy owns public traffic and forwards
+        upload API calls to streamuploader
+      routing:
+      - application or edge proxy applies login and authorization
+      - only upload endpoint traffic is forwarded to streamuploader
+      - preferred for production APIs that need protection
+      cors:
+      - usually not required when same-origin through application server
+      headers:
+      - streamuploader trusts configured forwarded identity and request headers only
+        from trusted proxies
+    standalone_cross_origin:
+      description: streamuploader runs as a separate origin called directly by browser
+        clients
+      routing:
+      - dedicated host or subdomain
+      cors:
+      - governed by policy:http-cors-header-policy
+      note: use only when cross-origin upload API is acceptable
+  configuration:
+  - mode
+  - public_upload_port
+  - backend_control_port
+  - backend_control_listen_mode same_port or separate_port
+  - upload_base_path default /api/upload
+  - application_server_base_url
+  - public_base_url
+  - allowed_origins
+  - allowed_methods
+  - allowed_headers
+  - exposed_headers
+  - allow_credentials
+  - max_age
+  - trusted_proxy_headers
+  control_plane:
+  - privileged operations use system:backend-control-listener
+  - backend control routes are never exposed through browser-facing reverse proxy
+    paths
+  health:
+  - api:health-api /healthz is available on public listener
+  - api:health-api /healthz is also available on backend control listener when separate
+    port is configured
+  references:
+  - policy:http-cors-header-policy
+  - policy:reverse-proxy-routing-policy
+  - system:backend-control-listener
+  - system:application-server
+  - api:upload-api
+  - api:backend-control-api
+  - api:health-api
+  - api:session-progress-api
+  - api:download-api
+relations:
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:health-api
+  resolution: resolved
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: api:upload-api
+  resolution: resolved
+- relation: mentions
+  to: policy:http-cors-header-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:reverse-proxy-routing-policy
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved
+- relation: mentions
+  to: system:backend-control-listener
+  resolution: resolved

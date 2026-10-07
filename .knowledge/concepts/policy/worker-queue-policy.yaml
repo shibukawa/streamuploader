@@ -1,0 +1,128 @@
+id: policy:worker-queue-policy
+type: policy
+title: Worker Queue Policy
+summary: Worker queue policy manages asynchronous processors for previews, media transforms,
+  extraction, compression variants, local command jobs, webhooks, and retries.
+facts:
+  legacy_body: "Worker queue policy manages asynchronous processors for previews,\
+    \ media transforms, extraction, compression variants, local command jobs, webhooks,\
+    \ and retries.\n\n```yaml\njobs:\n  - image_thumbnail\n  - svg_preview\n  - document_preview\n\
+    \  - video_preview\n  - hls_transcode\n  - download_variant\n  - text_extraction\n\
+    \  - metadata_extraction\n  - ocr_extraction\n  - metadata_strip\n  - local_command_processor\n\
+    \  - webhook_delivery\nbehavior:\n  - idempotent job keys\n  - create data:async-task-marker\
+    \ when asynchronous work starts\n  - delete data:async-task-marker when work reaches\
+    \ terminal success or terminal failure\n  - timing follows policy:processor-execution-policy\
+    \ pre_accept, post_accept, or on_demand\n  - selected backend recorded from system:external-tool-registry\n\
+    \  - delegated provider recorded from system:external-processing-delegates when\
+    \ external delegation is used\n  - local command stdout data:processor-result\
+    \ is validated before merge\n  - retry with backoff\n  - terminal failure state\n\
+    \  - dead letter queue or dead letter prefix\n  - per-tenant concurrency limits\n\
+    \  - CPU and wall-clock budgets\nstatus:\n  - queued\n  - running\n  - retrying\n\
+    \  - succeeded\n  - failed_terminal\nreferences:\n  - flow:image-thumbnail-generation\n\
+    \  - flow:document-preview-generation\n  - flow:video-preview-generation\n  -\
+    \ flow:hls-generation\n  - flow:download-variant-generation\n  - flow:text-extraction-generation\n\
+    \  - flow:ocr-extraction-generation\n  - system:external-tool-registry\n  - policy:tool-backend-selection-policy\n\
+    \  - policy:search-extraction-policy\n  - policy:external-delegation-policy\n\
+    \  - policy:processor-execution-policy\n  - system:local-command-processor\n \
+    \ - data:async-task-marker\n  - api:async-task-wait-api\n```"
+  jobs:
+  - image_thumbnail
+  - svg_preview
+  - document_preview
+  - video_preview
+  - hls_transcode
+  - download_variant
+  - text_extraction
+  - metadata_extraction
+  - ocr_extraction
+  - metadata_strip
+  - local_command_processor
+  - webhook_delivery
+  behavior:
+  - idempotent job keys
+  - create data:async-task-marker when asynchronous work starts
+  - delete data:async-task-marker when work reaches terminal success or terminal failure
+  - timing follows policy:processor-execution-policy pre_accept, post_accept, or on_demand
+  - selected backend recorded from system:external-tool-registry
+  - delegated provider recorded from system:external-processing-delegates when external
+    delegation is used
+  - local command stdout data:processor-result is validated before merge
+  - retry with backoff
+  - terminal failure state
+  - dead letter queue or dead letter prefix
+  - per-tenant concurrency limits
+  - CPU and wall-clock budgets
+  status:
+  - queued
+  - running
+  - retrying
+  - succeeded
+  - failed_terminal
+  references:
+  - flow:image-thumbnail-generation
+  - flow:document-preview-generation
+  - flow:video-preview-generation
+  - flow:hls-generation
+  - flow:download-variant-generation
+  - flow:text-extraction-generation
+  - flow:ocr-extraction-generation
+  - system:external-tool-registry
+  - policy:tool-backend-selection-policy
+  - policy:search-extraction-policy
+  - policy:external-delegation-policy
+  - policy:processor-execution-policy
+  - system:local-command-processor
+  - data:async-task-marker
+  - api:async-task-wait-api
+relations:
+- relation: mentions
+  to: api:async-task-wait-api
+  resolution: resolved
+- relation: mentions
+  to: data:async-task-marker
+  resolution: resolved
+- relation: mentions
+  to: data:processor-result
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:download-variant-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:hls-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:image-thumbnail-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:ocr-extraction-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:text-extraction-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:video-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:external-delegation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:search-extraction-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: system:external-processing-delegates
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved

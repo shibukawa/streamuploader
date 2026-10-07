@@ -1,0 +1,110 @@
+id: policy:audit-log-policy
+type: policy
+title: Audit Log Policy
+summary: Audit log policy records security and data access decisions for upload, processing,
+  sharing, and download operations.
+facts:
+  legacy_body: "Audit log policy records security and data access decisions for upload,\
+    \ processing, sharing, and download operations.\n\n```yaml\nlogger:\n  implementation:\
+    \ Go log/slog\n  sink: stdout\n  default_handler: slog.NewTextHandler\n  json_handler:\n\
+    \    enabled_by_env:\n      - LOG_FORMAT=json\n      - SLOG_FORMAT=json\n    handler:\
+    \ slog.NewJSONHandler\n  level:\n    default: info\n    env:\n      - LOG_LEVEL\n\
+    \  references:\n    - data:logging-config\nevents:\n  - upload_key_created\n \
+    \ - upload_started\n  - upload_completed\n  - security_check_completed\n  - virus_scan_completed\n\
+    \  - upload_wait_started\n  - upload_wait_completed\n  - derived_asset_completed\n\
+    \  - share_created\n  - share_resolved\n  - share_revoked\n  - download_allowed\n\
+    \  - download_denied\n  - cleanup_deleted\n  - backend_object_delete_requested\n\
+    \  - backend_object_deleted\n  - backend_object_rename_requested\n  - backend_object_renamed\n\
+    \  - backend_object_replace_requested\n  - backend_object_replaced\n  - backend_prefix_purged\n\
+    fields:\n  - event_id\n  - timestamp\n  - actor_subject\n  - tenant_id\n  - batch_key\
+    \ optional\n  - upload_key\n  - object_key or display_key\n  - old_object_key\
+    \ optional\n  - new_object_key optional\n  - decision\n  - reason_code\n  - request_id\n\
+    \  - source_ip optional\nstorage:\n  - stdout structured logs are baseline for\
+    \ container and cloud log collection\n  - append-only log sink preferred when\
+    \ deployment needs tamper-resistant audit retention\n  - S3 JSONL control prefix\
+    \ acceptable for storage-less deployment\n  - redact secrets and bearer tokens\n\
+    references:\n  - policy:object-access-policy\n  - policy:jwt-claim-authorization\n\
+    \  - api:backend-control-api\n  - policy:backend-control-plane-policy\n  - api:share-url-api\n\
+    \  - data:logging-config\n```"
+  logger:
+    implementation: Go log/slog
+    sink: stdout
+    default_handler: slog.NewTextHandler
+    json_handler:
+      enabled_by_env:
+      - LOG_FORMAT=json
+      - SLOG_FORMAT=json
+      handler: slog.NewJSONHandler
+    level:
+      default: info
+      env:
+      - LOG_LEVEL
+    references:
+    - data:logging-config
+  events:
+  - upload_key_created
+  - upload_started
+  - upload_completed
+  - security_check_completed
+  - virus_scan_completed
+  - upload_wait_started
+  - upload_wait_completed
+  - derived_asset_completed
+  - share_created
+  - share_resolved
+  - share_revoked
+  - download_allowed
+  - download_denied
+  - cleanup_deleted
+  - backend_object_delete_requested
+  - backend_object_deleted
+  - backend_object_rename_requested
+  - backend_object_renamed
+  - backend_object_replace_requested
+  - backend_object_replaced
+  - backend_prefix_purged
+  fields:
+  - event_id
+  - timestamp
+  - actor_subject
+  - tenant_id
+  - batch_key optional
+  - upload_key
+  - object_key or display_key
+  - old_object_key optional
+  - new_object_key optional
+  - decision
+  - reason_code
+  - request_id
+  - source_ip optional
+  storage:
+  - stdout structured logs are baseline for container and cloud log collection
+  - append-only log sink preferred when deployment needs tamper-resistant audit retention
+  - S3 JSONL control prefix acceptable for storage-less deployment
+  - redact secrets and bearer tokens
+  references:
+  - policy:object-access-policy
+  - policy:jwt-claim-authorization
+  - api:backend-control-api
+  - policy:backend-control-plane-policy
+  - api:share-url-api
+  - data:logging-config
+relations:
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: api:share-url-api
+  resolution: resolved
+- relation: mentions
+  to: data:logging-config
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-control-plane-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:jwt-claim-authorization
+  resolution: resolved
+- relation: mentions
+  to: policy:object-access-policy
+  resolution: resolved

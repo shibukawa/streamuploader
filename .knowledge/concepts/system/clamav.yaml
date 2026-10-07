@@ -1,0 +1,95 @@
+id: system:clamav
+type: system
+title: ClamAV
+summary: ClamAV is an optional malware scanning integration for file intake.
+facts:
+  legacy_body: "ClamAV is an optional malware scanning integration for file intake.\n\
+    \n```yaml\nintegration:\n  enabled_by: SU_CLAMAV_HOST or CLAMAV_HOST environment\
+    \ variable\n  optional: true\n  backend_selection: policy:tool-backend-selection-policy\n\
+    \  transport:\n    protocol: clamd TCP INSTREAM\n    default_port: 3310\n    request_shape:\n\
+    \      - open TCP connection to configured host\n      - send INSTREAM command\n\
+    \      - send uploaded bytes as bounded chunks while intake stream is read\n \
+    \     - send zero-length chunk terminator\n      - parse OK, FOUND, or ERROR response\n\
+    \  modes:\n    stream_scan:\n      required_when: SU_CLAMAV_HOST is configured\n\
+    \      behavior: reject before finalizing upload when detection is positive\n\
+    \    async_scan:\n      preferred_when: large file scanning exceeds request budget\n\
+    \      behavior: upload into quarantine or pending state before release\nconstraints:\n\
+    \  - scanning must respect request timeout or background job limits\n  - scan\
+    \ result must be captured in data:upload-record\n  - service must not buffer full\
+    \ file content in memory or local disk for scan\n  - scanner connection failure\
+    \ fails upload closed when system:clamav is enabled\n  - system:clamav may apply\
+    \ archive scan limits but does not replace policy:archive-bomb-protection\nstreaming_behavior:\n\
+    \  intake:\n    - upload body is copied through io.MultiWriter to system:s3-storage\
+    \ temporary key and clamd INSTREAM\n    - temporary key uses sibling .tmp path\
+    \ until all security gates pass\n    - FOUND response deletes .tmp object and\
+    \ returns malware_detected\n    - OK response permits archive guard and final\
+    \ object publish\n  publish:\n    - copy .tmp object to final key after system:clamav\
+    \ and policy:archive-bomb-protection allow\n    - delete .tmp object after publish,\
+    \ reject, or failed copy\nreferences:\n  - policy:file-intake-security\n  - policy:archive-bomb-protection\n\
+    \  - requirement:streaming-upload\n  - system:external-tool-registry\n  - policy:tool-backend-selection-policy\n\
+    ```"
+  integration:
+    enabled_by: SU_CLAMAV_HOST or CLAMAV_HOST environment variable
+    optional: true
+    backend_selection: policy:tool-backend-selection-policy
+    transport:
+      protocol: clamd TCP INSTREAM
+      default_port: 3310
+      request_shape:
+      - open TCP connection to configured host
+      - send INSTREAM command
+      - send uploaded bytes as bounded chunks while intake stream is read
+      - send zero-length chunk terminator
+      - parse OK, FOUND, or ERROR response
+    modes:
+      stream_scan:
+        required_when: SU_CLAMAV_HOST is configured
+        behavior: reject before finalizing upload when detection is positive
+      async_scan:
+        preferred_when: large file scanning exceeds request budget
+        behavior: upload into quarantine or pending state before release
+  constraints:
+  - scanning must respect request timeout or background job limits
+  - scan result must be captured in data:upload-record
+  - service must not buffer full file content in memory or local disk for scan
+  - scanner connection failure fails upload closed when system:clamav is enabled
+  - system:clamav may apply archive scan limits but does not replace policy:archive-bomb-protection
+  streaming_behavior:
+    intake:
+    - upload body is copied through io.MultiWriter to system:s3-storage temporary
+      key and clamd INSTREAM
+    - temporary key uses sibling .tmp path until all security gates pass
+    - FOUND response deletes .tmp object and returns malware_detected
+    - OK response permits archive guard and final object publish
+    publish:
+    - copy .tmp object to final key after system:clamav and policy:archive-bomb-protection
+      allow
+    - delete .tmp object after publish, reject, or failed copy
+  references:
+  - policy:file-intake-security
+  - policy:archive-bomb-protection
+  - requirement:streaming-upload
+  - system:external-tool-registry
+  - policy:tool-backend-selection-policy
+relations:
+- relation: mentions
+  to: data:upload-record
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

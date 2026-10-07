@@ -1,0 +1,50 @@
+id: data:upload-record
+type: data
+title: Upload Record
+summary: Upload record captures the local state needed to correlate stream upload,
+  S3 object, and client metadata submission.
+facts:
+  legacy_body: "Upload record captures the local state needed to correlate stream\
+    \ upload, S3 object, and client metadata submission.\n\n```yaml\nfields:\n  upload_id:\
+    \ service-generated idempotency key\n  object_key: S3 object key after upload\
+    \ acceptance\n  bucket: logical or physical S3 bucket\n  content_type: trusted\
+    \ or detected media type\n  size_bytes: counted during stream\n  checksum: optional\
+    \ digest\n  scan_status: optional result from policy:file-intake-security\n  application_reference:\
+    \ optional id or metadata pointer returned later by system:application-server\n\
+    \  state:\n    enum:\n      - accepted\n      - uploading\n      - uploaded\n\
+    \      - ready_for_metadata\n      - failed\n      - cleanup_pending\nreferences:\n\
+    \  - requirement:streaming-upload\n  - requirement:application-metadata-submit\n\
+    ```"
+  fields:
+    upload_id: service-generated idempotency key
+    object_key: S3 object key after upload acceptance
+    bucket: logical or physical S3 bucket
+    content_type: trusted or detected media type
+    size_bytes: counted during stream
+    checksum: optional digest
+    scan_status: optional result from policy:file-intake-security
+    application_reference: optional id or metadata pointer returned later by system:application-server
+    state:
+      enum:
+      - accepted
+      - uploading
+      - uploaded
+      - ready_for_metadata
+      - failed
+      - cleanup_pending
+  references:
+  - requirement:streaming-upload
+  - requirement:application-metadata-submit
+relations:
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:application-metadata-submit
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved

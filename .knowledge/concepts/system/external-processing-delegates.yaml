@@ -1,0 +1,305 @@
+id: system:external-processing-delegates
+type: system
+title: External Processing Delegates
+summary: External processing delegates are operator-provided local command adapters
+  for text extraction, OCR, document AI, media, translation, metadata, and custom
+  tasks.
+facts:
+  legacy_body: "External processing delegates are operator-provided local command\
+    \ adapters for text extraction, OCR, document AI, media, translation, metadata,\
+    \ and custom tasks.\n\n```yaml\nadapter_model:\n  - each processor declares capability,\
+    \ input match, timing, output merge path, limits, and failure behavior\n  - selection\
+    \ uses policy:external-delegation-policy and policy:tool-backend-selection-policy\n\
+    \  - processor output is normalized data:processor-result JSON\n  - provider-specific\
+    \ output is normalized by command before stdout\n  - provider job id, command\
+    \ version, region, and confidence are recorded when available\nlocal_library_candidates:\n\
+    \  go_docx_ooxml_parser:\n    priority: preferred\n    capabilities:\n      -\
+    \ OOXML text extraction\n      - OOXML core properties extraction\n    notes:\n\
+    \      - primary path for docx and Office metadata when format is supported\n\
+    \  go_pdf_text_parser:\n    priority: preferred_when_quality_ok\n    capabilities:\n\
+    \      - simple PDF embedded text extraction\n    notes:\n      - use only when\
+    \ quality is acceptable; fallback to pdftotext or Tika\n  go_exif_parser:\n  \
+    \  priority: preferred\n    capabilities:\n      - selected EXIF metadata extraction\n\
+    \    notes:\n      - primary path for allowlisted image metadata without invoking\
+    \ exiftool\nlocal_cli_candidates:\n  pdftotext:\n    priority: fallback_for_pdf_quality\n\
+    \    capabilities:\n      - PDF embedded text extraction\n  exiftool:\n    priority:\
+    \ fallback_for_broad_metadata\n    capabilities:\n      - image, media, PDF, and\
+    \ Office metadata extraction\n  tesseract:\n    capabilities:\n      - local OCR\n\
+    \      - language-pack dependent OCR\n  ocrmypdf_cli:\n    capabilities:\n   \
+    \   - searchable PDF generation\n      - PDF OCR pipeline\n  pandoc:\n    capabilities:\n\
+    \      - document text and markup conversion\n    notes:\n      - optional for\
+    \ text/markdown/html/docx conversion paths\n  catdoc_or_antiword:\n    capabilities:\n\
+    \      - legacy .doc text extraction\n    notes:\n      - optional legacy Office\
+    \ fallback when policy allows\nself_hosted_sidecar_candidates:\n  tika_server:\n\
+    \    capabilities:\n      - broad text extraction\n      - metadata extraction\n\
+    \    notes:\n      - useful as sidecar service for Office, PDF, HTML, and many\
+    \ document formats\n  gotenberg:\n    capabilities:\n      - Office to PDF\n \
+    \     - HTML to PDF\n    notes:\n      - useful when separating LibreOffice/browser\
+    \ conversion from Go worker\n  ocrmypdf:\n    capabilities:\n      - searchable\
+    \ PDF generation\n      - Tesseract OCR pipeline\n    notes:\n      - useful for\
+    \ PDF OCR normalization\n  tika_plus_tesseract:\n    capabilities:\n      - local\
+    \ text extraction\n      - local OCR fallback\n  unstructured:\n    capabilities:\n\
+    \      - local document partitioning\n      - PDF, Office, HTML, and image document\
+    \ parsing\n    notes:\n      - heavier Python stack; useful for search/RAG pipelines\
+    \ when accepted\nexternal_api_examples_via_local_command:\n  aws_textract_with_aws_cli:\n\
+    \    capabilities:\n      - OCR\n      - handwriting\n      - forms\n      - tables\n\
+    \      - document layout\n    note: implemented by configured local command, not\
+    \ native webhook\n  google_document_ai_or_vision:\n    capabilities:\n      -\
+    \ OCR\n      - layout parsing\n      - custom extraction\n      - document classification\
+    \ and splitting\n      - image labels\n    note: implemented by gcloud, curl,\
+    \ or custom command\n  translation_api:\n    capabilities:\n      - text translation\n\
+    \      - language detection\n    note: command normalizes translated_text into\
+    \ data:processor-result metadata\nopenai_compatible_api_candidates:\n  generic_openai_compatible:\n\
+    \    capabilities:\n      - OCR from image or rendered document page\n      -\
+    \ image analysis\n      - extracted text summary\n      - document classification\n\
+    \      - custom JSON extraction\n    configuration:\n      - prompt templates\n\
+    \      - base URL and model\n      - static headers and environment-variable headers\n\
+    \      - response JSON schema\n    outputs:\n      - data:processor-result\n \
+    \     - data:extracted-content when configured\n    note: configured by system:openai-compatible-api-processor\n\
+    \  google_vision_ocr:\n    capabilities:\n      - image OCR\n      - simple OCR\
+    \ fallback\n  azure_document_intelligence:\n    capabilities:\n      - OCR\n \
+    \     - layout\n      - tables\n      - key value pairs\n      - custom and prebuilt\
+    \ document extraction\n  abbyy_vantage_or_finereader_engine:\n    capabilities:\n\
+    \      - commercial OCR\n      - structured document capture\n      - high fidelity\
+    \ enterprise OCR\n  nanonets_or_docparser:\n    capabilities:\n      - document\
+    \ extraction SaaS\n      - invoice and form oriented extraction\nmedia_candidates:\n\
+    \  local_external_tools:\n    priority: preferred_for_image_video_transforms\n\
+    \    capabilities:\n      - SIMD/native codec backed image resize and conversion\n\
+    \      - video probe and transcode\n    examples:\n      - ffmpeg\n      - libvips\n\
+    \      - ImageMagick\n      - rsvg-convert\n  cloudinary:\n    capabilities:\n\
+    \      - image and video transformation\n      - thumbnail generation\n      -\
+    \ CDN delivery\n  aws_mediaconvert:\n    capabilities:\n      - video transcode\n\
+    \      - HLS packaging\n  mux:\n    capabilities:\n      - video ingest\n    \
+    \  - HLS playback assets\n      - thumbnails\nconstraints:\n  - disabled by default\
+    \ for private content\n  - require explicit tenant/product policy to send file\
+    \ bytes outside service boundary\n  - prefer native or local command processors\
+    \ before cloud SaaS for private content\n  - prefer same cloud account and region\
+    \ when possible\n  - support processor timeout, retry, quota, and circuit breaker\n\
+    \  - normalize provider-specific results before stdout and index handoff\nreferences:\n\
+    \  - policy:external-delegation-policy\n  - system:local-command-processor\n \
+    \ - system:openai-compatible-api-processor\n  - data:processor-result\n  - data:openai-compatible-processor-config\n\
+    \  - policy:processor-execution-policy\n  - policy:search-extraction-policy\n\
+    \  - system:text-extractor\n  - system:ocr-engine\n  - system:media-converter\n\
+    ```"
+  adapter_model:
+  - each processor declares capability, input match, timing, output merge path, limits,
+    and failure behavior
+  - selection uses policy:external-delegation-policy and policy:tool-backend-selection-policy
+  - processor output is normalized data:processor-result JSON
+  - provider-specific output is normalized by command before stdout
+  - provider job id, command version, region, and confidence are recorded when available
+  local_library_candidates:
+    go_docx_ooxml_parser:
+      priority: preferred
+      capabilities:
+      - OOXML text extraction
+      - OOXML core properties extraction
+      notes:
+      - primary path for docx and Office metadata when format is supported
+    go_pdf_text_parser:
+      priority: preferred_when_quality_ok
+      capabilities:
+      - simple PDF embedded text extraction
+      notes:
+      - use only when quality is acceptable; fallback to pdftotext or Tika
+    go_exif_parser:
+      priority: preferred
+      capabilities:
+      - selected EXIF metadata extraction
+      notes:
+      - primary path for allowlisted image metadata without invoking exiftool
+  local_cli_candidates:
+    pdftotext:
+      priority: fallback_for_pdf_quality
+      capabilities:
+      - PDF embedded text extraction
+    exiftool:
+      priority: fallback_for_broad_metadata
+      capabilities:
+      - image, media, PDF, and Office metadata extraction
+    tesseract:
+      capabilities:
+      - local OCR
+      - language-pack dependent OCR
+    ocrmypdf_cli:
+      capabilities:
+      - searchable PDF generation
+      - PDF OCR pipeline
+    pandoc:
+      capabilities:
+      - document text and markup conversion
+      notes:
+      - optional for text/markdown/html/docx conversion paths
+    catdoc_or_antiword:
+      capabilities:
+      - legacy .doc text extraction
+      notes:
+      - optional legacy Office fallback when policy allows
+  self_hosted_sidecar_candidates:
+    tika_server:
+      capabilities:
+      - broad text extraction
+      - metadata extraction
+      notes:
+      - useful as sidecar service for Office, PDF, HTML, and many document formats
+    gotenberg:
+      capabilities:
+      - Office to PDF
+      - HTML to PDF
+      notes:
+      - useful when separating LibreOffice/browser conversion from Go worker
+    ocrmypdf:
+      capabilities:
+      - searchable PDF generation
+      - Tesseract OCR pipeline
+      notes:
+      - useful for PDF OCR normalization
+    tika_plus_tesseract:
+      capabilities:
+      - local text extraction
+      - local OCR fallback
+    unstructured:
+      capabilities:
+      - local document partitioning
+      - PDF, Office, HTML, and image document parsing
+      notes:
+      - heavier Python stack; useful for search/RAG pipelines when accepted
+  external_api_examples_via_local_command:
+    aws_textract_with_aws_cli:
+      capabilities:
+      - OCR
+      - handwriting
+      - forms
+      - tables
+      - document layout
+      note: implemented by configured local command, not native webhook
+    google_document_ai_or_vision:
+      capabilities:
+      - OCR
+      - layout parsing
+      - custom extraction
+      - document classification and splitting
+      - image labels
+      note: implemented by gcloud, curl, or custom command
+    translation_api:
+      capabilities:
+      - text translation
+      - language detection
+      note: command normalizes translated_text into data:processor-result metadata
+  openai_compatible_api_candidates:
+    generic_openai_compatible:
+      capabilities:
+      - OCR from image or rendered document page
+      - image analysis
+      - extracted text summary
+      - document classification
+      - custom JSON extraction
+      configuration:
+      - prompt templates
+      - base URL and model
+      - static headers and environment-variable headers
+      - response JSON schema
+      outputs:
+      - data:processor-result
+      - data:extracted-content when configured
+      note: configured by system:openai-compatible-api-processor
+    google_vision_ocr:
+      capabilities:
+      - image OCR
+      - simple OCR fallback
+    azure_document_intelligence:
+      capabilities:
+      - OCR
+      - layout
+      - tables
+      - key value pairs
+      - custom and prebuilt document extraction
+    abbyy_vantage_or_finereader_engine:
+      capabilities:
+      - commercial OCR
+      - structured document capture
+      - high fidelity enterprise OCR
+    nanonets_or_docparser:
+      capabilities:
+      - document extraction SaaS
+      - invoice and form oriented extraction
+  media_candidates:
+    local_external_tools:
+      priority: preferred_for_image_video_transforms
+      capabilities:
+      - SIMD/native codec backed image resize and conversion
+      - video probe and transcode
+      examples:
+      - ffmpeg
+      - libvips
+      - ImageMagick
+      - rsvg-convert
+    cloudinary:
+      capabilities:
+      - image and video transformation
+      - thumbnail generation
+      - CDN delivery
+    aws_mediaconvert:
+      capabilities:
+      - video transcode
+      - HLS packaging
+    mux:
+      capabilities:
+      - video ingest
+      - HLS playback assets
+      - thumbnails
+  constraints:
+  - disabled by default for private content
+  - require explicit tenant/product policy to send file bytes outside service boundary
+  - prefer native or local command processors before cloud SaaS for private content
+  - prefer same cloud account and region when possible
+  - support processor timeout, retry, quota, and circuit breaker
+  - normalize provider-specific results before stdout and index handoff
+  references:
+  - policy:external-delegation-policy
+  - system:local-command-processor
+  - system:openai-compatible-api-processor
+  - data:processor-result
+  - data:openai-compatible-processor-config
+  - policy:processor-execution-policy
+  - policy:search-extraction-policy
+  - system:text-extractor
+  - system:ocr-engine
+  - system:media-converter
+relations:
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: data:openai-compatible-processor-config
+  resolution: resolved
+- relation: mentions
+  to: data:processor-result
+  resolution: resolved
+- relation: mentions
+  to: policy:external-delegation-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:search-extraction-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: system:local-command-processor
+  resolution: resolved
+- relation: mentions
+  to: system:media-converter
+  resolution: resolved
+- relation: mentions
+  to: system:ocr-engine
+  resolution: resolved
+- relation: mentions
+  to: system:openai-compatible-api-processor
+  resolution: resolved
+- relation: mentions
+  to: system:text-extractor
+  resolution: resolved

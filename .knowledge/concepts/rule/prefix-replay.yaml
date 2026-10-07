@@ -1,0 +1,31 @@
+id: rule:prefix-replay
+type: rule
+title: Prefix Replay
+summary: Prefix inspection must not consume bytes irreversibly from the upload stream.
+facts:
+  legacy_body: "Prefix inspection must not consume bytes irreversibly from the upload\
+    \ stream.\n\n```yaml\nrule:\n  read:\n    - bounded prefix from incoming stream\n\
+    \  replay:\n    - prepend inspected bytes back into stream sent to S3\n    - use\
+    \ io.MultiReader or equivalent Go primitive\n  constraints:\n    - prefix buffer\
+    \ has fixed maximum size\n    - inspection errors fail closed in strict mode\n\
+    references:\n  - policy:file-intake-security\n  - requirement:streaming-upload\n\
+    ```"
+  rule:
+    read:
+    - bounded prefix from incoming stream
+    replay:
+    - prepend inspected bytes back into stream sent to S3
+    - use io.MultiReader or equivalent Go primitive
+    constraints:
+    - prefix buffer has fixed maximum size
+    - inspection errors fail closed in strict mode
+  references:
+  - policy:file-intake-security
+  - requirement:streaming-upload
+relations:
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:streaming-upload
+  resolution: resolved

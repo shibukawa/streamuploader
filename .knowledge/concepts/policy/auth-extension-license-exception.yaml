@@ -1,0 +1,88 @@
+id: policy:auth-extension-license-exception
+type: policy
+title: Auth Extension License Exception
+summary: Auth extension license exception allows deployment-specific authentication
+  middleware to remain outside the AGPL obligation for streamuploader core.
+facts:
+  legacy_body: "Auth extension license exception allows deployment-specific authentication\
+    \ middleware to remain outside the AGPL obligation for streamuploader core.\n\n\
+    ```yaml\nintent:\n  - streamuploader core is AGPL\n  - authentication customization\
+    \ surface is a license exception boundary\n  - deployments may keep proprietary\
+    \ or private auth integration code separate\ncovered_extension_points:\n  - streamuploader/auth\
+    \ public package\n  - api:auth-middleware-extension-api frontend function\n  -\
+    \ api:auth-middleware-extension-api backend function\n  - data:auth-context values\
+    \ passed through request context\nallowed_private_code:\n  - identity provider\
+    \ adapters\n  - token validators and JWKS clients\n  - enterprise SSO and gateway\
+    \ header verification\n  - tenant, role, scope, and permission mapping\n  - secret\
+    \ loading for auth provider credentials\nboundary_rules:\n  - exception applies\
+    \ only to code needed to implement frontend or backend auth middleware\n  - modified\
+    \ streamuploader core outside the auth extension boundary remains under project\
+    \ license\n  - auth middleware may call unmodified exported core helper types\
+    \ when those helpers are part of the extension contract\n  - copying unrelated\
+    \ core logic into proprietary auth code is outside exception intent\n  - license\
+    \ notice should identify the exact files or packages covered by the exception\n\
+    repository_layout_options:\n  in_tree_exception_package:\n    description: package\
+    \ contains default pass-through or token auth and documented replacement points\n\
+    \  separate_module:\n    description: deployment builds with private module that\
+    \ provides middleware factories\n  build_tag_overlay:\n    description: private\
+    \ files selected by build tags replace default auth middleware functions\ndocumentation_required:\n\
+    \  - AGPL license for streamuploader core\n  - additional permission text for\
+    \ auth extension boundary\n  - list of covered function signatures and package\
+    \ paths\n  - statement that no warranty or security guarantee is implied by custom\
+    \ auth\nreferences:\n  - api:auth-middleware-extension-api\n  - policy:frontend-auth-extension-policy\n\
+    \  - policy:backend-auth-extension-policy\n```"
+  intent:
+  - streamuploader core is AGPL
+  - authentication customization surface is a license exception boundary
+  - deployments may keep proprietary or private auth integration code separate
+  covered_extension_points:
+  - streamuploader/auth public package
+  - api:auth-middleware-extension-api frontend function
+  - api:auth-middleware-extension-api backend function
+  - data:auth-context values passed through request context
+  allowed_private_code:
+  - identity provider adapters
+  - token validators and JWKS clients
+  - enterprise SSO and gateway header verification
+  - tenant, role, scope, and permission mapping
+  - secret loading for auth provider credentials
+  boundary_rules:
+  - exception applies only to code needed to implement frontend or backend auth middleware
+  - modified streamuploader core outside the auth extension boundary remains under
+    project license
+  - auth middleware may call unmodified exported core helper types when those helpers
+    are part of the extension contract
+  - copying unrelated core logic into proprietary auth code is outside exception intent
+  - license notice should identify the exact files or packages covered by the exception
+  repository_layout_options:
+    in_tree_exception_package:
+      description: package contains default pass-through or token auth and documented
+        replacement points
+    separate_module:
+      description: deployment builds with private module that provides middleware
+        factories
+    build_tag_overlay:
+      description: private files selected by build tags replace default auth middleware
+        functions
+  documentation_required:
+  - AGPL license for streamuploader core
+  - additional permission text for auth extension boundary
+  - list of covered function signatures and package paths
+  - statement that no warranty or security guarantee is implied by custom auth
+  references:
+  - api:auth-middleware-extension-api
+  - policy:frontend-auth-extension-policy
+  - policy:backend-auth-extension-policy
+relations:
+- relation: mentions
+  to: api:auth-middleware-extension-api
+  resolution: resolved
+- relation: mentions
+  to: data:auth-context
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-auth-extension-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:frontend-auth-extension-policy
+  resolution: resolved

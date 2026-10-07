@@ -1,0 +1,48 @@
+id: system:svg-renderer
+type: system
+title: SVG Renderer
+summary: SVG renderer rasterizes SVG previews in an isolated process, preferably using
+  resvg or rsvg-convert with Inkscape as high fidelity fallback.
+facts:
+  legacy_body: "SVG renderer rasterizes SVG previews in an isolated process, preferably\
+    \ using resvg or rsvg-convert with Inkscape as high fidelity fallback.\n\n```yaml\n\
+    components:\n  preferred:\n    - resvg in sandboxed worker when strict static\
+    \ SVG behavior is desired\n    - rsvg-convert in sandboxed worker\n  alternatives:\n\
+    \    - Inkscape CLI when higher SVG fidelity is required\n    - sips on macOS\
+    \ for low-friction local fallback after SVG sanitization\n    - qlmanage on macOS\
+    \ for generic thumbnail fallback\nconstraints:\n  - run outside request path\n\
+    \  - disable external file and network access\n  - reject active content before\
+    \ rendering\n  - never pass unsanitized SVG to sips, qlmanage, or any generic\
+    \ image renderer\n  - limit CPU, memory, wall time, input size, output dimensions,\
+    \ and pixel count\n  - treat render failure as preview failure, not original file\
+    \ corruption\nreferences:\n  - flow:svg-preview-generation\n  - system:external-tool-registry\n\
+    \  - policy:tool-backend-selection-policy\n```"
+  components:
+    preferred:
+    - resvg in sandboxed worker when strict static SVG behavior is desired
+    - rsvg-convert in sandboxed worker
+    alternatives:
+    - Inkscape CLI when higher SVG fidelity is required
+    - sips on macOS for low-friction local fallback after SVG sanitization
+    - qlmanage on macOS for generic thumbnail fallback
+  constraints:
+  - run outside request path
+  - disable external file and network access
+  - reject active content before rendering
+  - never pass unsanitized SVG to sips, qlmanage, or any generic image renderer
+  - limit CPU, memory, wall time, input size, output dimensions, and pixel count
+  - treat render failure as preview failure, not original file corruption
+  references:
+  - flow:svg-preview-generation
+  - system:external-tool-registry
+  - policy:tool-backend-selection-policy
+relations:
+- relation: mentions
+  to: flow:svg-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:tool-backend-selection-policy
+  resolution: resolved
+- relation: mentions
+  to: system:external-tool-registry
+  resolution: resolved

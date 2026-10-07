@@ -1,0 +1,166 @@
+id: api:backend-control-api
+type: api
+title: Backend Control API
+summary: Backend control API exposes privileged storage operations only on the backend
+  listener.
+facts:
+  legacy_body: "Backend control API exposes privileged storage operations only on\
+    \ the backend listener.\n\n```yaml\nlistener:\n  port: backend_control_port\n\
+    \  mode: same listener or separate listener depending on system:backend-control-listener\n\
+    \  public_exposure: false\n  cors: disabled\n  intended_callers:\n    - system:application-server\n\
+    \    - internal worker\n    - operator automation\nendpoints:\n  delete_object:\n\
+    \    method: DELETE\n    path: /internal/objects/{object_key}\n    behavior:\n\
+    \      - permanently delete S3 object and selected derived assets according to\
+    \ policy\n      - reject capability display keys unless explicitly resolved by\
+    \ backend authorization\n      - write audit event before and after deletion\n\
+    \  rename_object:\n    method: POST\n    path: /internal/objects/{object_key}/rename\n\
+    \    body:\n      destination_object_key: string\n      if_match_checksum: string\
+    \ optional\n      replace_existing: boolean default false\n    behavior:\n   \
+    \   - implement S3 rename as copy to destination plus delete source after verification\n\
+    \      - preserve or rewrite metadata and tags according to policy\n      - never\
+    \ expose this operation to browser clients\n  replace_object:\n    method: PUT\n\
+    \    path: /internal/objects/{object_key}/content\n    body: raw bytes or internal\
+    \ stream\n    behavior:\n      - overwrite or version object using backend authorization\n\
+    \      - recompute checksum, content type, security status, and derived asset\
+    \ invalidation\n      - optionally enqueue re-scan and regeneration jobs\n  purge_prefix:\n\
+    \    method: DELETE\n    path: /internal/prefixes/{storage_prefix}\n    behavior:\n\
+    \      - delete upload work prefix, derived assets, sentinels, and incomplete\
+    \ state\n      - require narrow backend permission and audit reason\n  invalidate_derived:\n\
+    \    method: POST\n    path: /internal/objects/{object_key}/derived/invalidate\n\
+    \    behavior:\n      - mark thumbnails, previews, extracted text, OCR, and variants\
+    \ stale\n      - enqueue regeneration when requested\n  get_extracted_content:\n\
+    \    method: GET\n    path: /internal/objects/{object_key}/extracted-content\n\
+    \    behavior:\n      - read data:extracted-content artifact for backend caller\n\
+    \      - support pending status and optional wait through api:extracted-content-api\n\
+    \      - return text map keys such as text, extracted, title, description, and\
+    \ ocr\n  create_extracted_content_presigned_url:\n    method: POST\n    path:\
+    \ /internal/objects/{object_key}/extracted-content/presigned-url\n    behavior:\n\
+    \      - return a bounded S3 presigned GET URL for source object key plus .text.json\n\
+    \      - require extracted-content read authorization\n  wait_async_tasks:\n \
+    \   method: GET\n    path: /internal/tasks/wait\n    behavior:\n      - block\
+    \ backend caller until selected data:async-task-marker objects disappear\n   \
+    \   - support thumbnails, OCR, text extraction, metadata extraction, and future\
+    \ policy:worker-queue-policy task kinds\n      - return timeout response with\
+    \ per-task pending state\nconstraints:\n  - no browser CORS\n  - no upload capability\
+    \ token authorization\n  - require policy:backend-control-plane-policy\n  - require\
+    \ idempotency key for mutating operations where safe\nreferences:\n  - policy:backend-control-plane-policy\n\
+    \  - system:backend-control-listener\n  - api:health-api\n  - system:s3-storage\n\
+    \  - policy:audit-log-policy\n  - api:async-task-wait-api\n  - api:extracted-content-api\n\
+    \  - data:async-task-marker\n```"
+  listener:
+    port: backend_control_port
+    mode: same listener or separate listener depending on system:backend-control-listener
+    public_exposure: false
+    cors: disabled
+    intended_callers:
+    - system:application-server
+    - internal worker
+    - operator automation
+  endpoints:
+    delete_object:
+      method: DELETE
+      path: /internal/objects/{object_key}
+      behavior:
+      - permanently delete S3 object and selected derived assets according to policy
+      - reject capability display keys unless explicitly resolved by backend authorization
+      - write audit event before and after deletion
+    rename_object:
+      method: POST
+      path: /internal/objects/{object_key}/rename
+      body:
+        destination_object_key: string
+        if_match_checksum: string optional
+        replace_existing: boolean default false
+      behavior:
+      - implement S3 rename as copy to destination plus delete source after verification
+      - preserve or rewrite metadata and tags according to policy
+      - never expose this operation to browser clients
+    replace_object:
+      method: PUT
+      path: /internal/objects/{object_key}/content
+      body: raw bytes or internal stream
+      behavior:
+      - overwrite or version object using backend authorization
+      - recompute checksum, content type, security status, and derived asset invalidation
+      - optionally enqueue re-scan and regeneration jobs
+    purge_prefix:
+      method: DELETE
+      path: /internal/prefixes/{storage_prefix}
+      behavior:
+      - delete upload work prefix, derived assets, sentinels, and incomplete state
+      - require narrow backend permission and audit reason
+    invalidate_derived:
+      method: POST
+      path: /internal/objects/{object_key}/derived/invalidate
+      behavior:
+      - mark thumbnails, previews, extracted text, OCR, and variants stale
+      - enqueue regeneration when requested
+    get_extracted_content:
+      method: GET
+      path: /internal/objects/{object_key}/extracted-content
+      behavior:
+      - read data:extracted-content artifact for backend caller
+      - support pending status and optional wait through api:extracted-content-api
+      - return text map keys such as text, extracted, title, description, and ocr
+    create_extracted_content_presigned_url:
+      method: POST
+      path: /internal/objects/{object_key}/extracted-content/presigned-url
+      behavior:
+      - return a bounded S3 presigned GET URL for source object key plus .text.json
+      - require extracted-content read authorization
+    wait_async_tasks:
+      method: GET
+      path: /internal/tasks/wait
+      behavior:
+      - block backend caller until selected data:async-task-marker objects disappear
+      - support thumbnails, OCR, text extraction, metadata extraction, and future
+        policy:worker-queue-policy task kinds
+      - return timeout response with per-task pending state
+  constraints:
+  - no browser CORS
+  - no upload capability token authorization
+  - require policy:backend-control-plane-policy
+  - require idempotency key for mutating operations where safe
+  references:
+  - policy:backend-control-plane-policy
+  - system:backend-control-listener
+  - api:health-api
+  - system:s3-storage
+  - policy:audit-log-policy
+  - api:async-task-wait-api
+  - api:extracted-content-api
+  - data:async-task-marker
+relations:
+- relation: mentions
+  to: api:async-task-wait-api
+  resolution: resolved
+- relation: mentions
+  to: api:extracted-content-api
+  resolution: resolved
+- relation: mentions
+  to: api:health-api
+  resolution: resolved
+- relation: mentions
+  to: data:async-task-marker
+  resolution: resolved
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-control-plane-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:worker-queue-policy
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved
+- relation: mentions
+  to: system:backend-control-listener
+  resolution: resolved
+- relation: mentions
+  to: system:s3-storage
+  resolution: resolved

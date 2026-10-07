@@ -1,0 +1,83 @@
+id: system:content-detector
+type: system
+title: Content Detector
+summary: Content detector performs lightweight file type and script detection from
+  bounded prefixes and small structured probes.
+facts:
+  legacy_body: "Content detector performs lightweight file type and script detection\
+    \ from bounded prefixes and small structured probes.\n\n```yaml\ncomponents:\n\
+    \  baseline:\n    - Go net/http DetectContentType for first 512 bytes\n  go_native:\n\
+    \    - github.com/gabriel-vasile/mimetype for primary prefix MIME detection\n\
+    \    - h2non/filetype for fast magic signature detection\n  optional_deeper:\n\
+    \    - libmagic file signatures when C dependency is acceptable\n    - Magika\
+    \ sidecar or worker when ML-based type classification is desired\n    - go-enry\
+    \ for shebang and programming language hints\nchecks:\n  - declared content type\
+    \ versus detected content type\n  - file extension versus detected type\n  - executable\
+    \ magic signatures\n  - shebang such as sh, bash, python, node, perl, ruby\n \
+    \ - script family fallback from filename for Makefile, GNUmakefile, .bat, .cmd,\
+    \ .ps1, .psm1, .psd1\n  - script-like text uploaded as media\n  - polyglot or\
+    \ ambiguous signatures\n  - archive metadata for policy:archive-bomb-protection\n\
+    constraints:\n  - read bounded prefix on request path\n  - never consume stream\
+    \ bytes without rule:prefix-replay\n  - use deeper probes only under bounded worker\
+    \ limits\nimplementation:\n  selected_library: decision:mime-detector-library\n\
+    \  upload_path:\n    - inspect []byte prefix\n    - normalize detected MIME\n\
+    \    - compare against declared content type\n    - return data:security-check-result\n\
+    references:\n  - policy:file-intake-security\n  - requirement:mime-magic-consistency\n\
+    \  - decision:mime-detector-library\n  - rule:prefix-replay\n  - policy:archive-bomb-protection\n\
+    ```"
+  components:
+    baseline:
+    - Go net/http DetectContentType for first 512 bytes
+    go_native:
+    - github.com/gabriel-vasile/mimetype for primary prefix MIME detection
+    - h2non/filetype for fast magic signature detection
+    optional_deeper:
+    - libmagic file signatures when C dependency is acceptable
+    - Magika sidecar or worker when ML-based type classification is desired
+    - go-enry for shebang and programming language hints
+  checks:
+  - declared content type versus detected content type
+  - file extension versus detected type
+  - executable magic signatures
+  - shebang such as sh, bash, python, node, perl, ruby
+  - script family fallback from filename for Makefile, GNUmakefile, .bat, .cmd, .ps1,
+    .psm1, .psd1
+  - script-like text uploaded as media
+  - polyglot or ambiguous signatures
+  - archive metadata for policy:archive-bomb-protection
+  constraints:
+  - read bounded prefix on request path
+  - never consume stream bytes without rule:prefix-replay
+  - use deeper probes only under bounded worker limits
+  implementation:
+    selected_library: decision:mime-detector-library
+    upload_path:
+    - inspect []byte prefix
+    - normalize detected MIME
+    - compare against declared content type
+    - return data:security-check-result
+  references:
+  - policy:file-intake-security
+  - requirement:mime-magic-consistency
+  - decision:mime-detector-library
+  - rule:prefix-replay
+  - policy:archive-bomb-protection
+relations:
+- relation: mentions
+  to: data:security-check-result
+  resolution: resolved
+- relation: mentions
+  to: decision:mime-detector-library
+  resolution: resolved
+- relation: mentions
+  to: policy:archive-bomb-protection
+  resolution: resolved
+- relation: mentions
+  to: policy:file-intake-security
+  resolution: resolved
+- relation: mentions
+  to: requirement:mime-magic-consistency
+  resolution: resolved
+- relation: mentions
+  to: rule:prefix-replay
+  resolution: resolved

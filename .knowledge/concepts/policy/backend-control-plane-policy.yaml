@@ -1,0 +1,138 @@
+id: policy:backend-control-plane-policy
+type: policy
+title: Backend Control Plane Policy
+summary: Backend control plane policy protects destructive and privileged storage
+  operations from browser-facing APIs.
+facts:
+  legacy_body: "Backend control plane policy protects destructive and privileged storage\
+    \ operations from browser-facing APIs.\n\n```yaml\nseparation:\n  - browser-facing\
+    \ API accepts file content and upload status only\n  - backend control API owns\
+    \ destructive and key mutation operations\n  - backend routes are not mounted\
+    \ on public upload listener\n  - CORS is disabled on backend listener\nauthentication:\n\
+    \  owner: policy:backend-auth-extension-policy\n  core_behavior:\n    - backend\
+    \ control plane delegates authentication to api:auth-middleware-extension-api\
+    \ backend middleware\n    - core does not include BackendAuthToken bearer authorization\n\
+    \    - core does not define mTLS, service account JWT, or private network signed\
+    \ request as sufficient by itself\n    - default backend auth middleware passes\
+    \ through without app-level authentication\n  external_boundary:\n    - production\
+    \ deployments may rely on security groups, firewall rules, API Gateway, ingress\
+    \ policy, service mesh, private listener placement, or equivalent controls\n \
+    \   - streamuploader treats those controls as deployment architecture, not application\
+    \ auth logic\n    - deployment owner decides whether external boundary is sufficient\
+    \ for backend control exposure\n  forbidden:\n    - upload capability token\n\
+    \    - browser session cookie alone\n    - public API key in frontend code\nauthorization:\n\
+    \  permissions:\n    - object:delete\n    - object:rename\n    - object:replace\n\
+    \    - prefix:purge\n    - derived:invalidate\n    - extracted-content:read\n\
+    \  checks:\n    - tenant ownership\n    - object key namespace\n    - object checksum\
+    \ or ETag when supplied\n    - reason code for destructive actions\n    - optional\
+    \ two-person or operator approval for bulk purge\ns3_operations:\n  delete:\n\
+    \    - delete canonical object, selected derived assets, and control markers according\
+    \ to request scope\n    - avoid deleting shared physical object while checksum\
+    \ dedupe refcount is nonzero\n  rename:\n    - S3 has no atomic rename\n    -\
+    \ copy destination, verify checksum or ETag, update metadata references, then\
+    \ delete source\n    - treat operation as idempotent state machine when possible\n\
+    \  replace:\n    - write new object body\n    - recompute content facts\n    -\
+    \ invalidate stale derived assets and extracted content\n  extracted_content_read:\n\
+    \    - read only the derived .text.json artifact for an authorized source object\n\
+    \    - deny when caller lacks extracted-content read permission for tenant, object\
+    \ namespace, or privacy classification\n    - audit because extracted text may\
+    \ expose full private file contents\nobservability:\n  - audit every request,\
+    \ decision, S3 operation, and failure\n  - include actor, backend actor, tenant,\
+    \ object key, old key, new key, checksum, request id, and reason\n  - expose no\
+    \ secret or bearer token in logs\nreferences:\n  - api:backend-control-api\n \
+    \ - api:extracted-content-api\n  - system:backend-control-listener\n  - api:auth-middleware-extension-api\n\
+    \  - policy:backend-auth-extension-policy\n  - policy:audit-log-policy\n  - policy:checksum-dedupe-policy\n\
+    ```"
+  separation:
+  - browser-facing API accepts file content and upload status only
+  - backend control API owns destructive and key mutation operations
+  - backend routes are not mounted on public upload listener
+  - CORS is disabled on backend listener
+  authentication:
+    owner: policy:backend-auth-extension-policy
+    core_behavior:
+    - backend control plane delegates authentication to api:auth-middleware-extension-api
+      backend middleware
+    - core does not include BackendAuthToken bearer authorization
+    - core does not define mTLS, service account JWT, or private network signed request
+      as sufficient by itself
+    - default backend auth middleware passes through without app-level authentication
+    external_boundary:
+    - production deployments may rely on security groups, firewall rules, API Gateway,
+      ingress policy, service mesh, private listener placement, or equivalent controls
+    - streamuploader treats those controls as deployment architecture, not application
+      auth logic
+    - deployment owner decides whether external boundary is sufficient for backend
+      control exposure
+    forbidden:
+    - upload capability token
+    - browser session cookie alone
+    - public API key in frontend code
+  authorization:
+    permissions:
+    - object:delete
+    - object:rename
+    - object:replace
+    - prefix:purge
+    - derived:invalidate
+    - extracted-content:read
+    checks:
+    - tenant ownership
+    - object key namespace
+    - object checksum or ETag when supplied
+    - reason code for destructive actions
+    - optional two-person or operator approval for bulk purge
+  s3_operations:
+    delete:
+    - delete canonical object, selected derived assets, and control markers according
+      to request scope
+    - avoid deleting shared physical object while checksum dedupe refcount is nonzero
+    rename:
+    - S3 has no atomic rename
+    - copy destination, verify checksum or ETag, update metadata references, then
+      delete source
+    - treat operation as idempotent state machine when possible
+    replace:
+    - write new object body
+    - recompute content facts
+    - invalidate stale derived assets and extracted content
+    extracted_content_read:
+    - read only the derived .text.json artifact for an authorized source object
+    - deny when caller lacks extracted-content read permission for tenant, object
+      namespace, or privacy classification
+    - audit because extracted text may expose full private file contents
+  observability:
+  - audit every request, decision, S3 operation, and failure
+  - include actor, backend actor, tenant, object key, old key, new key, checksum,
+    request id, and reason
+  - expose no secret or bearer token in logs
+  references:
+  - api:backend-control-api
+  - api:extracted-content-api
+  - system:backend-control-listener
+  - api:auth-middleware-extension-api
+  - policy:backend-auth-extension-policy
+  - policy:audit-log-policy
+  - policy:checksum-dedupe-policy
+relations:
+- relation: mentions
+  to: api:auth-middleware-extension-api
+  resolution: resolved
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: api:extracted-content-api
+  resolution: resolved
+- relation: mentions
+  to: policy:audit-log-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:backend-auth-extension-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:checksum-dedupe-policy
+  resolution: resolved
+- relation: mentions
+  to: system:backend-control-listener
+  resolution: resolved

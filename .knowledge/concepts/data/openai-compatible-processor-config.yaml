@@ -1,0 +1,95 @@
+id: data:openai-compatible-processor-config
+type: data
+title: OpenAI Compatible Processor Config
+summary: OpenAI compatible processor config defines a prompt-driven HTTP processor
+  for commodity OpenAI-compatible APIs.
+facts:
+  legacy_body: "OpenAI compatible processor config defines a prompt-driven HTTP processor\
+    \ for commodity OpenAI-compatible APIs.\n\n```yaml\nfields:\n  name: stable processor\
+    \ id\n  mode: openai_compatible_api\n  endpoint:\n    base_url: string\n    path:\
+    \ string default /v1/chat/completions\n    model: string\n    timeout: duration\n\
+    \  headers:\n    static: map optional\n    from_env:\n      header_name: env var\
+    \ name\n    interpolation:\n      syntax: ${ENV_NAME}\n      allowed_env_prefixes:\
+    \ configurable\n      missing_behavior: fail startup or disable processor\n  request:\n\
+    \    temperature: number optional\n    max_tokens: integer optional\n    response_format:\n\
+    \      type: json_schema preferred\n      schema: JSON Schema object\n      strict:\
+    \ boolean default true\n    prompt:\n      system: string optional\n      developer:\
+    \ string optional\n      user_template: string\n    inputs:\n      - source: original_file\n\
+    \        modes:\n          - inline_base64_when_small\n          - temporary_url_when_allowed\n\
+    \          - text_only_for_unsupported_file\n      - source: data:extracted-content\n\
+    \      - source: data:processor-result\n      - source: metadata fields\n    \
+    \  - source: derived image thumbnail or rendered document page\n  output:\n  \
+    \  validates_against: response JSON schema\n    destination:\n      - data:processor-result\
+    \ metadata\n      - data:processor-result text\n      - data:extracted-content\n\
+    \      - derived asset metadata\n  privacy:\n    require_explicit_opt_in_for_file_bytes:\
+    \ true\n    allow_text_result_input: configurable\n    allow_image_input: configurable\n\
+    \    allow_original_file_input: configurable\nreferences:\n  - system:openai-compatible-api-processor\n\
+    \  - data:processor-result\n  - data:extracted-content\n  - policy:processor-execution-policy\n\
+    ```"
+  fields:
+    name: stable processor id
+    mode: openai_compatible_api
+    endpoint:
+      base_url: string
+      path: string default /v1/chat/completions
+      model: string
+      timeout: duration
+    headers:
+      static: map optional
+      from_env:
+        header_name: env var name
+      interpolation:
+        syntax: ${ENV_NAME}
+        allowed_env_prefixes: configurable
+        missing_behavior: fail startup or disable processor
+    request:
+      temperature: number optional
+      max_tokens: integer optional
+      response_format:
+        type: json_schema preferred
+        schema: JSON Schema object
+        strict: boolean default true
+      prompt:
+        system: string optional
+        developer: string optional
+        user_template: string
+      inputs:
+      - source: original_file
+        modes:
+        - inline_base64_when_small
+        - temporary_url_when_allowed
+        - text_only_for_unsupported_file
+      - source: data:extracted-content
+      - source: data:processor-result
+      - source: metadata fields
+      - source: derived image thumbnail or rendered document page
+    output:
+      validates_against: response JSON schema
+      destination:
+      - data:processor-result metadata
+      - data:processor-result text
+      - data:extracted-content
+      - derived asset metadata
+    privacy:
+      require_explicit_opt_in_for_file_bytes: true
+      allow_text_result_input: configurable
+      allow_image_input: configurable
+      allow_original_file_input: configurable
+  references:
+  - system:openai-compatible-api-processor
+  - data:processor-result
+  - data:extracted-content
+  - policy:processor-execution-policy
+relations:
+- relation: mentions
+  to: data:extracted-content
+  resolution: resolved
+- relation: mentions
+  to: data:processor-result
+  resolution: resolved
+- relation: mentions
+  to: policy:processor-execution-policy
+  resolution: resolved
+- relation: mentions
+  to: system:openai-compatible-api-processor
+  resolution: resolved

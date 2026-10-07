@@ -1,0 +1,61 @@
+id: requirement:application-metadata-submit
+type: requirement
+title: Application Metadata Submit
+summary: Frontend submits application metadata to the application server after streamuploader
+  confirms selected upload keys are durable.
+facts:
+  legacy_body: "Frontend submits application metadata to the application server after\
+    \ streamuploader confirms selected upload keys are durable.\n\n```yaml\nrequirements:\n\
+    \  application_server: system:application-server\n  payload:\n    include:\n \
+    \     - client metadata JSON\n      - list of files with streamuploader returned\
+    \ display_key and S3 object_key\n      - per-file content type when trusted\n\
+    \      - per-file size when known or counted\n      - per-file checksum when available\n\
+    \  behavior:\n    - client creates upload keys before or during form editing\n\
+    \    - client uploads files through streamuploader endpoints\n    - client watches\
+    \ selected upload keys through WebSocket when incremental UI updates are needed\n\
+    \    - client may use blocking wait endpoint for simple final submit flows\n \
+    \   - client posts application metadata and file facts to system:application-server\n\
+    \    - streamuploader does not validate or forward application metadata\n    -\
+    \ system:application-server owns login, authorization, CSRF, schema validation,\
+    \ and persistence\n  references:\n    - flow:session-assembly\n    - data:upload-batch\n\
+    \    - data:metadata-payload\n    - decision:consistency-model\n```"
+  requirements:
+    application_server: system:application-server
+    payload:
+      include:
+      - client metadata JSON
+      - list of files with streamuploader returned display_key and S3 object_key
+      - per-file content type when trusted
+      - per-file size when known or counted
+      - per-file checksum when available
+    behavior:
+    - client creates upload keys before or during form editing
+    - client uploads files through streamuploader endpoints
+    - client watches selected upload keys through WebSocket when incremental UI updates
+      are needed
+    - client may use blocking wait endpoint for simple final submit flows
+    - client posts application metadata and file facts to system:application-server
+    - streamuploader does not validate or forward application metadata
+    - system:application-server owns login, authorization, CSRF, schema validation,
+      and persistence
+    references:
+    - flow:session-assembly
+    - data:upload-batch
+    - data:metadata-payload
+    - decision:consistency-model
+relations:
+- relation: mentions
+  to: data:metadata-payload
+  resolution: resolved
+- relation: mentions
+  to: data:upload-batch
+  resolution: resolved
+- relation: mentions
+  to: decision:consistency-model
+  resolution: resolved
+- relation: mentions
+  to: flow:session-assembly
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved

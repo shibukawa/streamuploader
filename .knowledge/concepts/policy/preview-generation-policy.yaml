@@ -1,0 +1,155 @@
+id: policy:preview-generation-policy
+type: policy
+title: Preview Generation Policy
+summary: 'Preview generation policy decides whether and how derived assets are created
+  per detected data type and file role.
+
+
+  Search-oriented text, metadata, and OCR outputs are governed separately by policy:search-extraction-policy
+  because they affect indexing and privacy.'
+facts:
+  legacy_body: "Preview generation policy decides whether and how derived assets are\
+    \ created per detected data type and file role.\n\nSearch-oriented text, metadata,\
+    \ and OCR outputs are governed separately by policy:search-extraction-policy because\
+    \ they affect indexing and privacy.\n\n```yaml\npolicy:\n  selector:\n    - detected\
+    \ content type\n    - file role\n    - upload policy\n    - application metadata\
+    \ requirements\n  defaults:\n    mode: optional\n    generate: false\n    image_thumbnail_enabled:\
+    \ data:thumbnail-generation-config enabled default false\n  data_type_rules:\n\
+    \    image:\n      generate: data:thumbnail-generation-config enabled\n      mode:\
+    \ sequential or async from data:thumbnail-generation-config execution_mode\n \
+    \     flow: flow:image-thumbnail-generation\n      source_priority:\n        -\
+    \ embedded thumbnail\n        - generated full-image thumbnail\n      outputs:\n\
+    \        - image_thumbnail\n    svg:\n      generate: configurable\n      mode:\
+    \ optional\n      flow: flow:svg-preview-generation\n      outputs:\n        -\
+    \ image_thumbnail\n    pdf:\n      generate: configurable\n      mode: optional\n\
+    \      flow: flow:document-preview-generation\n      outputs:\n        - document_preview_page\n\
+    \    office_document:\n      generate: configurable\n      mode: optional\n  \
+    \    flow: flow:document-preview-generation\n      source_priority:\n        -\
+    \ embedded Office thumbnail\n        - LibreOffice PDF normalization and rendered\
+    \ page thumbnail\n      outputs:\n        - document_preview_page\n        - normalized_pdf\
+    \ optional\n    video:\n      generate: configurable\n      mode: optional\n \
+    \     flow: flow:video-preview-generation\n      source_priority:\n        - attached\
+    \ picture or cover art\n        - scored early keyframe still thumbnail\n    \
+    \    - animated preview clip\n      outputs:\n        - video_still_thumbnail\n\
+    \        - video_animated_preview\n    other:\n      generate: false\n  readiness_modes:\n\
+    \    optional:\n      - upload acceptance can proceed after original file acceptance\n\
+    \      - derived assets appear later in status\n    async_thumbnail:\n      -\
+    \ wait endpoint completes on original upload readiness\n      - thumbnail asset\
+    \ may still be pending\n    sequential_thumbnail:\n      - wait endpoint completes\
+    \ only after thumbnail terminal state\n    required_before_metadata_submit:\n\
+    \      - upload batch readiness requires generated assets\n      - frontend metadata\
+    \ payload includes generated asset keys\n    later_application_update:\n     \
+    \ - frontend submits original file keys first\n      - application later records\
+    \ derived asset keys when supported\nreferences:\n  - data:derived-asset\n  -\
+    \ data:thumbnail-generation-config\n  - policy:preview-format-policy\n  - flow:image-thumbnail-generation\n\
+    \  - flow:svg-preview-generation\n  - flow:document-preview-generation\n  - flow:video-preview-generation\n\
+    \  - requirement:expanded-thumbnail-source-support\n  - policy:search-extraction-policy\n\
+    ```"
+  policy:
+    selector:
+    - detected content type
+    - file role
+    - upload policy
+    - application metadata requirements
+    defaults:
+      mode: optional
+      generate: false
+      image_thumbnail_enabled: data:thumbnail-generation-config enabled default false
+    data_type_rules:
+      image:
+        generate: data:thumbnail-generation-config enabled
+        mode: sequential or async from data:thumbnail-generation-config execution_mode
+        flow: flow:image-thumbnail-generation
+        source_priority:
+        - embedded thumbnail
+        - generated full-image thumbnail
+        outputs:
+        - image_thumbnail
+      svg:
+        generate: configurable
+        mode: optional
+        flow: flow:svg-preview-generation
+        outputs:
+        - image_thumbnail
+      pdf:
+        generate: configurable
+        mode: optional
+        flow: flow:document-preview-generation
+        outputs:
+        - document_preview_page
+      office_document:
+        generate: configurable
+        mode: optional
+        flow: flow:document-preview-generation
+        source_priority:
+        - embedded Office thumbnail
+        - LibreOffice PDF normalization and rendered page thumbnail
+        outputs:
+        - document_preview_page
+        - normalized_pdf optional
+      video:
+        generate: configurable
+        mode: optional
+        flow: flow:video-preview-generation
+        source_priority:
+        - attached picture or cover art
+        - scored early keyframe still thumbnail
+        - animated preview clip
+        outputs:
+        - video_still_thumbnail
+        - video_animated_preview
+      other:
+        generate: false
+    readiness_modes:
+      optional:
+      - upload acceptance can proceed after original file acceptance
+      - derived assets appear later in status
+      async_thumbnail:
+      - wait endpoint completes on original upload readiness
+      - thumbnail asset may still be pending
+      sequential_thumbnail:
+      - wait endpoint completes only after thumbnail terminal state
+      required_before_metadata_submit:
+      - upload batch readiness requires generated assets
+      - frontend metadata payload includes generated asset keys
+      later_application_update:
+      - frontend submits original file keys first
+      - application later records derived asset keys when supported
+  references:
+  - data:derived-asset
+  - data:thumbnail-generation-config
+  - policy:preview-format-policy
+  - flow:image-thumbnail-generation
+  - flow:svg-preview-generation
+  - flow:document-preview-generation
+  - flow:video-preview-generation
+  - requirement:expanded-thumbnail-source-support
+  - policy:search-extraction-policy
+relations:
+- relation: mentions
+  to: data:derived-asset
+  resolution: resolved
+- relation: mentions
+  to: data:thumbnail-generation-config
+  resolution: resolved
+- relation: mentions
+  to: flow:document-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:image-thumbnail-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:svg-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: flow:video-preview-generation
+  resolution: resolved
+- relation: mentions
+  to: policy:preview-format-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:search-extraction-policy
+  resolution: resolved
+- relation: mentions
+  to: requirement:expanded-thumbnail-source-support
+  resolution: resolved

@@ -1,0 +1,152 @@
+id: policy:markup-active-content-policy
+type: policy
+title: Markup Active Content Policy
+summary: Markup active content policy rejects Markdown, HTML, and XML uploads containing
+  executable, embedded, external, or entity-expansion content.
+facts:
+  legacy_body: "Markup active content policy rejects Markdown, HTML, and XML uploads\
+    \ containing executable, embedded, external, or entity-expansion content.\n\n\
+    ```yaml\nrules:\n  scope:\n    markdown:\n      - text/markdown\n      - .md\n\
+    \      - .markdown\n    html:\n      - text/html\n      - application/xhtml+xml\n\
+    \      - .html\n      - .htm\n      - .xhtml\n    xml:\n      - application/xml\n\
+    \      - text/xml\n      - application/*+xml\n      - .xml\n  default: reject_active_or_external_content\n\
+    \  inspection:\n    markdown:\n      - parse Markdown with HTML block and inline\
+    \ HTML visibility\n      - inspect raw HTML emitted or preserved by parser\n \
+    \     - reject dangerous HTML elements and attributes before preview, extraction,\
+    \ or durable acceptance\n    html:\n      - parse with non-executing HTML parser\n\
+    \      - reject active, embedded, frame, form, and external-load features\n  \
+    \    - reject event handler attributes and JavaScript URL schemes\n    xml:\n\
+    \      - parse with external entity resolution disabled\n      - reject DOCTYPE\
+    \ declarations that define external entities\n      - reject external parsed entities,\
+    \ external parameter entities, and XInclude\n      - enforce XML depth, object\
+    \ count, and parser time limits from policy:resource-limit-policy\n  reject_elements:\n\
+    \    html:\n      - script\n      - iframe\n      - object\n      - embed\n  \
+    \    - applet\n      - frame\n      - frameset\n      - form\n      - meta refresh\n\
+    \      - link stylesheet or preload with external URL\n    markdown_html:\n  \
+    \    - script\n      - iframe\n      - object\n      - embed\n      - applet\n\
+    \  reject_attributes:\n    - event handler attributes such as onclick and onload\n\
+    \    - src with external URL on active or embedded elements\n    - href with javascript\
+    \ URL\n    - xlink:href with javascript URL\n    - style attributes containing\
+    \ external url reference\n  reject_xml_features:\n    - external general entity\n\
+    \    - external parameter entity\n    - external DTD subset\n    - XInclude\n\
+    \    - entity expansion exceeding configured limits\n  optional_modes:\n    accept_as_is:\
+    \ no inspection\n    sanitize_when_supported:\n      - remove dangerous HTML elements\
+    \ and attributes\n      - reject when sanitizer cannot prove output is safe and\
+    \ structurally valid\n  execution:\n    - prefix inspection may reject obvious\
+    \ script or iframe tokens\n    - full text parse required before final commit\
+    \ when file type is Markdown, HTML, or XML and default mode applies\n    - fail\
+    \ closed on malformed, ambiguous, encoding-unsupported, or parser-limit-exceeded\
+    \ documents\n  result:\n    reject_http_status: 415\n    reject_error_code: markup_active_content_rejected\n\
+    \    reason_codes:\n      - markup_script_detected\n      - markup_iframe_detected\n\
+    \      - markup_external_reference_detected\n      - markup_event_handler_detected\n\
+    \      - markup_javascript_url_detected\n      - xml_external_entity_detected\n\
+    \      - xml_doctype_external_subset_detected\n      - xml_xinclude_detected\n\
+    \      - xml_entity_expansion_limit_exceeded\n      - markup_parser_limit_exceeded\n\
+    references:\n  - policy:file-type-sanitization-policy\n  - policy:resource-limit-policy\n\
+    \  - policy:structural-validation-policy\n  - data:security-check-result\n```"
+  rules:
+    scope:
+      markdown:
+      - text/markdown
+      - .md
+      - .markdown
+      html:
+      - text/html
+      - application/xhtml+xml
+      - .html
+      - .htm
+      - .xhtml
+      xml:
+      - application/xml
+      - text/xml
+      - application/*+xml
+      - .xml
+    default: reject_active_or_external_content
+    inspection:
+      markdown:
+      - parse Markdown with HTML block and inline HTML visibility
+      - inspect raw HTML emitted or preserved by parser
+      - reject dangerous HTML elements and attributes before preview, extraction,
+        or durable acceptance
+      html:
+      - parse with non-executing HTML parser
+      - reject active, embedded, frame, form, and external-load features
+      - reject event handler attributes and JavaScript URL schemes
+      xml:
+      - parse with external entity resolution disabled
+      - reject DOCTYPE declarations that define external entities
+      - reject external parsed entities, external parameter entities, and XInclude
+      - enforce XML depth, object count, and parser time limits from policy:resource-limit-policy
+    reject_elements:
+      html:
+      - script
+      - iframe
+      - object
+      - embed
+      - applet
+      - frame
+      - frameset
+      - form
+      - meta refresh
+      - link stylesheet or preload with external URL
+      markdown_html:
+      - script
+      - iframe
+      - object
+      - embed
+      - applet
+    reject_attributes:
+    - event handler attributes such as onclick and onload
+    - src with external URL on active or embedded elements
+    - href with javascript URL
+    - xlink:href with javascript URL
+    - style attributes containing external url reference
+    reject_xml_features:
+    - external general entity
+    - external parameter entity
+    - external DTD subset
+    - XInclude
+    - entity expansion exceeding configured limits
+    optional_modes:
+      accept_as_is: no inspection
+      sanitize_when_supported:
+      - remove dangerous HTML elements and attributes
+      - reject when sanitizer cannot prove output is safe and structurally valid
+    execution:
+    - prefix inspection may reject obvious script or iframe tokens
+    - full text parse required before final commit when file type is Markdown, HTML,
+      or XML and default mode applies
+    - fail closed on malformed, ambiguous, encoding-unsupported, or parser-limit-exceeded
+      documents
+    result:
+      reject_http_status: 415
+      reject_error_code: markup_active_content_rejected
+      reason_codes:
+      - markup_script_detected
+      - markup_iframe_detected
+      - markup_external_reference_detected
+      - markup_event_handler_detected
+      - markup_javascript_url_detected
+      - xml_external_entity_detected
+      - xml_doctype_external_subset_detected
+      - xml_xinclude_detected
+      - xml_entity_expansion_limit_exceeded
+      - markup_parser_limit_exceeded
+  references:
+  - policy:file-type-sanitization-policy
+  - policy:resource-limit-policy
+  - policy:structural-validation-policy
+  - data:security-check-result
+relations:
+- relation: mentions
+  to: data:security-check-result
+  resolution: resolved
+- relation: mentions
+  to: policy:file-type-sanitization-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:resource-limit-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:structural-validation-policy
+  resolution: resolved

@@ -1,0 +1,161 @@
+id: policy:http-cors-header-policy
+type: policy
+title: HTTP CORS Header Policy
+summary: HTTP CORS header policy controls browser access only when streamuploader
+  is exposed as a standalone cross-origin upload server.
+facts:
+  legacy_body: "HTTP CORS header policy controls browser access only when streamuploader\
+    \ is exposed as a standalone cross-origin upload server.\n\n```yaml\ncors:\n \
+    \ config:\n    allowed_origins:\n      source: environment variable\n      env:\
+    \ ALLOWED_ORIGINS\n      default: \"*\"\n      meaning: shared allowlist for CORS\
+    \ response and websocket Origin validation\n      format: comma separated exact\
+    \ origins or wildcard for local/dev only\n      startup_warning:\n        - log\
+    \ warning when allowed_origins contains wildcard\n        - warning explains wildcard\
+    \ is convenient for local/demo use and should be replaced by explicit origins\
+    \ for public deployments\n      production:\n        - prefer explicit origins\n\
+    \        - reject wildcard when credentials are enabled\n        - reject wildcard\
+    \ when deployment policy marks standalone public production\n  backend_control:\n\
+    \    - disabled for api:backend-control-api\n    - browser origins are never allowlisted\
+    \ for backend control listener\n  same_origin_modes:\n    - no CORS required for\
+    \ system:server-deployment-modes simple_fronting_reverse_proxy\n    - no CORS\
+    \ required when system:application-server or edge proxy forwards same-origin upload\
+    \ paths\n  default:\n    - deny cross-origin unless explicitly configured\n  \
+    \  - never use wildcard origin when credentials are allowed\n    - reflect only\
+    \ origins that match allowlist\n  preflight:\n    method: OPTIONS\n    allow_methods:\n\
+    \      - GET\n      - POST\n      - PUT\n      - DELETE\n      - OPTIONS\n   \
+    \ allow_headers:\n      - Authorization\n      - Content-Type\n      - Idempotency-Key\n\
+    \      - X-Request-ID\n      - X-Upload-Session-Key\n      - X-Upload-File-Key\n\
+    \    max_age: configurable\n  expose_headers:\n    - Location\n    - ETag\n  \
+    \  - Content-Range\n    - Accept-Ranges\n    - Retry-After\n    - X-Request-ID\n\
+    \    - X-Upload-Session-Key\n    - X-Upload-File-Key\n  credentials:\n    - allow\
+    \ only when JWT/cookie mode requires it\n    - require explicit origin allowlist\n\
+    protocol_headers:\n  websocket:\n    - validate Origin during upgrade using same\
+    \ allowed_origins config as CORS\n    - reject cross-origin upgrade when Origin\
+    \ is absent and deployment requires browser origin proof\n    - preserve upgrade\
+    \ headers through trusted proxies\n  download:\n    - support Range and If-Range\
+    \ where policy allows\n    - return Content-Type, Content-Length, ETag, Last-Modified,\
+    \ Accept-Ranges, Content-Range when available\n    - apply cache headers from\
+    \ data:http-cache-config\n  placeholder:\n    - Cache-Control: no-store, no-cache,\
+    \ max-age=0\nsecurity_headers:\n  required:\n    - X-Content-Type-Options: nosniff\n\
+    \  optional:\n    - Referrer-Policy configurable\n    - Content-Security-Policy\
+    \ for API-generated HTML/SVG responses if any\n    - HSTS owned by edge or standalone\
+    \ server, not both\nproxy:\n  - trust X-Forwarded-* only from configured proxies\n\
+    \  - preserve request id or generate one\nreferences:\n  - system:server-deployment-modes\n\
+    \  - system:backend-control-listener\n  - api:backend-control-api\n  - policy:reverse-proxy-routing-policy\n\
+    \  - api:session-progress-api\n  - api:download-api\n  - policy:placeholder-serving-policy\n\
+    \  - data:http-cache-config\n```"
+  cors:
+    config:
+      allowed_origins:
+        source: environment variable
+        env: ALLOWED_ORIGINS
+        default: '*'
+        meaning: shared allowlist for CORS response and websocket Origin validation
+        format: comma separated exact origins or wildcard for local/dev only
+        startup_warning:
+        - log warning when allowed_origins contains wildcard
+        - warning explains wildcard is convenient for local/demo use and should be
+          replaced by explicit origins for public deployments
+        production:
+        - prefer explicit origins
+        - reject wildcard when credentials are enabled
+        - reject wildcard when deployment policy marks standalone public production
+    backend_control:
+    - disabled for api:backend-control-api
+    - browser origins are never allowlisted for backend control listener
+    same_origin_modes:
+    - no CORS required for system:server-deployment-modes simple_fronting_reverse_proxy
+    - no CORS required when system:application-server or edge proxy forwards same-origin
+      upload paths
+    default:
+    - deny cross-origin unless explicitly configured
+    - never use wildcard origin when credentials are allowed
+    - reflect only origins that match allowlist
+    preflight:
+      method: OPTIONS
+      allow_methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      allow_headers:
+      - Authorization
+      - Content-Type
+      - Idempotency-Key
+      - X-Request-ID
+      - X-Upload-Session-Key
+      - X-Upload-File-Key
+      max_age: configurable
+    expose_headers:
+    - Location
+    - ETag
+    - Content-Range
+    - Accept-Ranges
+    - Retry-After
+    - X-Request-ID
+    - X-Upload-Session-Key
+    - X-Upload-File-Key
+    credentials:
+    - allow only when JWT/cookie mode requires it
+    - require explicit origin allowlist
+  protocol_headers:
+    websocket:
+    - validate Origin during upgrade using same allowed_origins config as CORS
+    - reject cross-origin upgrade when Origin is absent and deployment requires browser
+      origin proof
+    - preserve upgrade headers through trusted proxies
+    download:
+    - support Range and If-Range where policy allows
+    - return Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges, Content-Range
+      when available
+    - apply cache headers from data:http-cache-config
+    placeholder:
+    - Cache-Control: no-store, no-cache, max-age=0
+  security_headers:
+    required:
+    - X-Content-Type-Options: nosniff
+    optional:
+    - Referrer-Policy configurable
+    - Content-Security-Policy for API-generated HTML/SVG responses if any
+    - HSTS owned by edge or standalone server, not both
+  proxy:
+  - trust X-Forwarded-* only from configured proxies
+  - preserve request id or generate one
+  references:
+  - system:server-deployment-modes
+  - system:backend-control-listener
+  - api:backend-control-api
+  - policy:reverse-proxy-routing-policy
+  - api:session-progress-api
+  - api:download-api
+  - policy:placeholder-serving-policy
+  - data:http-cache-config
+relations:
+- relation: mentions
+  to: api:backend-control-api
+  resolution: resolved
+- relation: mentions
+  to: api:download-api
+  resolution: resolved
+- relation: mentions
+  to: api:session-progress-api
+  resolution: resolved
+- relation: mentions
+  to: data:http-cache-config
+  resolution: resolved
+- relation: mentions
+  to: policy:placeholder-serving-policy
+  resolution: resolved
+- relation: mentions
+  to: policy:reverse-proxy-routing-policy
+  resolution: resolved
+- relation: mentions
+  to: system:application-server
+  resolution: resolved
+- relation: mentions
+  to: system:backend-control-listener
+  resolution: resolved
+- relation: mentions
+  to: system:server-deployment-modes
+  resolution: resolved
