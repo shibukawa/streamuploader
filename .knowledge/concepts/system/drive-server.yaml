@@ -31,6 +31,8 @@ facts:
     state_file: drive-state.json inside the index directory (last folded journal key, pending text keys); deleting the directory forces a rebuild
     env: DRIVE_TENANT, DRIVE_PREFIX, DRIVE_INDEX_DIR, DRIVE_SEARCH_BIN, DRIVE_SEARCH_TOKENIZER, DRIVE_INDEX_INTERVAL, DRIVE_DELIVERY, DRIVE_STORAGE
     not_yet: server-only and indexer-only long-running modes (index-once exists), streamuploader cleanup loop is not started by the Drive
+  planned_2026_10_09:
+    init: implemented 2026-10-09 for the compose target (cmd/drive/init.go, drive/deploy); generates .env, compose.yaml, security.yaml and README.md; other targets exit 2 until their slice; configuration stays environment-based, data:drive-config-file is deferred
 open_questions:
   repository:
     text: Does the Drive live in this repository (cmd/drive) or in its own repository importing streamuploader?

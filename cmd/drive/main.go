@@ -5,6 +5,7 @@
 //	drive              serve (all-in-one)
 //	drive reindex      rebuild the search index from the bucket and exit
 //	drive index-once   fold pending journal events and exit
+//	drive init         write the deployment files for a target (see drive/deploy)
 //
 // Streamuploader's SU_* environment variables configure the object store and
 // upload policy. Drive-specific variables:
@@ -51,6 +52,11 @@ func env(key, fallback string) string {
 
 func main() {
 	if err := run(); err != nil {
+		var exit exitError
+		if errors.As(err, &exit) {
+			fmt.Fprintln(os.Stderr, "drive:", err)
+			os.Exit(exit.code)
+		}
 		slog.Error("drive_failed", "error", err)
 		os.Exit(1)
 	}
@@ -60,6 +66,11 @@ func run() error {
 	command := "serve"
 	if len(os.Args) > 1 {
 		command = os.Args[1]
+	}
+	if command == "init" {
+		// init renders files from flags and must not require an environment
+		// or an object store.
+		return runInit(os.Args[2:], os.Stdout, os.Stderr)
 	}
 	// The Drive owns the public listener; streamuploader must not proxy to
 	// an application server.
@@ -153,7 +164,7 @@ func run() error {
 		return nil
 	case "serve":
 	default:
-		return fmt.Errorf("unknown command %q (serve, reindex, index-once)", command)
+		return fmt.Errorf("unknown command %q (serve, reindex, index-once, init)", command)
 	}
 
 	rep, err := ix.Start(ctx)

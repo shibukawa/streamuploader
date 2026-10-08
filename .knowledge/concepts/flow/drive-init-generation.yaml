@@ -1,0 +1,28 @@
+id: flow:drive-init-generation
+type: flow
+title: drive init generation flow
+summary: Flags become a validated deployment profile, the profile selects the target's templates, templates render into memory, the writer refuses collisions and then writes atomically, and the command ends by listing the placeholders left to fill.
+lifecycle: active
+facts:
+  steps:
+    1_parse: flags to profile (target, storage, delivery, clamav, image or build context, name, out); defaults per target from requirement:drive-init-subcommand command_shape; the build context is found by walking up from the working directory to the go.mod of module streamuploader unless --context or --image is given
+    2_validate: profile against combination_rules in system:drive-deployment-targets; a refusal exits 2 and prints the missing capability with its knowledge id
+    3_render: all templates of the target into a map of path to bytes; the .env file is rendered from the profile and every ${VAR} the spec references is checked to exist in it before anything is written
+    4_collide: compare the map against --out; any existing path exits 3 unless --force; --dry-run prints the paths and stops here
+    5_write: create --out, write each file to a temporary name and rename, mark deploy.sh executable
+    6_report: print the kit path, the <<FILL:NAME>> placeholders found, the deploy script and the m1 checks to run
+  properties:
+    - deterministic output (no timestamps, hostnames or random values) so golden tests compare bytes
+    - no network access and no repository checkout; templates are embedded
+    - no state is kept between runs; the .env file is the only durable product of the choices
+  implemented: drive/deploy/deploy.go (Render, Collisions, Write) and cmd/drive/init.go (flags, exit codes, report), 2026-10-09
+  failure_handling: errors before step 5 leave the directory untouched; an error during step 5 leaves already-written files and reports which ones, since --force on the rerun is the recovery
+relations:
+  - relation: realizes
+    to: requirement:drive-init-subcommand
+  - relation: writes
+    to: data:drive-deployment-kit
+  - relation: mentions
+    to: data:drive-config-file
+  - relation: reads
+    to: system:drive-deployment-targets
