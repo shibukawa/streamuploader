@@ -81,11 +81,16 @@ type Dates struct {
 	Modified time.Time  `json:"modified"`
 }
 
+// Version is an earlier object of a file, retired by a file.versioned
+// event. EventID is that event; the object stays readable in the bucket.
 type Version struct {
-	ObjectKey string    `json:"object_key"`
-	EventID   string    `json:"event_id"`
-	At        time.Time `json:"at"`
-	SizeBytes int64     `json:"size_bytes,omitempty"`
+	ObjectKey      string    `json:"object_key"`
+	EventID        string    `json:"event_id"`
+	At             time.Time `json:"at"`
+	SizeBytes      int64     `json:"size_bytes,omitempty"`
+	ChecksumSHA256 string    `json:"checksum_sha256,omitempty"`
+	ContentType    string    `json:"content_type,omitempty"`
+	Name           string    `json:"name,omitempty"`
 }
 
 // Ext is the lower-case extension without the dot, from the name or else

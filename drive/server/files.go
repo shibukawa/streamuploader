@@ -14,6 +14,7 @@ import (
 	"streamuploader/drive/meta"
 	"streamuploader/drive/objerr"
 	"streamuploader/drive/sidecar"
+	"streamuploader/drive/worm"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
 )
@@ -198,6 +199,10 @@ func (s *Server) patchFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
 		return
 	}
+	if s.cfg.WORM == worm.Strict {
+		writeReadonly(w, s.cfg.WORM.CheckUpdate(cur, cur))
+		return
+	}
 	f := cur.Clone()
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -223,6 +228,10 @@ func (s *Server) patchFile(w http.ResponseWriter, r *http.Request) {
 	} else if req.Location != nil {
 		f.Location = &meta.Location{Lat: req.Location.Lat, Lon: req.Location.Lon, Source: "user", Geohash: sidecar.Geohash(req.Location.Lat, req.Location.Lon, 8)}
 	}
+	if err := s.cfg.WORM.CheckUpdate(cur, f); err != nil {
+		writeReadonly(w, err)
+		return
+	}
 	f.Revision++
 	f.Dates.Modified = time.Now().UTC()
 	if _, err := s.appendEvent(r.Context(), &journal.Event{
@@ -240,6 +249,10 @@ func (s *Server) patchFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.WORM.Enabled() {
+		writeReadonly(w, &worm.ErrReadonly{Reason: "files cannot be deleted in WORM mode"})
+		return
+	}
 	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.fail(w, "resolve_file", err)
@@ -264,6 +277,190 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// restoreFile undoes a delete tombstone. WORM mode has no tombstones to
+// restore and refuses the call like every other state rewrite.
+func (s *Server) restoreFile(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.WORM.Enabled() {
+		writeReadonly(w, &worm.ErrReadonly{Reason: "nothing is deleted in WORM mode, so nothing can be restored"})
+		return
+	}
+	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, "resolve_file", err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	if !cur.Deleted {
+		writeError(w, http.StatusConflict, "not_deleted", "file is not deleted")
+		return
+	}
+	f := cur.Clone()
+	f.Deleted = false
+	f.Revision++
+	f.Dates.Modified = time.Now().UTC()
+	if _, err := s.appendEvent(r.Context(), &journal.Event{
+		TenantID: s.cfg.Tenant,
+		Type:     journal.FileRestored,
+		Actor:    s.cfg.Actor,
+		FileID:   f.FileID,
+		State:    f,
+	}); err != nil {
+		s.fail(w, "append_event", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.view(f))
+}
+
+type versionRequest struct {
+	Upload           model.UploadItem `json:"upload"`
+	ExpectedRevision int64            `json:"expected_revision"`
+}
+
+// newVersion replaces the bytes of a file with a new upload. The earlier
+// object stays in the bucket and is listed under versions; this is the only
+// edit path WORM mode allows. See requirement:local-drive-worm-audit-mode.
+func (s *Server) newVersion(w http.ResponseWriter, r *http.Request) {
+	var req versionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, "resolve_file", err)
+		return
+	}
+	if !ok || cur.Deleted {
+		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	if req.ExpectedRevision != 0 && req.ExpectedRevision != cur.Revision {
+		writeError(w, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
+		return
+	}
+	up := req.Upload
+	if strings.TrimSpace(up.ObjectKey) == "" {
+		writeError(w, http.StatusBadRequest, "missing_object_key", "upload.object_key is required")
+		return
+	}
+	if up.Status != "" && up.Status != model.UploadUploaded {
+		writeError(w, http.StatusConflict, "upload_not_complete", fmt.Sprintf("upload status is %q", up.Status))
+		return
+	}
+	if up.ObjectKey == cur.ObjectKey {
+		writeError(w, http.StatusConflict, "same_object", "the upload is already the current version")
+		return
+	}
+	for _, v := range cur.Versions {
+		if v.ObjectKey == up.ObjectKey {
+			writeError(w, http.StatusConflict, "same_object", "the upload is already an earlier version of this file")
+			return
+		}
+	}
+	head, err := s.deps.Store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: up.ObjectKey})
+	if err != nil {
+		if objerr.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "object_not_found", "the uploaded object does not exist")
+			return
+		}
+		s.fail(w, "head_object", err)
+		return
+	}
+	now := time.Now().UTC()
+	eventID := journal.NewULID(now)
+	f := cur.Clone()
+	f.Versions = append(f.Versions, meta.Version{
+		ObjectKey:      cur.ObjectKey,
+		EventID:        eventID,
+		At:             now,
+		SizeBytes:      cur.SizeBytes,
+		ChecksumSHA256: cur.ChecksumSHA256,
+		ContentType:    cur.ContentType,
+		Name:           cur.Name,
+	})
+	f.ObjectKey = up.ObjectKey
+	f.DisplayKey = up.DisplayKey
+	f.UploadKey = up.UploadKey
+	f.SizeBytes = head.ContentLength
+	f.ChecksumSHA256 = up.ChecksumSHA256
+	if up.ContentType != "" {
+		f.ContentType = up.ContentType
+	} else if head.ContentType != "" {
+		f.ContentType = head.ContentType
+	}
+	f.Protected = up.Protected
+	f.Derived = meta.Derived{}
+	if up.Thumbnail != nil {
+		f.Derived.Thumbnail = meta.Asset{ObjectKey: up.Thumbnail.ObjectKey, ContentType: up.Thumbnail.ContentType, Status: up.Thumbnail.Status}
+	}
+	if up.ExtractedContent != nil {
+		f.Derived.Text = meta.TextAsset{ObjectKey: up.ExtractedContent.ObjectKey, Status: up.ExtractedContent.Status}
+	}
+	if up.Preview != nil {
+		f.Derived.Preview = meta.Asset{ObjectKey: up.Preview.ObjectKey, ContentType: up.Preview.ContentType, Status: up.Preview.Status}
+	}
+	// Extracted values belong to the old bytes; the indexer re-reads them.
+	f.Author.Extracted = ""
+	f.Dates.Created = nil
+	f.Dates.Shot = nil
+	if up.UploadedAt != nil && !up.UploadedAt.IsZero() {
+		f.Dates.Uploaded = up.UploadedAt.UTC()
+	} else {
+		f.Dates.Uploaded = now
+	}
+	f.Dates.Modified = now
+	f.Revision++
+	facts, _ := json.Marshal(up)
+	if _, err := s.appendEvent(r.Context(), &journal.Event{
+		EventID:          eventID,
+		At:               now,
+		TenantID:         s.cfg.Tenant,
+		Type:             journal.FileVersioned,
+		Actor:            s.cfg.Actor,
+		FileID:           f.FileID,
+		State:            f,
+		ExpectedRevision: req.ExpectedRevision,
+		UploadFacts:      facts,
+	}); err != nil {
+		s.fail(w, "append_event", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.view(f))
+}
+
+type versionView struct {
+	meta.Version
+	N    int `json:"n"`
+	URLs struct {
+		Content  string `json:"content"`
+		Download string `json:"download"`
+	} `json:"urls"`
+}
+
+// listVersions returns the earlier objects of a file, oldest first.
+func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
+	f, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, "resolve_file", err)
+		return
+	}
+	if !ok || f.Deleted {
+		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	out := make([]versionView, 0, len(f.Versions))
+	for i, v := range f.Versions {
+		vv := versionView{Version: v, N: i + 1}
+		base := fmt.Sprintf("/api/drive/files/%s/versions/%d", f.FileID, i+1)
+		vv.URLs.Content = base + "/content"
+		vv.URLs.Download = base + "/download"
+		out = append(out, vv)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"file_id": f.FileID, "current_object_key": f.ObjectKey, "revision": f.Revision, "versions": out})
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

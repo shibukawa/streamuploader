@@ -82,13 +82,23 @@ func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 }
 
 func (s *S3Store) PutObject(ctx context.Context, input PutInput) (PutResult, error) {
-	out, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
+	req := &s3.PutObjectInput{
 		Bucket:      aws.String(input.Bucket),
 		Key:         aws.String(input.Key),
 		Body:        input.Body,
 		ContentType: aws.String(input.ContentType),
 		Metadata:    input.Metadata,
-	})
+	}
+	if r := input.Retention; r != nil {
+		req.ObjectLockMode = objectLockMode(r.Mode)
+		if r.Mode != "" {
+			req.ObjectLockRetainUntilDate = aws.Time(r.RetainUntil.UTC())
+		}
+		if r.LegalHold {
+			req.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatusOn
+		}
+	}
+	out, err := s.uploader.Upload(ctx, req)
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -96,14 +106,24 @@ func (s *S3Store) PutObject(ctx context.Context, input PutInput) (PutResult, err
 }
 
 func (s *S3Store) CopyObject(ctx context.Context, input CopyInput) (CopyResult, error) {
-	out, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+	req := &s3.CopyObjectInput{
 		Bucket:            aws.String(input.Bucket),
 		Key:               aws.String(input.Key),
 		CopySource:        aws.String(url.PathEscape(input.Bucket + "/" + input.SourceKey)),
 		ContentType:       aws.String(input.ContentType),
 		Metadata:          input.Metadata,
 		MetadataDirective: types.MetadataDirectiveReplace,
-	})
+	}
+	if r := input.Retention; r != nil {
+		req.ObjectLockMode = objectLockMode(r.Mode)
+		if r.Mode != "" {
+			req.ObjectLockRetainUntilDate = aws.Time(r.RetainUntil.UTC())
+		}
+		if r.LegalHold {
+			req.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatusOn
+		}
+	}
+	out, err := s.client.CopyObject(ctx, req)
 	if err != nil {
 		return CopyResult{}, err
 	}
@@ -215,4 +235,15 @@ func publicReadPolicy(bucket string) string {
 		},
 	})
 	return string(body)
+}
+
+// objectLockMode maps a Retention mode to the S3 enum; "" stays unset.
+func objectLockMode(mode string) types.ObjectLockMode {
+	switch mode {
+	case LockModeGovernance:
+		return types.ObjectLockModeGovernance
+	case LockModeCompliance:
+		return types.ObjectLockModeCompliance
+	}
+	return ""
 }

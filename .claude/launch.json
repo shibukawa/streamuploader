@@ -6,6 +6,12 @@
       "runtimeExecutable": "./scripts/run-drive-memory.sh",
       "runtimeArgs": [],
       "port": 8090
+    },
+    {
+      "name": "drive-memory-worm",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["DRIVE_WORM_MODE=strict", "SU_OBJECT_LOCK_MODE=legal_hold", "./scripts/run-drive-memory.sh"],
+      "port": 8090
     }
   ]
 }

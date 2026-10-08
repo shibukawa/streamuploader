@@ -44,6 +44,8 @@ facts:
       manual: UI checked in the desktop browser pane on 2026-10-08 - folder tree, search hit opened the bdf viewer at page 3, image viewer, details panel tag edit
       storage: also smoke-tested against RustFS (real S3 API) with presigned delivery and a cold rebuild from the bucket by a second process
       not_in_m1: WORM, index snapshots on S3, Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge of S3 objects
+    delivered_2026_10_09:
+      worm: DRIVE_WORM_MODE (append_only, strict) with application refusals, file.accessed logging, object locks through SU_OBJECT_LOCK_*, the audit checkpoint chain and `drive verify`; see requirement:local-drive-worm-audit-mode
 non_goals:
   - end-user permissions and sharing ACLs in the first milestones (deferred, see requirement:local-drive-api-and-web-ui)
   - a relational database of any kind

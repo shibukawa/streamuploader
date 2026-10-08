@@ -29,6 +29,9 @@ facts:
     poke: the server calls Poke after every journal write; the loop coalesces pokes and also ticks every DRIVE_INDEX_INTERVAL
     stale_index_guard: at start, an index that holds documents while the bucket has no snapshots is rebuilt (found when a memory-storage run reused the previous index directory and facet counts doubled); DRIVE_STORAGE=memory also wipes the directory
     not_yet: publishing the index to S3 (search/ prefix), checkpoints, journal compaction
+  implemented_2026_10_09:
+    checkpoints: with Config.Checkpoints (WORM mode) every fold ends by extending the audit chain over the journal keys between the chain head and the fold's last key; the head is read from the bucket on first use so a restarted or rebuilt process continues the chain; Report.Checkpoint carries the number written
+    still_not_yet: publishing the index to S3, journal compaction (never in WORM mode)
 relations:
   - relation: implements
     to: requirement:local-drive-s3-only-state

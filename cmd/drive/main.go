@@ -5,6 +5,7 @@
 //	drive              serve (all-in-one)
 //	drive reindex      rebuild the search index from the bucket and exit
 //	drive index-once   fold pending journal events and exit
+//	drive verify       walk the audit checkpoint chain and report tampering (WORM mode)
 //
 // Streamuploader's SU_* environment variables configure the object store and
 // upload policy. Drive-specific variables:
@@ -17,11 +18,19 @@
 //	DRIVE_INDEX_INTERVAL    indexer period (default 30s)
 //	DRIVE_DELIVERY          proxy (default) or presigned
 //	DRIVE_STORAGE           s3 (default) or memory for a throwaway local run
+//	DRIVE_WORM_MODE         off (default), append_only or strict; see README "WORM audit mode"
+//	DRIVE_WORM_ACCESS_WINDOW window in which repeated reads of one object by one client
+//	                        produce a single file.accessed event (default 1m; 0 logs every request)
+//
+// Object locks for originals, journal and checkpoints come from streamuploader's
+// SU_OBJECT_LOCK_MODE (governance, compliance, legal_hold) and SU_OBJECT_LOCK_RETENTION.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -31,12 +40,14 @@ import (
 	"syscall"
 	"time"
 
+	"streamuploader/drive/audit"
 	"streamuploader/drive/indexer"
 	"streamuploader/drive/journal"
 	"streamuploader/drive/memstore"
 	"streamuploader/drive/meta"
 	driveserver "streamuploader/drive/server"
 	"streamuploader/drive/sidecar"
+	"streamuploader/drive/worm"
 	"streamuploader/internal/config"
 	suserver "streamuploader/internal/server"
 	"streamuploader/internal/storage"
@@ -107,6 +118,26 @@ func run() error {
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	wormMode, err := worm.ParseMode(os.Getenv("DRIVE_WORM_MODE"))
+	if err != nil {
+		return fmt.Errorf("DRIVE_WORM_MODE: %w", err)
+	}
+	accessWindow, err := time.ParseDuration(env("DRIVE_WORM_ACCESS_WINDOW", "1m"))
+	if err != nil {
+		return fmt.Errorf("DRIVE_WORM_ACCESS_WINDOW: %w", err)
+	}
+	if wormMode.Enabled() {
+		// Nothing stored may be removed through streamuploader's backend
+		// control API either.
+		cfg.WORMMode = true
+		enforcement := "application and checkpoint only (no storage lock configured)"
+		if cfg.ObjectLock.Enabled() {
+			enforcement = "application, checkpoint and storage lock (" + cfg.ObjectLock.String() + ")"
+		}
+		logger.Warn("drive_worm_mode", "mode", wormMode.String(), "enforcement", enforcement, "read_logging", readLogging(env("DRIVE_DELIVERY", "proxy")), "access_window", accessWindow)
+	} else if cfg.ObjectLock.Enabled() {
+		logger.Info("drive_object_lock", "lock", cfg.ObjectLock.String(), "note", "originals are locked; set DRIVE_WORM_MODE for journal locks, checkpoints and access logging")
+	}
 	indexDir := env("DRIVE_INDEX_DIR", ".cache/drive/index")
 	if env("DRIVE_STORAGE", "s3") == "memory" {
 		// An index left over from an earlier run would describe objects the
@@ -130,10 +161,15 @@ func run() error {
 	defer search.Close()
 
 	jstore := &journal.Store{Objects: store, Bucket: cfg.Bucket, Prefix: prefix}
+	if wormMode.Enabled() {
+		jstore.Lock = cfg.ObjectLock
+	}
 	metas := meta.NewCache()
-	ix := indexer.New(indexer.Config{Tenant: tenant, Bucket: cfg.Bucket, Prefix: prefix, IndexDir: indexDir}, store, jstore, search, metas, logger)
+	ix := indexer.New(indexer.Config{Tenant: tenant, Bucket: cfg.Bucket, Prefix: prefix, IndexDir: indexDir, Checkpoints: wormMode.Enabled(), Lock: jstore.Lock}, store, jstore, search, metas, logger)
 
 	switch command {
+	case "verify":
+		return runVerify(ctx, os.Args[2:], store, jstore, cfg.Bucket, prefix, tenant, cfg.ObjectLock)
 	case "reindex":
 		if _, err := ix.Start(ctx); err != nil {
 			return err
@@ -153,7 +189,7 @@ func run() error {
 		return nil
 	case "serve":
 	default:
-		return fmt.Errorf("unknown command %q (serve, reindex, index-once)", command)
+		return fmt.Errorf("unknown command %q (serve, reindex, index-once, verify)", command)
 	}
 
 	rep, err := ix.Start(ctx)
@@ -165,11 +201,14 @@ func run() error {
 
 	uploader := suserver.New(cfg, store)
 	drive := driveserver.New(driveserver.Config{
-		Tenant:     tenant,
-		Bucket:     cfg.Bucket,
-		Prefix:     prefix,
-		Delivery:   env("DRIVE_DELIVERY", "proxy"),
-		PresignTTL: cfg.PresignTTL,
+		Tenant:       tenant,
+		Bucket:       cfg.Bucket,
+		Prefix:       prefix,
+		Delivery:     env("DRIVE_DELIVERY", "proxy"),
+		PresignTTL:   cfg.PresignTTL,
+		WORM:         wormMode,
+		AccessWindow: accessWindow,
+		ObjectLock:   cfg.ObjectLock,
 	}, driveserver.Deps{
 		Store:    store,
 		Journal:  jstore,
@@ -178,11 +217,12 @@ func run() error {
 		Indexer:  ix,
 		Uploader: uploader.Handler(),
 		Logger:   logger,
+		Chain:    ix.Chain(),
 	})
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: drive.Handler(), ReadHeaderTimeout: 30 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
-	logger.Info("drive_listening", "addr", cfg.Addr, "tenant", tenant, "prefix", prefix, "index_dir", indexDir, "search_bin", searchBin, "delivery", env("DRIVE_DELIVERY", "proxy"))
+	logger.Info("drive_listening", "addr", cfg.Addr, "tenant", tenant, "prefix", prefix, "index_dir", indexDir, "search_bin", searchBin, "delivery", env("DRIVE_DELIVERY", "proxy"), "worm", wormMode.String())
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -194,4 +234,46 @@ func run() error {
 		}
 		return err
 	}
+}
+
+func readLogging(delivery string) string {
+	if delivery == "presigned" {
+		return "presigned_with_event"
+	}
+	return "proxy"
+}
+
+// runVerify walks the audit checkpoint chain of the tenant and prints what it
+// finds. It exits non-zero when a checkpoint, a journal event or an original
+// is missing, modified or unlinked. Reads only; no sidecar needed.
+func runVerify(ctx context.Context, args []string, store storage.Store, jstore *journal.Store, bucket, prefix, tenant string, lock storage.LockPolicy) error {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	hash := fs.Bool("hash", false, "re-read every registered original and compare its SHA-256 with the checksum recorded at upload")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	chain := &audit.Chain{Objects: store, Bucket: bucket, Prefix: prefix, Tenant: tenant, Lock: lock}
+	rep, err := chain.Verify(ctx, jstore, audit.VerifyOptions{HashOriginals: *hash})
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(rep)
+	} else {
+		fmt.Printf("tenant %s: %d checkpoints (head %d), %d events verified, %d originals verified, %d events not yet checkpointed\n",
+			rep.Tenant, rep.Checkpoints, rep.HeadN, rep.EventsVerified, rep.OriginalsVerified, rep.UnverifiedTail)
+		for _, f := range rep.Findings {
+			fmt.Println("  FAIL", f.String())
+		}
+		if rep.OK() {
+			fmt.Println("OK")
+		}
+	}
+	if !rep.OK() {
+		return fmt.Errorf("verification found %d problem(s)", len(rep.Findings))
+	}
+	return nil
 }
