@@ -10,8 +10,9 @@ facts:
       open: "{index_dir: path, create_if_missing: bool}"
       upsert: "{docs: [doc]} - replaces by id"
       delete: "{ids: [string]} or {file_ids: [string]} to drop all pages of a file"
-      commit: "{} - returns the new segment file list from meta.json"
-      reload: "{} - reopen after Go replaced files from S3"
+      commit: "{} - commits, merges synchronously, returns num_docs, opstamp, meta_json (the meta.json content) and files (the segment files that meta references and that exist on disk), all from one IndexMeta"
+      files: "{} - the same report without committing; used to publish an index after a crash or when publishing is newly enabled"
+      reload: "{} - reopen after Go replaced files and meta.json from the snapshot"
       search: "{q, filters, sort, limit, offset, snippet_fields} - returns hits with file_id, best page, score, snippets"
       facets: "{path, filters} - children of a facet path with counts"
       best_page: "{file_id, q} - second phase that resolves the best page for a file"
@@ -30,8 +31,14 @@ facts:
     binary_size: about 53 MB on macOS arm64 with the dictionary
     ops: ping, upsert, delete, commit, reload, stats, search, facets, best_page; requests carry facets_any (all must match) and facet_exact (direct membership through the facets_exact STRING field versus the hierarchical facet term)
     sorting: score, name (order_by_string_fast_field on name_sort), modified, created, uploaded, size
-    ready_line: the first stdout line is {"ok":true,"event":"ready"}; a schema mismatch is reported there as schema_mismatch and the Go side wipes and rebuilds
+    ready_line: the first stdout line is {"ok":true,"event":"ready","schema_version":"1","read_only":false}; a schema mismatch is reported there as schema_mismatch and the Go side wipes and rebuilds; the Go client keeps schema_version for the snapshot pointer
     schema_version: 1, stored in DRIVESEARCH_SCHEMA inside the index directory
+  implemented_2026_10_09:
+    read_only: --read-only opens the index without an IndexWriter; upsert, delete and commit answer read_only; used by drive server
+    merges: the writer uses NoMergePolicy; commit applies LogMergePolicy candidates with IndexWriter::merge(...).wait() and commits again, so no background thread changes the directory between requests and the reported file list stays valid until the next write
+    merge_trigger_observed: LogMergePolicy merges a level when it has 8 segments or when one of its segments is fully deleted (del_docs_ratio_before_merge 1.0); on a small tenant an edit of the only file in a segment therefore merges the whole index into one segment, which the snapshot then re-uploads whole (seen on RustFS 2026-10-09 - generation 3 published 6 files and retired 24)
+    file_list: SegmentMeta::list_files filtered by existence (a segment without deletes lists a .del that was never written); file names are tantivy's uuid-based names, which the Go side validates with a regular expression before uploading, downloading or deleting
+    stats: adds opstamp and read_only
 relations:
   - relation: implements
     to: requirement:local-drive-search

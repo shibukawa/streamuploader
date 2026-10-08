@@ -47,6 +47,18 @@ func (c *Cache) Len() int {
 	return len(c.files)
 }
 
+// ReplaceAll swaps the whole content in one step, so readers never see a
+// half-loaded cache while a snapshot is adopted.
+func (c *Cache) ReplaceAll(files []*File) {
+	next := make(map[string]*File, len(files))
+	for _, f := range files {
+		next[f.FileID] = f
+	}
+	c.mu.Lock()
+	c.files = next
+	c.mu.Unlock()
+}
+
 // All returns the files sorted by id.
 func (c *Cache) All() []*File {
 	c.mu.RLock()

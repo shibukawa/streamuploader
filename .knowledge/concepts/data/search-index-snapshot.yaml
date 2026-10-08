@@ -1,22 +1,51 @@
 id: data:search-index-snapshot
 type: data
 title: Search index snapshot on S3
-summary: A tenant's tantivy index stored as immutable segment objects plus a meta.json pointer under search/{tenant}/, with the journal position it covers; readers download what the pointer lists and cache by segment id.
-lifecycle: proposed
+summary: A tenant's tantivy index stored as immutable segment objects plus a meta.json pointer under search/{tenant}/, with the journal position it covers; readers download what the pointer lists and cache by file name.
+lifecycle: active
 facts:
   layout:
-    pointer: "search/{tenant}/meta.json - tantivy's own meta.json extended with drive fields"
-    segments: "search/{tenant}/{segment_id}.{ext} - never rewritten"
+    pointer: "{prefix}search/{tenant}/meta.json - tantivy's own meta.json object extended with a drive object"
+    segments: "{prefix}search/{tenant}/{segment_uuid}.{ext} - tantivy's own file names (.idx .pos .term .store .fast .fieldnorm, {opstamp}.del); never rewritten"
   drive_fields_in_pointer:
-    last_journal_key: last folded journal object key
-    text_etags_hash: hash of the folded .text.json ETags, for cheap change detection
-    schema_version: bump forces a rebuild
+    schema_version: the sidecar schema; a follower with another schema keeps serving what it has until the indexer republishes
+    tokenizer: lindera or ngram
+    generation: monotonic per pointer write; the local state file records the generation it was published as or adopted from
+    opstamp: tantivy opstamp of the published meta.json; an indexer whose local opstamp differs republishes at start
     published_at: time of publish
-  publish_order: segments first, meta.json last, so a reader never sees a pointer to a missing segment
-  reader_refresh: compare meta.json ETag at most every N seconds; download new segments; call sidecar reload
-  gc: segments no longer referenced by the current pointer are deleted after a grace period longer than the maximum reader refresh interval
-  size_expectations: tens of MB per typical tenant; stored page text dominates; body of file docs is not stored
+    last_journal_key: last folded journal object key; servers overlay everything after it
+    pending_text: file ids whose .text.json was not there yet, so the next indexer process keeps polling them
+    num_docs: document count
+    files: "[{name, size}] - every segment file the pointer references; size lets a follower skip what it already has"
+    retired: "[{name, at}] - files an earlier pointer referenced and this one does not; deleted at the first publish after at + grace"
+    history: "[{generation, changed: [file ids] | full}] - what each recent generation re-indexed, bounded to 64 generations and 5000 ids; a follower refreshes only those meta snapshots, or everything when its generation is no longer covered or a rebuild (full) happened"
+  not_included: text_etags_hash from the proposal; the opstamp plus history cover change detection
+  publish_order: segment files first, meta.json last, so a reader never sees a pointer to a missing segment
+  reader_refresh: HEAD meta.json every DRIVE_SNAPSHOT_REFRESH (10s); on a new ETag GET it, download missing files by name and size, write tantivy's meta.json, sidecar reload, refresh the meta cache from history, prune unreferenced local files
+  gc:
+    retired: deleted by the indexer at the first publish after retirement plus DRIVE_SNAPSHOT_GC_GRACE (15m); readers of the previous pointer had the whole grace period to fetch
+    orphans: after every publish the indexer lists the prefix and deletes segment files neither referenced nor retired whose LastModified is older than the grace period (leftovers of a crash between segment upload and pointer write)
+    local: both indexer and follower delete local segment files the current pointer does not reference, in the window where the sidecar is idle
+  consistency: the sidecar runs merges synchronously inside commit and reports meta.json content and file list from one IndexMeta, so the published pair is consistent and the directory does not change behind the publisher
+  size_expectations: tens of MB per typical tenant; stored page text dominates; body of file docs is not stored; after a merge the merged segment is uploaded whole
+  implemented_2026_10_09:
+    code: drive/snapshot (pointer.go Encode/Decode/ChangesSince, store.go Publish/Download/SweepOrphans/Prune, follower.go), drive/indexer publishLocked/adoptLocked, search/src/main.rs commit and files ops
+    tests: drive/snapshot/snapshot_test.go (round trip, history, publish, retire, sweep, download delta, prune), drive/e2e TestServerIndexerSplit
+    rustfs_run_2026_10_09: drive indexer and drive server as two host processes against a RustFS container - publish of 24 files, follower fetch, overlay edit then indexed edit, drive reindex while the indexer was stopped (24 new files, 30 retired, follower pruned the old ones), indexer restart on an empty directory adopted generation 4 without a rebuild, the first publish after the 30s grace deleted the 30 retired files, delete propagated to a 404 on the server
   future: range-read directory (hotcache style) if whole-snapshot download becomes too slow for large tenants
+verification:
+  snapshot-unit:
+    state: passed
+    method: unit
+    test: TestPublishDownloadRetireAndSweep
+    authority: observed
+    evidence: {path: drive/snapshot/snapshot_test.go}
+  split-e2e:
+    state: passed
+    method: integration
+    test: TestServerIndexerSplit
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: TestServerIndexerSplit}
 relations:
   - relation: produced_by
     to: flow:search-index-publish

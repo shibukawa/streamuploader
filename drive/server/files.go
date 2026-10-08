@@ -275,6 +275,9 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deps.Indexer != nil {
 		out["last_journal_key"] = s.deps.Indexer.LastJournalKey()
+		if sr, ok := s.deps.Indexer.(StatusReporter); ok {
+			out["indexer"] = sr.Status()
+		}
 	}
 	if s.deps.Search != nil {
 		if st, err := s.deps.Search.Stats(r.Context()); err == nil {
@@ -287,11 +290,12 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reindex(w http.ResponseWriter, _ *http.Request) {
-	if s.deps.Indexer == nil {
-		writeError(w, http.StatusServiceUnavailable, "no_indexer", "this server has no indexer")
+	rb, ok := s.deps.Indexer.(Rebuilder)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "no_indexer", "this server has no indexer; run `drive reindex` where the indexer runs")
 		return
 	}
-	s.deps.Indexer.RebuildAsync()
+	rb.RebuildAsync()
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "rebuild_scheduled"})
 }
 

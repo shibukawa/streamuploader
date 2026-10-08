@@ -1,20 +1,26 @@
 id: flow:search-index-publish
 type: flow
 title: Index fold and publish
-summary: One indexer run folds journal events and changed .text.json into the local tantivy index through the sidecar, writes meta snapshots and a checkpoint, uploads segments then meta.json, and garbage-collects unreferenced segments.
-lifecycle: proposed
+summary: One indexer run folds journal events and changed .text.json into the local tantivy index through the sidecar, writes meta snapshots, uploads new segments then meta.json, and garbage-collects unreferenced segments.
+lifecycle: active
 facts:
+  start:
+    - start the sidecar; a schema mismatch wipes the directory
+    - read search/{tenant}/meta.json; ignore it when its schema_version differs from the sidecar's
+    - adopt it (stop sidecar, download missing files, write meta.json, prune, restart, take last_journal_key and pending_text, reload all meta snapshots) when the local state is missing or its generation differs from the pointer's
+    - rebuild from meta/ when there is nothing to adopt and no usable local state
+    - mark the index unpublished when the local opstamp differs from the pointer's (crash between commit and publish, deleted pointer, snapshots newly enabled)
   steps:
-    - load local cache or download the current snapshot (meta.json then listed segments)
-    - list journal/ after last_journal_key; group by file_id keeping the newest state per file
-    - for each changed file - fetch .text.json if its ETag differs; build the file doc and page docs; upsert or delete
-    - commit; sidecar returns the segment list
-    - write meta/{tenant}/{file_id}.json for changed files
-    - write audit checkpoint (data:audit-checkpoint)
-    - upload new segment files; then upload meta.json with the new last_journal_key
-    - delete segments unreferenced since before the grace period; in normal mode delete folded journal objects older than the grace period
-  idempotency: a crash before the meta.json upload leaves orphan segments that the next gc removes; events are re-folded from the same last_journal_key
-  rebuild_variant: skip the journal and read meta/ plus derived/ for every file
+    - list journal/ after last_journal_key; group by file_id keeping the newest state per file; re-check pending .text.json by HEAD
+    - for each changed file - fetch .text.json; build the file doc and page docs; upsert or delete
+    - commit; the sidecar merges synchronously and returns meta.json content plus the segment file list
+    - write meta/{tenant}/{file_id}.json for changed files; save the local state file
+    - publish - HEAD the pointer (warn when another writer changed it and continue from its pointer), upload files the previous pointer did not reference, delete files retired longer than the grace period, write meta.json as generation+1 with last_journal_key, pending_text, files, retired and history
+    - sweep orphans older than the grace period; prune local files the pointer does not reference
+  failure_handling: a failed publish is retried on the next run (the unpublished flag and the changed ids are kept); a stale file list (ErrLocalFileMissing) re-asks the sidecar once
+  idempotency: a crash before the meta.json upload leaves orphan segments that the sweep removes after the grace period; events are re-folded from the same last_journal_key; re-uploading a file is harmless because names are unique and content immutable
+  rebuild_variant: skip the journal and read meta/ plus derived/ for every file; the publish is marked full so followers reload every meta snapshot
+  not_yet: audit checkpoint, deletion of folded journal objects (journal compaction)
 relations:
   - relation: performed_by
     to: system:drive-indexer
