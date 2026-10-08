@@ -13,6 +13,7 @@ facts:
     - derived assets (thumbnail, .bdf, .text.json) are presigned the same way; the bdf viewer fetches the .bdf directly
     - Cache-Control is set on derived assets so browsers do not refetch
   exception_worm: reads go through the Drive (proxy) or through a presigned URL whose issuance writes a file.accessed event
+  exception_worm_implemented_2026_10_09: in WORM mode the server writes the file.accessed event before redirecting and caps PresignTTL at 5 minutes
 relations:
   - relation: realizes
     to: requirement:local-drive-api-and-web-ui

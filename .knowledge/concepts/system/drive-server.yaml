@@ -31,8 +31,11 @@ facts:
     state_file: drive-state.json inside the index directory (last folded journal key, pending text keys); deleting the directory forces a rebuild
     env: DRIVE_TENANT, DRIVE_PREFIX, DRIVE_INDEX_DIR, DRIVE_SEARCH_BIN, DRIVE_SEARCH_TOKENIZER, DRIVE_INDEX_INTERVAL, DRIVE_DELIVERY, DRIVE_STORAGE
     not_yet: server-only and indexer-only long-running modes (index-once exists), streamuploader cleanup loop is not started by the Drive
-  planned_2026_10_09:
-    init: implemented 2026-10-09 for the compose target (cmd/drive/init.go, drive/deploy); generates .env, compose.yaml, security.yaml and README.md; other targets exit 2 until their slice; configuration stays environment-based, data:drive-config-file is deferred
+  implemented_2026_10_09:
+    worm: DRIVE_WORM_MODE and DRIVE_WORM_ACCESS_WINDOW; SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION reused from streamuploader for journal and audit objects; the start log states the enforcement level ("application and checkpoint only" without a storage lock)
+    verify_subcommand: drive verify [--hash] [--json] walks the audit chain and exits non-zero on findings; needs no sidecar
+    packages_added: drive/worm (mode and additive rule), drive/audit (checkpoint chain and verifier)
+    init: implemented 2026-10-09 for the compose target (cmd/drive/init.go, drive/deploy); generates .env, compose.yaml, security.yaml and README.md; other targets exit 2 until their slice; configuration stays environment-based, data:drive-config-file is deferred; WORM variables are not part of the kit yet (deferred worm presets in requirement:drive-init-subcommand)
 open_questions:
   repository:
     text: Does the Drive live in this repository (cmd/drive) or in its own repository importing streamuploader?

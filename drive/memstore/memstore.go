@@ -24,12 +24,21 @@ import (
 // missing object from other failures can use errors.Is.
 var ErrNotFound = errors.New("memstore: not found")
 
+// ErrLocked is returned when a delete or overwrite hits an object whose
+// retention is still active, the way an Object Lock bucket refuses it.
+var ErrLocked = errors.New("memstore: object is locked by retention")
+
 type object struct {
 	body         []byte
 	contentType  string
 	metadata     map[string]string
 	etag         string
 	lastModified time.Time
+	retention    *storage.Retention
+}
+
+func (o *object) locked() bool {
+	return o != nil && o.retention.Active(time.Now())
 }
 
 // Store holds objects in memory. The zero value is not usable; call New.
@@ -66,9 +75,13 @@ func (s *Store) PutObject(_ context.Context, input storage.PutInput) (storage.Pu
 		etag:         `"` + hex.EncodeToString(sum[:16]) + `"`,
 		lastModified: time.Now().UTC(),
 	}
+	obj.retention = cloneRetention(input.Retention)
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bucket(input.Bucket)[input.Key].locked() {
+		return storage.PutResult{}, ErrLocked
+	}
 	s.bucket(input.Bucket)[input.Key] = obj
-	s.mu.Unlock()
 	return storage.PutResult{ETag: obj.etag}, nil
 }
 
@@ -79,7 +92,11 @@ func (s *Store) CopyObject(_ context.Context, input storage.CopyInput) (storage.
 	if !ok {
 		return storage.CopyResult{}, ErrNotFound
 	}
+	if s.bucket(input.Bucket)[input.Key].locked() {
+		return storage.CopyResult{}, ErrLocked
+	}
 	dst := *src
+	dst.retention = cloneRetention(input.Retention)
 	dst.body = append([]byte(nil), src.body...)
 	if input.ContentType != "" {
 		dst.contentType = input.ContentType
@@ -168,9 +185,39 @@ func (s *Store) PresignGetObject(_ context.Context, input storage.PresignGetInpu
 
 func (s *Store) DeleteObject(_ context.Context, input storage.DeleteInput) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bucket(input.Bucket)[input.Key].locked() {
+		return ErrLocked
+	}
 	delete(s.bucket(input.Bucket), input.Key)
-	s.mu.Unlock()
 	return nil
+}
+
+// Remove deletes an object regardless of its retention, standing in for an
+// operator with bucket-administration rights. For tamper tests only.
+func (s *Store) Remove(bucket, key string) {
+	s.mu.Lock()
+	delete(s.bucket(bucket), key)
+	s.mu.Unlock()
+}
+
+// Retention reports the lock recorded on an object, for tests.
+func (s *Store) Retention(bucket, key string) *storage.Retention {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.bucket(bucket)[key]
+	if !ok {
+		return nil
+	}
+	return cloneRetention(obj.retention)
+}
+
+func cloneRetention(r *storage.Retention) *storage.Retention {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	return &c
 }
 
 // Len returns the number of objects in a bucket, for tests.

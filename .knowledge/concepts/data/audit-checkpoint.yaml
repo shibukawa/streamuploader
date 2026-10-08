@@ -2,20 +2,23 @@ id: data:audit-checkpoint
 type: data
 title: Audit checkpoint
 summary: A hash-chained record the indexer writes after each fold at audit/{tenant}/checkpoint-{n}.json, making deletion or rewriting of journal events and originals detectable without relying on the storage provider.
-lifecycle: proposed
+lifecycle: active
 facts:
   fields:
-    n: sequence number
-    prev_checkpoint_sha256: chain link; checkpoint 0 links to a tenant genesis value
-    journal_range: first and last journal key folded in this run
-    journal_merkle_root: Merkle root over sha256 of every folded event object
+    n: sequence number, starting at 1; the key zero-pads it (checkpoint-000000000001.json) so listings sort in order
+    prev_checkpoint_sha256: chain link over the stored bytes of the previous checkpoint; checkpoint 1 links to sha256("streamuploader-drive-audit-genesis\n" + tenant + "\n")
+    journal_range: first and last journal key covered
+    journal_merkle_root: Merkle root over the leaves (pairwise sha256, odd leaf paired with itself)
     event_count: integer
-    originals: list of {file_id, object_key, checksum_sha256} registered in this run
-    index_meta_sha256: hash of the published search meta.json
-    anchor: optional external reference (Git commit, RFC 3161 token, transparency-log inclusion proof)
-    signed_by: optional signature over the record with a deployment key
+    leaves: list of {key, sha256} for every covered journal object; added so the verifier can name a missing or modified event, which the root alone cannot
+    originals: list of {file_id, object_key, checksum_sha256, size_bytes} from file.created and file.versioned events in the range
+    index_meta_sha256: hash of the published search meta.json; empty until the index is published to S3
+    anchor: optional external reference (Git commit, RFC 3161 token, transparency-log inclusion proof); empty for now
+    signed_by: optional signature over the record with a deployment key; empty for now
   why_the_indexer_builds_the_chain: writers append independently and cannot know the previous hash without coordination; the single indexer sees a total order
-  verify_command: walks checkpoints, re-lists journal/ and recomputes roots, reports missing, extra or modified events and originals whose sha256 changed
+  coverage_rule: a checkpoint covers every journal key after the previous checkpoint's last key up to the fold's last key, so events are chained exactly once even after a rebuild or a crash between the state save and the checkpoint write (drive/indexer checkpoint)
+  verify_command: "`drive verify [--hash] [--json]` walks checkpoints, checks sequence and chain links, recomputes roots, re-lists journal/ and reports missing, extra or modified events, missing or resized originals and, with --hash, originals whose sha256 changed; events newer than the last checkpoint are counted as an unverified tail, not a failure"
+  implemented_2026_10_09: {package: drive/audit, api: "GET /api/drive/checkpoints[/{n}]", lock: checkpoints carry the same object lock as the journal}
 relations:
   - relation: implements
     to: requirement:local-drive-worm-audit-mode

@@ -2,7 +2,7 @@ id: policy:worm-enforcement
 type: policy
 title: WORM enforcement in three layers
 summary: Application refusal, provider retention locks and hash-chained checkpoints together make a WORM deployment resist both API misuse and an operator holding storage credentials, and detect tampering where locks are weak or absent.
-lifecycle: proposed
+lifecycle: active
 facts:
   layers:
     application:
@@ -10,6 +10,8 @@ facts:
       - streamuploader backend control delete, shared-key delete and object replace are switched off
       - edits only through new_version; every version keeps its object
       - reads produce file.accessed events; presigned URLs, if used, are issued with the event and expire within minutes
+      - additive in append-only means: tags may be added, never removed; a first author override or location may be set, never rewritten or cleared; the name never changes
+      - a read whose file.accessed event cannot be written is refused (fail closed)
     storage:
       aws_s3_b2_minio: Object Lock compliance mode with retention period or legal hold on objects/ and journal/ PUTs; versioning enabled
       gcs: locked bucket retention policy or per-object retention configuration
@@ -24,6 +26,12 @@ facts:
     worm.retention: duration or indefinite
     worm.read_logging: proxy | presigned_with_event
     worm.anchor: none | git | rfc3161 | custom URL
+  configuration_mapping_2026_10_09:
+    worm.mode: DRIVE_WORM_MODE
+    worm.retention: SU_OBJECT_LOCK_MODE (governance | compliance with SU_OBJECT_LOCK_RETENTION; legal_hold for indefinite); unset means no storage lock and the info endpoint reports "application and checkpoint only"
+    worm.read_logging: follows DRIVE_DELIVERY (proxy -> proxy, presigned -> presigned_with_event with a 5 minute cap); DRIVE_WORM_ACCESS_WINDOW collapses repeats
+    worm.anchor: not implemented; the checkpoint keeps an empty anchor field
+    streamuploader: SU_WORM_MODE=true (set by the Drive) removes the destructive backend routes; SU_OBJECT_LOCK_* locks originals in any deployment
   operator_duties:
     - storage credentials used by the Drive must lack permission to change lock configuration
     - checkpoint verification runs on a schedule and alerts on failure

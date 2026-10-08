@@ -46,6 +46,14 @@ facts:
       method: GET
       path: "/api/drive/files/{id}/content | /download | /preview | /thumbnail"
       behavior: 302 to a presigned URL by default; proxied bytes with a file.accessed event in WORM mode
+    versions:
+      method: GET
+      path: "/api/drive/files/{id}/versions and /versions/{n}/content | /download"
+      behavior: lists earlier objects (oldest first, 1-based n) and serves them; reads are journaled in WORM mode like the current object
+    info:
+      method: GET
+      path: /api/drive/info
+      response: {tenant, delivery, actor, worm: {mode, enabled, enforcement, read_logging, access_window, presign_ttl, object_lock}}
     bulk_zip:
       method: GET
       path: "/api/drive/files/zip?ids=..."
@@ -72,6 +80,9 @@ facts:
   implemented_2026_10_08:
     done: register_file, get_file, update_file (plus clear_location), delete_file, search (q, tag, facet, exact, sort, limit, offset), facets, content/download/preview/thumbnail (proxy or presigned), stats, admin reindex, web UI at / and /ui/
     not_yet: restore_file, new_version, bulk_zip, views, journal_export, checkpoints, OpenAPI document and generated clients, API tokens
+  implemented_2026_10_09:
+    done: restore_file, new_version (plus GET versions and GET versions/{n}/content|download for earlier objects), journal_export (JSON lines; since/until accept a key, an event id or an RFC 3339 time), checkpoints, info (tenant, delivery, WORM mode and lock), worm_readonly refusals
+    not_yet: bulk_zip, views, OpenAPI document and generated clients, API tokens
 relations:
   - relation: implements
     to: requirement:local-drive-api-and-web-ui
