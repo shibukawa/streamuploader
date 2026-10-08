@@ -1,0 +1,57 @@
+id: requirement:local-drive-s3-only-state
+type: requirement
+title: All durable Drive state lives in S3
+summary: Originals, derived assets, metadata and the audit journal are objects in S3-compatible storage; snapshots and the search index are caches that any node can rebuild from the bucket. No SQLite or relational database.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("メタデータは基本的にS3上におくメタデータファイルに保存", "SQLiteは使わなくてもいける")
+  rationale:
+    - nothing but the bucket needs backup or a managed service
+    - any provider with an S3 API works, which is the portability requirement
+    - streamuploader already keeps upload state in S3 .work sentinels (decision:serverless-upload-state)
+  what_replaces_the_database:
+    writes: append-only journal events with unique ULID keys (decision:journal-based-metadata)
+    reads: the tantivy index is the query layer for listing and search (system:search-sidecar)
+    point_lookup: meta/{file_id}.json snapshot written by the indexer, or the index doc store
+    consistency: read-your-writes through the journal overlay (flow:drive-metadata-edit-overlay)
+  rebuild:
+    normal: read meta/ and derived/ for every file; the journal is not replayed
+    worm: the journal is never compacted, so a full replay is always possible
+constraints:
+  - No component may hold state that cannot be reconstructed from the bucket
+  - Object keys of originals are immutable; rename and move never copy objects
+  - Writers never need conditional PUT; coordination is by unique keys plus a single indexer
+acceptance:
+  rebuild-from-bucket:
+    text: Deleting the index and all meta/ snapshots, then running the indexer rebuild, reproduces identical listings and search results.
+    verified_by: [rebuild-test]
+  no-local-state:
+    text: Two server instances started against the same bucket serve the same listings after one of them records a metadata change and the overlay window elapses.
+    verified_by: [second-process-test]
+verification:
+  rebuild-test:
+    state: passed
+    method: integration
+    test: TestAllInOneMilestone
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: "Check 3: rebuild and cold start"}
+  second-process-test:
+    state: passed
+    method: integration
+    test: TestAllInOneMilestone
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: "newStack(t, store, index2) after PATCH"}
+open_questions:
+  conflict-policy:
+    text: Is last-writer-wins by ULID order acceptable for concurrent edits of the same file, or does the UI need a revision check (expected revision in the event)?
+    state: answered
+    resolution: Last-writer-wins by ULID order. The user stated on 2026-10-08 that the product is primarily a viewer and edits are rare, so concurrent edits of one file are not a design driver. The optional expected_revision field in the event stays available for a later conflict check.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: builds_on
+    to: decision:serverless-upload-state
+  - relation: realized_by
+    to: decision:journal-based-metadata
+  - relation: constrained_by
+    to: policy:drive-s3-layout

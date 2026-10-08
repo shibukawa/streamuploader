@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# All-in-one Drive image: the Go binary (streamuploader + Drive API + UI) and
+# the Rust search sidecar side by side. The lindera IPADIC dictionary is
+# compiled into the sidecar.
+
+FROM rust:1-bookworm AS sidecar
+WORKDIR /src/search
+COPY search/Cargo.toml search/Cargo.lock* ./
+COPY search/src ./src
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/search/target \
+    cargo build --release && cp target/release/drivesearch /out-drivesearch
+
+FROM golang:1.27-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/drive ./cmd/drive
+
+FROM gcr.io/distroless/cc-debian12
+COPY --from=build /out/drive /app/drive
+COPY --from=sidecar /out-drivesearch /app/drivesearch
+USER nonroot:nonroot
+ENV DRIVE_INDEX_DIR=/tmp/drive-index
+EXPOSE 8080
+ENTRYPOINT ["/app/drive"]

@@ -1,0 +1,49 @@
+id: data:drive-file-meta
+type: data
+title: Drive file metadata snapshot
+summary: JSON written by the indexer at meta/{tenant}/{file_id}.json holding the latest folded state of one file; also the payload shape embedded in every journal event.
+lifecycle: active
+facts:
+  fields:
+    tenant_id: string
+    file_id: ULID assigned at registration
+    revision: integer incremented per folded event
+    name: original or renamed display name
+    content_type: sanitized MIME type from streamuploader
+    size_bytes: integer
+    checksum_sha256: from the streamuploader file fact
+    object_key: immutable key of the original (objects/ prefix)
+    derived:
+      thumbnail: object key and status
+      text: ".text.json object key and the ETag the indexer last folded"
+      preview: ".bdf object key and status"
+    tags: ["list of hierarchical paths such as /projects/2026/alpha"]
+    author:
+      extracted: from .text.json metadata.document (Dublin Core creator) or metadata.exif Artist
+      override: user-entered value that wins when present
+    location:
+      lat: number
+      lon: number
+      source: exif or user
+      geohash: computed by the indexer
+    dates:
+      created: from document metadata when present
+      shot: EXIF DateTimeOriginal when present
+      uploaded: streamuploader uploaded_at
+      modified: time of the last folded event
+    versions: ["earlier object keys with their event ids, newest last (WORM versioned edits)"]
+    deleted: boolean tombstone; normal mode purges after the trash grace period
+    protected: password-protected document flag from streamuploader
+    last_event: ULID key of the event that produced this snapshot
+  invariants:
+    - object_key never changes for a file_id; rename and move touch only this record
+    - the snapshot is derived; the journal is authoritative
+relations:
+  - relation: derived_from_events
+    to: data:drive-journal-event
+  - relation: embeds
+    to: data:file-item
+  - relation: references
+    to: data:derived-asset
+  - relation: references
+    to: data:extracted-content

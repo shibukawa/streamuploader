@@ -1,0 +1,50 @@
+id: system:drive-indexer
+type: system
+title: Drive indexer
+summary: The single writer. It folds new journal events and new .text.json artifacts into the tenant's tantivy index, writes meta snapshots and audit checkpoints, publishes the index to S3 and garbage-collects old segments.
+lifecycle: active
+facts:
+  inputs:
+    - journal/ objects after the last folded key recorded in the index snapshot
+    - derived/{file_id}/*.text.json whose ETag differs from the indexed one (poll; streamuploader has no ready notification)
+    - meta/ snapshots and derived/ for a full rebuild
+  outputs:
+    - upsert and delete calls to system:search-sidecar, then commit
+    - meta/{tenant}/{file_id}.json snapshot per changed file
+    - audit/{tenant}/checkpoint-{n}.json (data:audit-checkpoint)
+    - search/{tenant}/ segments then meta.json (flow:search-index-publish)
+  cadence:
+    periodic: every 1 to 5 minutes as a Cloud Run Job, cron or in-process loop
+    poke: optional hook the server calls after a write (queue message, Jobs API call, or channel in all-in-one)
+  single_writer_guarantee:
+    default: the scheduler runs at most one indexer per tenant group (Cloud Run Job parallelism 1, one cron, one goroutine)
+    optional: a lease object written with If-None-Match where the provider supports it, for event-driven low latency
+  text_handling: body truncated per page at a configured byte limit; pages beyond a configured count are indexed without stored text
+  deletes: a file.deleted event removes the file and page docs; in normal mode objects are deleted after the trash grace period through api:backend-control-api
+  rebuild_command: drops the local index, reads meta/ and derived/, re-indexes, publishes; used for recovery, engine upgrades and tenant moves
+  implemented_2026_10_08:
+    package: drive/indexer
+    extracted_metadata: author from .text.json metadata.document.dc.creator (bdf), then metadata author keys, then exif Artist; created date from dc.created; user overrides untouched
+    pending_text: files whose .text.json is not there yet are re-checked by HeadObject on every run
+    poke: the server calls Poke after every journal write; the loop coalesces pokes and also ticks every DRIVE_INDEX_INTERVAL
+    stale_index_guard: at start, an index that holds documents while the bucket has no snapshots is rebuilt (found when a memory-storage run reused the previous index directory and facet counts doubled); DRIVE_STORAGE=memory also wipes the directory
+    not_yet: publishing the index to S3 (search/ prefix), checkpoints, journal compaction
+relations:
+  - relation: implements
+    to: requirement:local-drive-s3-only-state
+  - relation: realizes
+    to: decision:journal-based-metadata
+  - relation: depends_on
+    to: system:search-sidecar
+  - relation: reads
+    to: data:drive-journal-event
+  - relation: reads
+    to: data:extracted-content
+  - relation: writes
+    to: data:drive-file-meta
+  - relation: writes
+    to: data:search-index-snapshot
+  - relation: writes
+    to: data:audit-checkpoint
+  - relation: uses
+    to: api:backend-control-api

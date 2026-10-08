@@ -1,0 +1,24 @@
+[package]
+name = "drivesearch"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "tantivy search sidecar for the streamuploader Drive; speaks JSON lines on stdin/stdout"
+
+[[bin]]
+name = "drivesearch"
+path = "src/main.rs"
+
+[dependencies]
+tantivy = "0.26"
+lindera = "5"
+lindera-tantivy = { version = "5.0", features = ["embed-ipadic"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

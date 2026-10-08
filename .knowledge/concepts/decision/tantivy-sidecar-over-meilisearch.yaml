@@ -1,0 +1,36 @@
+id: decision:tantivy-sidecar-over-meilisearch
+type: decision
+title: tantivy in a Rust sidecar process instead of Meilisearch
+summary: Search runs in a small Rust binary built on tantivy and lindera, spoken to over JSON lines from Go, with its immutable segments synchronized to S3. Meilisearch, cgo bindings and Bleve were considered and rejected.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("2で良いです")
+  rationale:
+    - tantivy's index is meta.json plus immutable segment files, which maps directly onto S3 objects and lets stateless readers scale
+    - no always-on search server, so scale-to-zero on Cloud Run and Fly works and the VM profile runs the same engine
+    - a process boundary matches the language boundary; the Rust part is tested alone and the indexer job can run the Rust binary by itself
+    - lindera can be compiled in freely, which the Go bindings do not offer
+    - streamuploader already uses the same pattern for system:local-command-processor
+  rejected_alternatives:
+    meilisearch:
+      why: needs a persistent process and LMDB volume; cannot run on Cloud Run; sharding is Enterprise-only and experimental; a second engine would be needed for serverless
+    tantivy_go_cgo:
+      what: github.com/anyproto/tantivy-go v1.0.x, MIT, used by Anytype
+      why: tokenizers are default, ngram, edge_ngram, jieba, raw, simple - no lindera; a fork plus cgo cross-builds would be needed. Remains the fallback if process overhead ever matters
+    bleve_pure_go:
+      why: same immutable-segment idea but the root pointer is a mutable BoltDB file, index size and speed are worse; kept as the no-Rust escape hatch
+    quickwit:
+      why: proves the design (splits on S3, stateless searchers) but is log-oriented, deletes are batch tasks, it is a separate service, and its future after the Datadog acquisition is unclear
+  tradeoffs:
+    - Rust toolchain in the build and two binaries in the image
+    - lindera dictionary adds tens of MB to the image
+    - no typo tolerance out of the box (fuzzy queries exist but are not Meilisearch-grade)
+relations:
+  - relation: realizes
+    to: requirement:local-drive-search
+  - relation: realized_by
+    to: system:search-sidecar
+  - relation: follows_pattern_of
+    to: system:local-command-processor
+  - relation: constrained_by
+    to: requirement:local-drive-portable-deployment

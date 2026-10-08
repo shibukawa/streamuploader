@@ -62,6 +62,11 @@ type HeadResult struct {
 type ListInput struct {
 	Bucket string
 	Prefix string
+	// StartAfter returns only keys that sort after this key, as S3
+	// ListObjectsV2 StartAfter does. Empty lists from the beginning.
+	StartAfter string
+	// MaxKeys bounds the number of keys returned; zero returns all keys.
+	MaxKeys int
 }
 
 type ListResult struct {

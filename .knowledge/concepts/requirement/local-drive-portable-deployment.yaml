@@ -1,0 +1,42 @@
+id: requirement:local-drive-portable-deployment
+type: requirement
+title: One image runs on VMs, Fly, Cloud Run and Kubernetes
+summary: The same container image runs as server, indexer or all-in-one on a VM, Fly Machines, Google Cloud Run, Azure Container Apps or Kubernetes; the only external dependency is S3-compatible storage.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("いろんなサービスで動くようにしたい")
+  modes:
+    server: upload intake, Drive API, search reads, web UI; stateless; many instances
+    indexer: single writer that folds journal and .text.json into the index; Cloud Run Job, cron, or a goroutine in all-in-one
+    all-in-one: server plus indexer in one process for a VM or docker compose
+  cloud_run_notes:
+    request_size: HTTP/1 requests are capped at 32 MiB; enabling HTTP/2 end-to-end removes the cap, which requires the Go server to accept h2c
+    cpu: CPU is allocated only during a request unless "CPU always allocated" is set, so derived-asset generation must finish before the response (execution_mode sequential) or move to the indexer/worker
+    timeout: 60 minutes per request; very large uploads on slow links need resumable upload
+    tmp: /tmp is memory-backed; size instance memory for the index cache or mount a GCS FUSE volume
+  excluded_targets:
+    aws_lambda: request payload limit of 6 MB makes it unsuitable for streaming uploads
+  index_cache_dir: configurable; disk on VM and Fly volumes, /tmp or FUSE on Cloud Run
+constraints:
+  - No feature may require a persistent local volume; a volume is only a cache
+  - No feature may require conditional PUT, event notifications or queues from the storage provider; those are optional accelerations
+acceptance:
+  three-targets:
+    text: The same image passes the m1 completion checks on docker compose (all-in-one), on Fly Machines (server plus indexer machine) and on Cloud Run (service plus job).
+    scope: {milestone: m3-portability}
+open_questions:
+  resumable-upload:
+    text: Which resumable upload protocol (tus-like, part retry, client chunk manifest) covers the Cloud Run 60-minute limit?
+    state: deferred
+    resolution: Not needed for m1 on a VM; required before a serverless production deployment.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: realized_by
+    to: system:drive-server
+  - relation: extends
+    to: system:server-deployment-modes
+  - relation: depends_on
+    to: system:object-storage-providers
+  - relation: mentions
+    to: concept:upload-experience-improvements

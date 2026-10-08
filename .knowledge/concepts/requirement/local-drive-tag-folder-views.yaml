@@ -1,0 +1,43 @@
+id: requirement:local-drive-tag-folder-views
+type: requirement
+title: Tags shown as virtual folders
+summary: User tags are hierarchical paths rendered as folders, like the old Google Docs collections; one file appears in every folder it is tagged with. The same facet mechanism drives date, author, type and map views and saved smart folders.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("昔のGoogle Driveみたいに、タグを使ってそれをフォルダのように見せるようなビュー")
+  mechanism: tantivy hierarchical Facet field; a document holds many facet paths; FacetCollector lists children of a prefix with counts
+  views_sharing_the_mechanism:
+    tags: "/tags/projects/2026/alpha"
+    date: "/date/2026/10/08"
+    author: "/author/<name>"
+    type: "/type/pdf"
+    geo: "/geo/<geohash chars, one per level> - map clusters at a chosen precision"
+  smart_folders: saved queries stored as journal events (view.saved) and listed next to tag folders
+  untagged: a synthetic folder listing files with no /tags facet
+  folder_open: two queries, children facets of the path and files whose facet equals the path, sorted by name
+constraints:
+  - Moving a file between folders is a tag change recorded as one journal event; no object is copied
+  - Folder listings are served from the index plus the overlay, never from S3 ListObjects
+acceptance:
+  multi-folder:
+    text: A file tagged /tags/a and /tags/b is listed under both folders and disappears from /tags/a only after that tag is removed.
+    verified_by: [e2e-folders]
+  immediate-visibility:
+    text: A tag added through the API is visible in the folder listing on the next request, before the indexer has run.
+    verified_by: [e2e-folders]
+verification:
+  e2e-folders:
+    state: passed
+    method: integration
+    test: TestAllInOneMilestone
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: "Check 1 and Metadata edit"}
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: realized_by
+    to: flow:tag-folder-browse
+  - relation: depends_on
+    to: system:search-sidecar
+  - relation: depends_on
+    to: flow:drive-metadata-edit-overlay

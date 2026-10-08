@@ -1,0 +1,33 @@
+id: data:drive-journal-event
+type: data
+title: Drive journal event
+summary: One immutable JSON object per metadata change at journal/{tenant}/{yyyy}/{mm}/{ulid}.json; carries the actor, the event type and the file's full state after the change.
+lifecycle: active
+facts:
+  key: "journal/{tenant}/{yyyy}/{mm}/{ulid}.json - ULID gives time order and uniqueness; the month folder bounds listings"
+  fields:
+    event_id: the ULID
+    tenant_id: string
+    type: one of file.created, file.updated, file.versioned, file.deleted, file.restored, file.accessed, view.saved, view.deleted
+    actor: API token id or user id; "system" for indexer-generated events
+    at: RFC 3339 time from the writer's clock
+    file_id: present for file.* events
+    state: full data:drive-file-meta after the change (absent for file.accessed)
+    access: for file.accessed - object key, kind (download, inline, preview, thumbnail), client address hash
+    expected_revision: optional; lets a future conflict check reject stale edits
+    upload_facts: for file.created - the streamuploader file fact used at registration
+  writers: any server instance; one PUT, no read-before-write
+  readers: the indexer (fold) and servers (overlay by StartAfter)
+  retention:
+    normal: deletable after folding plus grace
+    worm: retained under the storage lock forever; the checkpoint chain covers every key
+  size: a few KB; full state keeps the overlay simple
+relations:
+  - relation: realizes
+    to: decision:journal-based-metadata
+  - relation: embeds
+    to: data:drive-file-meta
+  - relation: covered_by
+    to: data:audit-checkpoint
+  - relation: builds_on
+    to: data:metadata-payload

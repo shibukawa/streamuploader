@@ -1,0 +1,28 @@
+id: flow:drive-metadata-edit-overlay
+type: flow
+title: Metadata edit with read-your-writes overlay
+summary: A tag, name or location change becomes one journal PUT; until the indexer folds it, every server patches listings and search results with the recent journal entries so the user sees the change at once.
+lifecycle: active
+facts:
+  write_path:
+    - PATCH /api/drive/files/{id} with the changed fields and optional expected_revision
+    - server loads the current state (meta snapshot plus overlay), applies the change, writes a file.updated event with the full state
+    - response returns the new state; no index write happens here
+  read_path:
+    - server asks the sidecar (search, facets) and gets index results
+    - server lists journal/{tenant}/ with StartAfter = last_journal_key of the loaded snapshot, cached for a few seconds per instance
+    - results are patched by file_id - replace state, drop files with a newer file.deleted, insert new file.created that match the current filter or facet
+    - facet counts are adjusted for inserted and removed files
+  bounds: the overlay is small because the indexer runs every few minutes; if the listing exceeds a configured size the server logs a warning and serves index-only results
+  worm_mode: PATCH is rejected in strict; in append-only only tag additions and comments pass, and they are still events
+relations:
+  - relation: realizes
+    to: decision:journal-based-metadata
+  - relation: implements
+    to: requirement:local-drive-tag-folder-views
+  - relation: writes
+    to: data:drive-journal-event
+  - relation: reads
+    to: data:search-index-snapshot
+  - relation: uses
+    to: api:drive-api

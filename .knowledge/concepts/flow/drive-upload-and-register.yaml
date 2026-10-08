@@ -1,0 +1,33 @@
+id: flow:drive-upload-and-register
+type: flow
+title: Upload and register a file
+summary: The browser or API client uploads through streamuploader, waits for durable facts, then registers the file with the Drive, which writes one journal event; the indexer later folds the event and the extracted text.
+lifecycle: active
+facts:
+  steps:
+    - client calls POST /api/upload/keys per file and PUT /api/upload/keys/{key}/content (api:upload-api)
+    - client calls POST /api/upload/wait and receives file facts with thumbnail, extracted_content and preview status (api:async-task-wait-api)
+    - client calls POST /api/drive/files with the upload facts plus initial tags, author override and location
+    - server validates the facts against the upload key owner, assigns file_id, writes a file.created event, returns the file
+    - the file is visible immediately through the overlay (flow:drive-metadata-edit-overlay)
+    - indexer folds the event; when derived/{file_id}.text.json appears or its ETag changes, indexer indexes body, author and EXIF fields
+    - indexer publishes the snapshot; servers refresh
+  failure_modes:
+    client_never_registers: object orphaned from the Drive; the existing upload-key expiry and work sentinel cleanup apply; a reconcile pass can list objects/ without meta and offer them for registration
+    extraction_pending: file is listed without body search until the next indexer cycle after extraction finishes
+  cloud_run: use execution_mode sequential or let the indexer wait for pending derived assets, because CPU stops after the response
+relations:
+  - relation: builds_on
+    to: flow:session-assembly
+  - relation: builds_on
+    to: decision:consistency-model
+  - relation: uses
+    to: api:upload-api
+  - relation: uses
+    to: api:async-task-wait-api
+  - relation: uses
+    to: api:drive-api
+  - relation: writes
+    to: data:drive-journal-event
+  - relation: continues_in
+    to: flow:search-index-publish

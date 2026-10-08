@@ -1,0 +1,36 @@
+id: policy:drive-s3-layout
+type: policy
+title: Drive S3 prefix layout and lock classes
+summary: Keys are grouped by prefix into three classes - locked (originals, journal), reproducible (derived, meta, search, audit) and short-lived (work) - so retention locks and lifecycle rules can be applied per class on every provider.
+lifecycle: proposed
+facts:
+  prefixes:
+    "objects/{tenant}/{file_id}": original bytes written by streamuploader; immutable
+    "journal/{tenant}/{yyyy}/{mm}/{ulid}.json": metadata events; append-only
+    "derived/{tenant}/{file_id}/thumbnail | .text.json | .bdf": streamuploader derived assets
+    "meta/{tenant}/{file_id}.json": indexer snapshot
+    "search/{tenant}/meta.json and segments": index snapshot
+    "audit/{tenant}/checkpoint-{n}.json": hash chain
+    "work/...": .work sentinels and multipart staging
+  classes:
+    locked: [objects, journal]
+    reproducible: [derived, meta, search, audit]
+    short_lived: [work]
+  rules:
+    - retention locks (Object Lock headers, GCS retention, R2 bucket lock rules) target only the locked class
+    - lifecycle rules abort incomplete multipart uploads and expire work/ after the upload-key deadline plus grace
+    - the reproducible class may be deleted and rebuilt at any time
+    - audit/ is reproducible from journal/ but should also be retained in WORM deployments because it is the fast verification path
+  streamuploader_mapping: storage key allocation must place finals under objects/ and derived assets under derived/; sentinels under work/ (requirement:streamuploader-drive-enablers)
+  tenant_first: the tenant segment is the first path element after the class so a tenant can be listed, moved or deleted by prefix
+relations:
+  - relation: constrains
+    to: requirement:local-drive-s3-only-state
+  - relation: constrains
+    to: requirement:local-drive-worm-audit-mode
+  - relation: refines
+    to: policy:storage-key-allocation-policy
+  - relation: refines
+    to: policy:work-sentinel-cleanup
+  - relation: realized_by
+    to: requirement:streamuploader-drive-enablers

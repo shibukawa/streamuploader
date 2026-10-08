@@ -156,10 +156,14 @@ func (s *S3Store) HeadObject(ctx context.Context, input HeadInput) (HeadResult, 
 
 func (s *S3Store) ListObjects(ctx context.Context, input ListInput) (ListResult, error) {
 	var keys []string
-	p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+	listInput := &s3.ListObjectsV2Input{
 		Bucket: aws.String(input.Bucket),
 		Prefix: aws.String(input.Prefix),
-	})
+	}
+	if input.StartAfter != "" {
+		listInput.StartAfter = aws.String(input.StartAfter)
+	}
+	p := s3.NewListObjectsV2Paginator(s.client, listInput)
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
@@ -167,6 +171,9 @@ func (s *S3Store) ListObjects(ctx context.Context, input ListInput) (ListResult,
 		}
 		for _, object := range page.Contents {
 			keys = append(keys, aws.ToString(object.Key))
+			if input.MaxKeys > 0 && len(keys) >= input.MaxKeys {
+				return ListResult{Keys: keys}, nil
+			}
 		}
 	}
 	return ListResult{Keys: keys}, nil

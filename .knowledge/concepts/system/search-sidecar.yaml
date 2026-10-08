@@ -1,0 +1,45 @@
+id: system:search-sidecar
+type: system
+title: Search sidecar (Rust, tantivy)
+summary: A small Rust process built on tantivy and lindera-tantivy that owns one local index directory per tenant and answers JSON-lines requests from Go; it never touches S3.
+lifecycle: active
+facts:
+  protocol:
+    transport: long-lived child process, one JSON object per line on stdin and stdout, request id echoed in the response
+    operations:
+      open: "{index_dir: path, create_if_missing: bool}"
+      upsert: "{docs: [doc]} - replaces by id"
+      delete: "{ids: [string]} or {file_ids: [string]} to drop all pages of a file"
+      commit: "{} - returns the new segment file list from meta.json"
+      reload: "{} - reopen after Go replaced files from S3"
+      search: "{q, filters, sort, limit, offset, snippet_fields} - returns hits with file_id, best page, score, snippets"
+      facets: "{path, filters} - children of a facet path with counts"
+      best_page: "{file_id, q} - second phase that resolves the best page for a file"
+      stats: "{} - doc count, segment count, size"
+  schema:
+    common: id (string, stored), kind (file|page), tenant_id, file_id
+    file_doc: name_ja (text lindera), name_ngram (2-gram), name_sort (NFKC lower string fast field), ext, mime, size (u64 fast), created, modified, shot, uploaded (date fast), author (text and facet), facets (hierarchical Facet - /tags, /date, /author, /type, /geo), lat, lon (f64 fast), body (text lindera, indexed, not stored), deleted (not indexed; tombstones are deletes)
+    page_doc: file_id, page (u64), view (string), body (text lindera, stored compressed for snippets)
+  ranking: BM25 over file docs; a hit's page is resolved by best_page restricted to file_id
+  tokenizers: lindera IPADIC by default; cjk_ngram option; names always get both lindera and 2-gram fields
+  geo: bounding box on lat and lon fast fields, exact radius computed in Rust; clusters from /geo facet counts at a chosen depth
+  build: cargo release builds for linux amd64 and arm64; binary placed next to the Go binary in the distroless image; a go:embed variant that extracts to the cache dir is a later option
+  tests: drive/sidecar/sidecar_test.go drives the built binary (Japanese page hits, author search, exact and prefix folder listings, facets, deletes, tenant isolation); golden fixtures shared with Rust are still to do
+  implemented_2026_10_08:
+    crate: search/ (drivesearch 0.1.0), tantivy 0.26, lindera 5 with embed-ipadic, lindera-tantivy 5
+    binary_size: about 53 MB on macOS arm64 with the dictionary
+    ops: ping, upsert, delete, commit, reload, stats, search, facets, best_page; requests carry facets_any (all must match) and facet_exact (direct membership through the facets_exact STRING field versus the hierarchical facet term)
+    sorting: score, name (order_by_string_fast_field on name_sort), modified, created, uploaded, size
+    ready_line: the first stdout line is {"ok":true,"event":"ready"}; a schema mismatch is reported there as schema_mismatch and the Go side wipes and rebuilds
+    schema_version: 1, stored in DRIVESEARCH_SCHEMA inside the index directory
+relations:
+  - relation: implements
+    to: requirement:local-drive-search
+  - relation: implements
+    to: requirement:local-drive-tag-folder-views
+  - relation: realizes
+    to: decision:tantivy-sidecar-over-meilisearch
+  - relation: writes
+    to: data:search-index-snapshot
+  - relation: follows_pattern_of
+    to: system:local-command-processor
