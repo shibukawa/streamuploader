@@ -254,7 +254,34 @@ go build ./cmd/drive
 
 `Dockerfile.drive` builds both binaries into one image; `drive` finds `drivesearch` next to itself or through `DRIVE_SEARCH_BIN`.
 
-Subcommands: `drive` serves (all-in-one: server plus indexer loop), `drive reindex` rebuilds the index from the bucket and exits, `drive index-once` folds pending journal events and exits. A missing or stale index directory is rebuilt from the bucket at start.
+Subcommands: `drive` serves (all-in-one: server plus indexer loop), `drive reindex` rebuilds the index from the bucket and exits, `drive index-once` folds pending journal events and exits, `drive init` writes the deployment files for a target (below). A missing or stale index directory is rebuilt from the bucket at start.
+
+### Deployment kit: `drive init`
+
+`drive init` writes everything one deployment needs into `deploy/<target>/` so that each runtime mode is maintained once, as a template, instead of by hand per deployment. The first target is docker compose with a local RustFS bucket:
+
+```bash
+go run ./cmd/drive init --target compose
+cd deploy/compose && docker compose up --build -d
+```
+
+The kit is `.env` (every setting, read by compose and passed to the container), `compose.yaml` (drive built from this checkout with `Dockerfile.drive`, rustfs, optionally clamav), `security.yaml` (a copy of `config/security.yaml`) and a `README.md` with the m1 checks. Nothing needs editing before the first `up`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--target` | `compose` | `compose`; `aws`, `google`, `azure`, `cloudflare` are planned and refused with the reason (exit 2) |
+| `--storage` | per target | `rustfs` for compose; others arrive with the cloud kits |
+| `--delivery` | `proxy` | `proxy` or `presigned` (see `DRIVE_DELIVERY`) |
+| `--clamav` | off | add a ClamAV service and scan every upload |
+| `--image REF` | build locally | run a prebuilt image instead of building from `--context` |
+| `--context DIR` | this checkout | build context for `Dockerfile.drive`; found by walking up to `go.mod` |
+| `--name` | `drive` | compose project name and the `<name>:local` image tag |
+| `--port` | `8080` | host port of the Drive |
+| `--out DIR` | `deploy/<target>` | output directory |
+| `--force` | off | overwrite existing files (otherwise exit 3, nothing written) |
+| `--dry-run` | off | list the files and exit |
+
+Generated files carry no credentials except the development pair of the local RustFS. Re-running `drive init --force` regenerates the kit from the flags, not from edits. The requirement, the per-target limits and the open questions are in `.knowledge/concepts/requirement/drive-init-subcommand.yaml`; the generator is `drive/deploy` with golden kits under `drive/deploy/testdata`.
 
 Environment (in addition to the `SU_*` variables of streamuploader, whose S3 settings the Drive reuses):
 
