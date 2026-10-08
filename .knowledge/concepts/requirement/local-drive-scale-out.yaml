@@ -1,0 +1,36 @@
+id: requirement:local-drive-scale-out
+type: requirement
+title: Scale out by tenant without redesign
+summary: Every record, object key and index document carries a tenant_id from day one so growth is handled by adding stateless servers, then by sharding tenants across cells, with S3 shared by all cells.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("ユーザーが多くなった場合にスケールできるような仕組みも欲しい")
+  stages:
+    s1_single_machine: all-in-one on one VM; up to a few hundred users
+    s2_horizontal: load balancer, N server instances, one indexer; one index per tenant; up to roughly ten thousand users
+    s3_cells: tenant-to-cell routing table at the edge; each cell has its own indexer and index caches; S3 is common; tenants move by rebuilding in the new cell and flipping the route
+  why_it_stays_cheap:
+    - reads bypass servers through presigned URLs, so server count follows upload volume, not user count
+    - per-tenant indexes mean a search loads only that tenant's segments
+    - a huge tenant splits into several indexes searched in parallel instead of a cell split
+  server_statelessness:
+    - sessions in signed cookies
+    - upload progress in S3 .work (decision:serverless-upload-state)
+    - watch WebSocket pinned by load-balancer sticky cookie or replaced by polling
+constraints:
+  - tenant_id is mandatory in every journal event, meta snapshot, object key prefix and index document even while there is a single tenant
+  - No cross-tenant query path exists in the server; operator reports run in the indexer
+open_questions:
+  tenant-definition:
+    text: Is a tenant an organization, a team, or a person, and can a person belong to several tenants?
+    state: deferred
+    resolution: Single implicit tenant in the first milestones; decide with the permissions model.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: depends_on
+    to: decision:serverless-upload-state
+  - relation: depends_on
+    to: data:search-index-snapshot
+  - relation: constrained_by
+    to: policy:drive-s3-layout

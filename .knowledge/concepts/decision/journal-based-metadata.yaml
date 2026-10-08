@@ -1,0 +1,36 @@
+id: decision:journal-based-metadata
+type: decision
+title: Metadata writes are append-only journal events on S3
+summary: Every metadata change is one immutable JSON object with a ULID key that carries the file's full state; a single indexer folds events into the index and meta snapshots; servers overlay recent events for read-your-writes.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 (S3-only metadata); event-journal shape proposed by the assistant and accepted in the same session
+  rationale:
+    - unique keys mean writers never conflict and never need conditional PUT, which differs across providers
+    - the journal is the audit log, so WORM mode gets its append-only record for free
+    - full-state events make the overlay a replace-by-id merge instead of a diff engine
+    - rebuild and compaction are the same operation as normal indexing
+  ordering: ULID embeds milliseconds; concurrent writers may skew by clock drift; last-writer-wins by key order (confirmed 2026-10-08 because edits are rare in a viewer-centric product, see requirement:local-drive-s3-only-state conflict-policy)
+  compaction:
+    normal_mode: events older than a grace period are deleted once folded into meta/{file_id}.json
+    worm_mode: never deleted; meta/ snapshots remain derived
+  overlay:
+    - the index snapshot records the last folded journal key
+    - a server lists journal/ with StartAfter that key (normally a handful of objects, Class B cost) and caches the result for a few seconds
+    - listing and search results are patched by file_id; new files are inserted from their file.created event
+  cost: one Class A PUT per metadata change
+  rejected_alternatives:
+    sqlite_litestream: single-node only; the user chose to drop it
+    postgres: portable but an always-on dependency the design can avoid
+    manifest_with_cas: a per-tenant manifest updated with If-Match; depends on conditional PUT support that B2 and some S3 clones lack
+relations:
+  - relation: realizes
+    to: requirement:local-drive-s3-only-state
+  - relation: realized_by
+    to: data:drive-journal-event
+  - relation: realized_by
+    to: flow:drive-metadata-edit-overlay
+  - relation: builds_on
+    to: decision:consistency-model
+  - relation: builds_on
+    to: requirement:application-metadata-submit

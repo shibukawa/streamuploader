@@ -1,0 +1,26 @@
+id: data:search-index-snapshot
+type: data
+title: Search index snapshot on S3
+summary: A tenant's tantivy index stored as immutable segment objects plus a meta.json pointer under search/{tenant}/, with the journal position it covers; readers download what the pointer lists and cache by segment id.
+lifecycle: proposed
+facts:
+  layout:
+    pointer: "search/{tenant}/meta.json - tantivy's own meta.json extended with drive fields"
+    segments: "search/{tenant}/{segment_id}.{ext} - never rewritten"
+  drive_fields_in_pointer:
+    last_journal_key: last folded journal object key
+    text_etags_hash: hash of the folded .text.json ETags, for cheap change detection
+    schema_version: bump forces a rebuild
+    published_at: time of publish
+  publish_order: segments first, meta.json last, so a reader never sees a pointer to a missing segment
+  reader_refresh: compare meta.json ETag at most every N seconds; download new segments; call sidecar reload
+  gc: segments no longer referenced by the current pointer are deleted after a grace period longer than the maximum reader refresh interval
+  size_expectations: tens of MB per typical tenant; stored page text dominates; body of file docs is not stored
+  future: range-read directory (hotcache style) if whole-snapshot download becomes too slow for large tenants
+relations:
+  - relation: produced_by
+    to: flow:search-index-publish
+  - relation: stored_under
+    to: policy:drive-s3-layout
+  - relation: read_by
+    to: system:drive-server

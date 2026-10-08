@@ -1,0 +1,25 @@
+id: data:audit-checkpoint
+type: data
+title: Audit checkpoint
+summary: A hash-chained record the indexer writes after each fold at audit/{tenant}/checkpoint-{n}.json, making deletion or rewriting of journal events and originals detectable without relying on the storage provider.
+lifecycle: proposed
+facts:
+  fields:
+    n: sequence number
+    prev_checkpoint_sha256: chain link; checkpoint 0 links to a tenant genesis value
+    journal_range: first and last journal key folded in this run
+    journal_merkle_root: Merkle root over sha256 of every folded event object
+    event_count: integer
+    originals: list of {file_id, object_key, checksum_sha256} registered in this run
+    index_meta_sha256: hash of the published search meta.json
+    anchor: optional external reference (Git commit, RFC 3161 token, transparency-log inclusion proof)
+    signed_by: optional signature over the record with a deployment key
+  why_the_indexer_builds_the_chain: writers append independently and cannot know the previous hash without coordination; the single indexer sees a total order
+  verify_command: walks checkpoints, re-lists journal/ and recomputes roots, reports missing, extra or modified events and originals whose sha256 changed
+relations:
+  - relation: implements
+    to: requirement:local-drive-worm-audit-mode
+  - relation: covers
+    to: data:drive-journal-event
+  - relation: written_by
+    to: system:drive-indexer

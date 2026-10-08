@@ -218,3 +218,63 @@ kubectl -n streamuploader port-forward svc/rustfs 9000:9000
 ```
 
 The manifest expects images named `streamuploader:local` and `streamuploader-demo-app:local`.
+
+## Drive (all-in-one)
+
+`cmd/drive` turns streamuploader into a self-hosted, viewer-first file service: upload through the streamuploader API, browse files as tag folders, search file names, body text and authors in Japanese, and open documents in the bdf viewer at the matching page. The design is recorded in `.knowledge/concepts/vision/local-drive.yaml` and the concepts it links to.
+
+How it fits together:
+
+- Durable state is only in the bucket. Metadata changes are append-only journal events (`drive/journal/{tenant}/{yyyy}/{mm}/{ulid}.json`); the indexer folds them into `drive/meta/{tenant}/{file_id}.json` snapshots and a local tantivy index; a server patches results with the journal entries the indexer has not folded yet, so edits are visible at once.
+- Search runs in `search/`, a Rust sidecar (`drivesearch`) built on tantivy with the lindera IPADIC tokenizer. The Go server talks to it over JSON lines on stdin/stdout. Tags, type, date and author are hierarchical facets, which is what makes "tags as folders" work.
+- The web UI (`drive/ui`) is a plain ES module bundled with esbuild; the built `dist/` is embedded into the binary and uses `@bdfkit/viewer` to render `.bdf` previews.
+
+Run it without any object store (data lives in memory, lost on exit):
+
+```bash
+./scripts/run-drive-memory.sh
+```
+
+Run it on the host against a RustFS container:
+
+```bash
+./scripts/run-drive-native.sh
+```
+
+Then open `http://localhost:8090/` (memory) or `http://localhost:8080/` (RustFS). `./scripts/drive-demo-seed.sh http://localhost:8090` uploads three fixtures through the API.
+
+Build from source:
+
+```bash
+(cd search && cargo build --release)      # sidecar, Rust 1.85+; ~50 MB with the IPADIC dictionary
+(cd drive/ui && npm install && npm run build)   # UI bundle, only after changing drive/ui/src
+go build ./cmd/drive
+```
+
+`Dockerfile.drive` builds both binaries into one image; `drive` finds `drivesearch` next to itself or through `DRIVE_SEARCH_BIN`.
+
+Subcommands: `drive` serves (all-in-one: server plus indexer loop), `drive reindex` rebuilds the index from the bucket and exits, `drive index-once` folds pending journal events and exits. A missing or stale index directory is rebuilt from the bucket at start.
+
+Environment (in addition to the `SU_*` variables of streamuploader, whose S3 settings the Drive reuses):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DRIVE_TENANT` | `default` | tenant id used in every key and index document |
+| `DRIVE_PREFIX` | `drive/` | key prefix of journal, meta and audit objects in the bucket |
+| `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
+| `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
+| `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
+| `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; writes also poke the indexer immediately |
+| `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
+| `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
+
+API (same origin as the upload API; no authentication yet):
+
+- `POST /api/drive/files` registers an upload: body `{"upload": <item from POST /api/upload/wait>, "tags": ["projects/2026"], "author": "...", "location": {"lat":..,"lon":..}}`
+- `GET /api/drive/files/{id}`, `PATCH /api/drive/files/{id}` (`name`, `tags`, `author`, `location`, `clear_location`, `expected_revision`), `DELETE /api/drive/files/{id}`
+- `GET /api/drive/files/{id}/content|download|preview|thumbnail`
+- `GET /api/drive/search?q=&tag=&facet=&exact=&sort=&limit=&offset=` returns hits with the best page and a highlighted snippet
+- `GET /api/drive/facets?path=/tags/projects` lists the children of a facet path with counts (`/tags`, `/type`, `/date`, `/author`, `/geo`)
+- `GET /api/drive/stats`, `POST /api/drive/admin/reindex`
+
+Tests: `go test ./drive/...` includes `drive/e2e`, which runs the whole stack in one process against the in-memory store and needs the built sidecar (`search/target/release/drivesearch` or `DRIVE_SEARCH_BIN`); without it the sidecar tests are skipped.

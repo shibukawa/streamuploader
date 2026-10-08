@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "drive-memory",
+      "runtimeExecutable": "./scripts/run-drive-memory.sh",
+      "runtimeArgs": [],
+      "port": 8090
+    }
+  ]
+}

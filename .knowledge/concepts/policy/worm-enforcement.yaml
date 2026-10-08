@@ -1,0 +1,42 @@
+id: policy:worm-enforcement
+type: policy
+title: WORM enforcement in three layers
+summary: Application refusal, provider retention locks and hash-chained checkpoints together make a WORM deployment resist both API misuse and an operator holding storage credentials, and detect tampering where locks are weak or absent.
+lifecycle: proposed
+facts:
+  layers:
+    application:
+      - Drive API rejects PATCH (strict) or non-additive PATCH (append-only), DELETE, restore and purge with worm_readonly
+      - streamuploader backend control delete, shared-key delete and object replace are switched off
+      - edits only through new_version; every version keeps its object
+      - reads produce file.accessed events; presigned URLs, if used, are issued with the event and expire within minutes
+    storage:
+      aws_s3_b2_minio: Object Lock compliance mode with retention period or legal hold on objects/ and journal/ PUTs; versioning enabled
+      gcs: locked bucket retention policy or per-object retention configuration
+      cloudflare_r2: bucket lock rule per prefix; document that an indefinite rule is removable by bucket administrators
+      none: when a provider has no lock, the deployment is "WORM by application and checkpoint only" and must say so
+    tamper_evidence:
+      - indexer writes data:audit-checkpoint after each fold; chain links every checkpoint
+      - verify command recomputes Merkle roots from journal/ and compares original checksums
+      - optional external anchor of checkpoint hashes
+  configuration:
+    worm.mode: off | append_only | strict
+    worm.retention: duration or indefinite
+    worm.read_logging: proxy | presigned_with_event
+    worm.anchor: none | git | rfc3161 | custom URL
+  operator_duties:
+    - storage credentials used by the Drive must lack permission to change lock configuration
+    - checkpoint verification runs on a schedule and alerts on failure
+relations:
+  - relation: implements
+    to: requirement:local-drive-worm-audit-mode
+  - relation: depends_on
+    to: policy:drive-s3-layout
+  - relation: depends_on
+    to: data:audit-checkpoint
+  - relation: constrained_by
+    to: system:object-storage-providers
+  - relation: changes
+    to: api:backend-control-api
+  - relation: extends
+    to: policy:audit-log-policy

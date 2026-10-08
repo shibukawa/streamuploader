@@ -1,0 +1,28 @@
+id: flow:search-index-publish
+type: flow
+title: Index fold and publish
+summary: One indexer run folds journal events and changed .text.json into the local tantivy index through the sidecar, writes meta snapshots and a checkpoint, uploads segments then meta.json, and garbage-collects unreferenced segments.
+lifecycle: proposed
+facts:
+  steps:
+    - load local cache or download the current snapshot (meta.json then listed segments)
+    - list journal/ after last_journal_key; group by file_id keeping the newest state per file
+    - for each changed file - fetch .text.json if its ETag differs; build the file doc and page docs; upsert or delete
+    - commit; sidecar returns the segment list
+    - write meta/{tenant}/{file_id}.json for changed files
+    - write audit checkpoint (data:audit-checkpoint)
+    - upload new segment files; then upload meta.json with the new last_journal_key
+    - delete segments unreferenced since before the grace period; in normal mode delete folded journal objects older than the grace period
+  idempotency: a crash before the meta.json upload leaves orphan segments that the next gc removes; events are re-folded from the same last_journal_key
+  rebuild_variant: skip the journal and read meta/ plus derived/ for every file
+relations:
+  - relation: performed_by
+    to: system:drive-indexer
+  - relation: produces
+    to: data:search-index-snapshot
+  - relation: produces
+    to: data:drive-file-meta
+  - relation: produces
+    to: data:audit-checkpoint
+  - relation: reads
+    to: data:extracted-content

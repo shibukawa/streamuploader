@@ -1,0 +1,65 @@
+id: requirement:local-drive-search
+type: requirement
+title: Drive search fields and behavior
+summary: Search files by name, extracted body text, author, user tags, location and dates, with Japanese tokenization, snippets and page-level hits that open the bdf viewer at the page.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("ファイル名、含まれる文章や著者情報、ユーザーが明示的に打ったタグ、位置情報")
+  fields:
+    name: text (lindera) plus 2-gram for partial match; NFKC lower-cased copy for sorting
+    body: per-page text from .text.json pages[] and texts.extracted
+    author: extracted document author (bdf Dublin Core creator, PDF Info Author, EXIF Artist) plus a user override
+    tags: user-entered hierarchical paths such as /projects/2026/alpha
+    location: latitude and longitude from EXIF GPS or user input; geohash for clustering
+    dates: created, modified, shot (EXIF DateTimeOriginal), uploaded
+    type: MIME family and extension
+    size: bytes
+  behaviors:
+    - full-text ranking is per file; the best page is resolved in a second query restricted to that file (flow:tag-folder-browse describes listing; this describes search)
+    - snippets come from stored page text
+    - filters combine with the query: tag path prefix, author, type, date range, bounding box
+    - sort by relevance, name, modified, size
+  japanese: lindera (IPADIC) through lindera-tantivy; CJK 2-gram fallback is a configuration choice
+  source_of_text: derived .text.json written by streamuploader (data:extracted-content); the Drive never parses documents itself
+constraints:
+  - Search must work from the derived .text.json alone, so a rebuild needs no document reprocessing
+  - Extracted metadata needed for author and location must survive sanitization (see requirement:streamuploader-drive-enablers)
+acceptance:
+  page-hit:
+    text: A Japanese phrase that appears only on page 3 of a PDF returns that file with page 3 as the best page.
+    verified_by: [e2e-search]
+  author-search:
+    text: A docx whose core properties name an author is found by that author's name without the user typing it as a tag.
+    verified_by: [e2e-search]
+  geo-search:
+    text: A JPEG with GPS EXIF is returned by a bounding-box query around its coordinates after the EXIF-before-strip change ships.
+    scope: {milestone: m2-metadata-enrichment}
+verification:
+  e2e-search:
+    state: passed
+    method: integration
+    test: TestAllInOneMilestone
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: "Check 2"}
+open_questions:
+  tokenizer-dictionary:
+    text: IPADIC or UniDic for lindera, and is the dictionary size (tens of MB in the image) acceptable for Cloud Run cold start?
+    state: open
+    resolution: Provisional IPADIC; measure image size and cold start in m1.
+  reverse-geocoding:
+    text: Should place names be derived from coordinates (external API) or only typed by users as tags?
+    state: deferred
+    resolution: Geohash facets give map clustering without names; decide when the map view is built.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: depends_on
+    to: data:extracted-content
+  - relation: depends_on
+    to: api:extracted-content-api
+  - relation: realized_by
+    to: system:search-sidecar
+  - relation: realized_by
+    to: decision:tantivy-sidecar-over-meilisearch
+  - relation: constrained_by
+    to: policy:search-extraction-policy

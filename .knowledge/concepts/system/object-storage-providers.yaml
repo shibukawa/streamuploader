@@ -1,0 +1,40 @@
+id: system:object-storage-providers
+type: system
+title: Object storage providers and their differences
+summary: Portability matrix for the S3-compatible providers the Drive targets - egress pricing, conditional PUT, retention locks, lifecycle rules - so design choices rely only on the common subset.
+lifecycle: proposed
+facts:
+  observed_2026_10_08:
+    cloudflare_r2:
+      storage: "0.015 USD per GB-month; Class A 4.50 USD per million; Class B 0.36 USD per million; egress free; 10 GB free tier"
+      conditional_put: supported (If-Match, If-None-Match)
+      retention: Bucket Locks - rules by key prefix with duration, date or indefinite retention; an indefinite rule can be removed by someone with bucket-configuration permission
+      presigned: only on the S3 API endpoint, not custom domains
+    backblaze_b2:
+      storage: "about 6 USD per TB-month; egress free up to 3x stored and free through Cloudflare"
+      conditional_put: not relied upon
+      retention: S3 Object Lock (governance and compliance) supported
+    aws_s3:
+      conditional_put: If-None-Match since 2024-08, If-Match since 2024-11
+      retention: Object Lock governance and compliance modes, legal hold; requires versioning
+    gcs:
+      retention: bucket retention policy with lock; per-object retention configuration
+      note: S3 interoperability API; use the XML API or native client for retention
+    minio_rustfs:
+      note: local development through compose.yaml uses RustFS; Object Lock availability must be checked per release
+  common_subset_used_by_design:
+    - PutObject with unique keys, GetObject, ListObjectsV2 with StartAfter, multipart upload, presigned GET
+    - lifecycle rules to abort incomplete multipart uploads and expire work/
+  optional_accelerations:
+    - conditional PUT for an indexer lease
+    - event notifications to poke the indexer
+  cost_lever: switch from R2 to B2 when stored volume reaches terabytes; the Drive only needs configuration changes
+relations:
+  - relation: extends
+    to: system:s3-storage
+  - relation: constrains
+    to: policy:worm-enforcement
+  - relation: constrains
+    to: decision:journal-based-metadata
+  - relation: informs
+    to: metric:drive-operating-cost

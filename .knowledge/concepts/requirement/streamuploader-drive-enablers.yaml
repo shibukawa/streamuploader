@@ -1,0 +1,64 @@
+id: requirement:streamuploader-drive-enablers
+type: requirement
+title: streamuploader changes that the Drive needs
+summary: Five small changes in streamuploader core make the Drive possible without changing its design - h2c, EXIF extraction before stripping, retention-lock headers and prefix layout, WORM route disabling, and a separate work prefix.
+lifecycle: proposed
+facts:
+  observed_2026_10_08:
+    exif_order: internal/server/server.go reads, sanitizes and stages the whole file before storing; metadata_extraction (internal/extraction/extraction.go extractMetadataTexts) later reads the stored object, so JPEG/PNG EXIF and XMP are already gone when GPS, DateTimeOriginal and Artist would be read
+    document_author: internal/server/document.go copies bdf Meta (Dublin Core) into .text.json metadata.document, so PDF and Office author data is already available
+    no_webhook: there is no derived-asset-ready notification; only the thumbnail external_webhook_url converter exists. The Drive indexer therefore polls .text.json, which is acceptable
+    h2c: the server does not wrap handlers for HTTP/2 cleartext
+    m1_note: m1 needed none of these changes; the only core change was storage.ListInput gaining StartAfter and MaxKeys (internal/storage) for the journal overlay
+  changes:
+    h2c:
+      what: accept HTTP/2 cleartext on the public listener (golang.org/x/net/http2/h2c) so Cloud Run HTTP/2 end-to-end lifts the 32 MiB request cap
+      size: small
+    exif-before-strip:
+      what: read EXIF/XMP (GPS, DateTimeOriginal, Artist, Copyright, camera model) during sanitization and carry the allow-listed values into .text.json metadata.exif before the bytes are stripped
+      size: medium
+    retention-headers:
+      what: configurable object-lock mode and retain-until (or legal hold) headers applied to the final object PUT and to journal-class objects only; configurable prefix classes
+      size: small
+    worm-route-disable:
+      what: a configuration switch that removes DELETE /internal/objects/{key}, shared-key deletion and object replace from the backend listener
+      size: small
+    work-prefix:
+      what: place .work sentinels and multipart staging under a configurable prefix (work/) so lifecycle rules and retention rules can target them separately
+      size: small
+capabilities:
+  h2c:
+    state: planned
+    implements: [requirement:local-drive-portable-deployment]
+  exif-before-strip:
+    state: planned
+    implements: [requirement:local-drive-search]
+  retention-headers:
+    state: planned
+    implements: [requirement:local-drive-worm-audit-mode]
+  worm-route-disable:
+    state: planned
+    implements: [requirement:local-drive-worm-audit-mode]
+  work-prefix:
+    state: planned
+    implements: [requirement:local-drive-worm-audit-mode]
+constraints:
+  - Changes are additive and off by default so existing deployments behave the same
+  - EXIF values that are extracted must still be stripped from the stored bytes; extraction never weakens policy:metadata-stripping-policy
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: changes
+    to: system:server-deployment-modes
+  - relation: changes
+    to: policy:metadata-stripping-policy
+  - relation: changes
+    to: system:text-extractor
+  - relation: changes
+    to: system:s3-storage
+  - relation: changes
+    to: api:backend-control-api
+  - relation: changes
+    to: policy:work-sentinel-cleanup
+  - relation: mentions
+    to: system:document-converter

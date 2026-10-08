@@ -1,0 +1,44 @@
+id: requirement:local-drive-api-and-web-ui
+type: requirement
+title: Public API and web UI share one surface
+summary: Upload, download, viewing, metadata editing, search and browsing are exposed as a documented REST API; the bundled web UI is only a client of that API. Permissions are out of scope for now.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("ウェブUIとともに、APIも提供したい", "まずはユーザー権限などは良い")
+  surface:
+    upload: streamuploader endpoints as they are (api:upload-api, api:async-task-wait-api) followed by the Drive registration call
+    drive: api:drive-api
+    realtime: streamuploader watch WebSocket for upload progress (api:session-progress-api)
+  clients:
+    web_ui: single-page app served by the same binary at the same origin
+    generated: OpenAPI document; Go and TypeScript clients generated from it; a CLI built on the Go client
+  ui_emphasis: viewer first - folder and facet browsing, thumbnail grid, bdf page viewer, image viewer, search with snippets; metadata editing lives in a side panel and is expected to be rare
+  authentication_now: static API tokens configured on the server; the web UI uses a session cookie minted from the same token store
+  authentication_later: OIDC login (Google, Microsoft, GitHub) implemented in the Drive, installed through api:auth-middleware-extension-api; Cloudflare Access only for operators because it costs about 7 USD per user past 50 users
+constraints:
+  - Every UI action must be possible through the public API with the same payloads
+  - The API must stay same-origin with the upload endpoints so browsers need no CORS
+non_goals:
+  - per-user permissions, groups and sharing ACLs in the first milestones
+open_questions:
+  permissions-model:
+    text: When permissions arrive, are they per tenant, per tag folder, or per file, and are they stored as journal events?
+    state: deferred
+    resolution: Out of scope for the first milestones by user decision; revisit before the first multi-user deployment.
+  api-token-scheme:
+    text: Plain bearer tokens or signed tokens with scopes?
+    state: open
+    resolution: Provisional plain bearer tokens from configuration for m1.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: realized_by
+    to: api:drive-api
+  - relation: depends_on
+    to: api:upload-api
+  - relation: depends_on
+    to: api:async-task-wait-api
+  - relation: depends_on
+    to: api:session-progress-api
+  - relation: mentions
+    to: api:auth-middleware-extension-api

@@ -1,0 +1,14 @@
+{
+  "name": "streamuploader-drive-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Web UI of the streamuploader Drive. The built files in dist/ are embedded into the Go binary.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@bdfkit/viewer": "0.1.2",
+    "esbuild": "^0.27.0"
+  }
+}

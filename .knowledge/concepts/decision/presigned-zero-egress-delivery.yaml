@@ -1,0 +1,26 @@
+id: decision:presigned-zero-egress-delivery
+type: decision
+title: Deliver bytes through presigned URLs on zero-egress storage
+summary: Downloads, inline viewing, thumbnails and bdf previews redirect to short-lived presigned URLs on R2 or B2, so servers carry only upload traffic. WORM mode is the exception and routes reads through the Drive for logging.
+lifecycle: accepted
+facts:
+  rationale:
+    - a Drive is read-heavy; egress is the dominant cost on most clouds and is free on Cloudflare R2 and on Backblaze B2 through Cloudflare
+    - streamuploader already supports the presigned download mode (requirement:four-download-modes)
+    - presigning is a local HMAC, so a listing response can include thumbnail URLs for every row at no request cost
+  details:
+    - presigned URLs use the provider's S3 endpoint, not a public custom domain; R2 presigned URLs work only on the S3 API endpoint
+    - derived assets (thumbnail, .bdf, .text.json) are presigned the same way; the bdf viewer fetches the .bdf directly
+    - Cache-Control is set on derived assets so browsers do not refetch
+  exception_worm: reads go through the Drive (proxy) or through a presigned URL whose issuance writes a file.accessed event
+relations:
+  - relation: realizes
+    to: requirement:local-drive-api-and-web-ui
+  - relation: builds_on
+    to: requirement:four-download-modes
+  - relation: builds_on
+    to: api:download-api
+  - relation: builds_on
+    to: api:derived-asset-serving-api
+  - relation: constrained_by
+    to: requirement:local-drive-worm-audit-mode

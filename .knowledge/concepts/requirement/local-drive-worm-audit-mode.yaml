@@ -1,0 +1,43 @@
+id: requirement:local-drive-worm-audit-mode
+type: requirement
+title: WORM audit mode
+summary: A deployment or tenant can run write-once-read-many; originals and the journal can never be edited, overwritten or deleted, access is recorded, and tampering is detectable even on a provider without retention locks.
+lifecycle: accepted
+facts:
+  decided_by: user 2026-10-08 ("監査モードとして、Write Once Read Manyなモードも活用し、一度書いたものが編集や上書き、削除ができないモード")
+  variants:
+    strict: no metadata change after registration; only new files
+    append_only: tags and comments may be added as new journal events; nothing is removed or rewritten
+  edit_semantics: an "edit" is a new object plus a file.versioned event; earlier versions stay readable
+  access_logging: downloads and previews are served through the Drive (proxy or short-lived presigned URL issued with a file.accessed event) so reads enter the journal
+  enforcement: policy:worm-enforcement (application refusal, provider retention lock, hash-chained checkpoints)
+constraints:
+  - Retention locks apply only to objects/ and journal/; derived/, meta/, search/ and work/ stay unlocked because they are reproducible or short-lived (policy:drive-s3-layout)
+  - streamuploader backend control delete and replace are disabled in WORM mode
+  - A WORM deployment must document which provider lock it relies on and whether an operator can remove it
+acceptance:
+  no-delete:
+    text: In WORM mode, DELETE on a file returns 405 through the Drive API and the storage lock refuses a direct delete of the original.
+  tamper-evident:
+    text: Removing one journal object out of band makes the next checkpoint verification fail and name the missing event.
+  access-journaled:
+    text: Every download in WORM mode produces a file.accessed event with actor, time and object key.
+open_questions:
+  default-variant:
+    text: Is strict or append-only the default WORM variant, and may an operator switch a tenant from append-only to strict later?
+    state: open
+  external-anchor:
+    text: Where are checkpoint hashes anchored externally (Git commit, RFC 3161 timestamp, a transparency log), if at all?
+    state: deferred
+    resolution: Decide with the first customer that needs WORM; the checkpoint format already carries an anchor field.
+relations:
+  - relation: refines
+    to: vision:local-drive
+  - relation: realized_by
+    to: policy:worm-enforcement
+  - relation: depends_on
+    to: data:audit-checkpoint
+  - relation: depends_on
+    to: data:drive-journal-event
+  - relation: extends
+    to: policy:audit-log-policy

@@ -1,0 +1,30 @@
+id: flow:tag-folder-browse
+type: flow
+title: Browse a tag folder or facet view
+summary: Opening a folder issues a facets call for the children of the path and a filtered, sorted search for files at that path; date, author, type and map views reuse the same two calls with a different facet root.
+lifecycle: active
+facts:
+  steps:
+    - UI requests GET /api/drive/facets?path=/tags/projects and GET /api/drive/search?facet=/tags/projects&sort=name
+    - server runs sidecar facets (children with counts) and search (kind=file, facet equals path), applies the overlay, returns folders and files with presigned thumbnail URLs
+    - breadcrumbs come from the path; a file's chip list comes from its tags field
+  variants:
+    descendants: facet prefix match to show everything under a path
+    date_view: root /date, children are years, then months, then days
+    author_view: root /author
+    type_view: root /type
+    map_view: root /geo with depth chosen from zoom; each child is a cluster with count and a representative position
+    smart_folder: a saved query (view.saved event) executed as search with stored filters
+    untagged: search with no /tags facet
+  drag_and_drop: moving a file to another folder is PATCH with tags replaced; copying to a folder adds a tag
+relations:
+  - relation: implements
+    to: requirement:local-drive-tag-folder-views
+  - relation: uses
+    to: api:drive-api
+  - relation: uses
+    to: system:search-sidecar
+  - relation: depends_on
+    to: flow:drive-metadata-edit-overlay
+  - relation: uses
+    to: decision:presigned-zero-egress-delivery

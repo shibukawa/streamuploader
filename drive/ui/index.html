@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drive</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" id="brand">Drive</a>
+  <form class="search" id="searchForm" role="search">
+    <input id="searchInput" type="search" placeholder="ファイル名・本文・著者・タグを検索" autocomplete="off">
+    <button type="submit">検索</button>
+  </form>
+  <div class="actions">
+    <label class="btn primary" for="fileInput">アップロード</label>
+    <input id="fileInput" type="file" multiple hidden>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar" id="sidebar" aria-label="ビュー">
+    <section>
+      <h2>ライブラリ</h2>
+      <ul class="tree" id="rootViews"></ul>
+    </section>
+    <section>
+      <h2>タグ</h2>
+      <ul class="tree" id="tagTree"></ul>
+    </section>
+    <section>
+      <h2>種類</h2>
+      <ul class="tree" id="typeTree"></ul>
+    </section>
+    <section>
+      <h2>日付</h2>
+      <ul class="tree" id="dateTree"></ul>
+    </section>
+    <section>
+      <h2>著者</h2>
+      <ul class="tree" id="authorTree"></ul>
+    </section>
+  </nav>
+  <main class="content">
+    <div class="toolbar">
+      <nav class="breadcrumb" id="breadcrumb" aria-label="現在の場所"></nav>
+      <div class="toolbar-right">
+        <select id="sortSelect" aria-label="並び順">
+          <option value="name">名前順</option>
+          <option value="-modified">更新が新しい順</option>
+          <option value="-size">大きい順</option>
+          <option value="score">関連度順</option>
+        </select>
+        <span class="count" id="resultCount"></span>
+      </div>
+    </div>
+    <div class="subfolders" id="subfolders"></div>
+    <div class="uploads" id="uploads"></div>
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty" hidden>ファイルがありません。右上の「アップロード」か、ここにドロップしてください。</p>
+  </main>
+  <aside class="details" id="details" hidden></aside>
+</div>
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-bar">
+    <span class="viewer-title" id="viewerTitle"></span>
+    <span class="viewer-page" id="viewerPage"></span>
+    <a class="btn" id="viewerDownload" href="#" download>ダウンロード</a>
+    <button class="btn" id="viewerClose" type="button">閉じる</button>
+  </div>
+  <div class="viewer-body" id="viewerBody"></div>
+</div>
+<div class="dropzone" id="dropzone" hidden>ここにドロップしてアップロード</div>
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>

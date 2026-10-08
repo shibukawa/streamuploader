@@ -1,0 +1,30 @@
+id: metric:drive-operating-cost
+type: metric
+title: Drive operating cost targets
+summary: Monthly cost targets and the levers behind them - under 1,000 JPY for a single-machine deployment, near zero when idle on serverless, and 20 to 30 JPY per user at a thousand users with storage as the dominant term.
+lifecycle: proposed
+facts:
+  observed_prices_2026_10_08:
+    r2: "0.015 USD/GB-month, Class A 4.50 USD/M, Class B 0.36 USD/M, egress free"
+    b2: "about 6 USD/TB-month, egress free through Cloudflare"
+    fly: "stopped machine rootfs and volumes 0.15 USD/GB-month; RAM 6 USD/GB-month from 2026-10-01"
+    cloudflare_access: "free to 50 users, then about 7 USD per user per month - unsuitable for end users"
+    hetzner_small_vm: "about 4 EUR per month for a 2 vCPU 4 GB class instance"
+  targets:
+    single_vm: "under 1,000 JPY per month including 100 GB on R2"
+    serverless_idle: "storage and index objects only"
+    thousand_users_10gb_each: "20,000 to 30,000 JPY per month; storage 9,000 (B2) to 22,000 (R2), compute about 6,500, LB and DNS about 1,000"
+  levers:
+    - presigned delivery keeps egress off the servers (decision:presigned-zero-egress-delivery)
+    - tantivy sidecar removes the always-on search server (decision:tantivy-sidecar-over-meilisearch)
+    - journal on S3 removes the database (decision:journal-based-metadata)
+    - checksum dedupe and trash grace period cut the dominant storage term (policy:checksum-dedupe-policy)
+    - B2 instead of R2 at terabyte scale
+  caveats: list prices change; verify before budgeting
+relations:
+  - relation: measures
+    to: vision:local-drive
+  - relation: informed_by
+    to: system:object-storage-providers
+  - relation: mentions
+    to: policy:checksum-dedupe-policy

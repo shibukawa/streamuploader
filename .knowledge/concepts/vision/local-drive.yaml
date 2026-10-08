@@ -1,0 +1,100 @@
+id: vision:local-drive
+type: vision
+title: Local Drive
+summary: Self-hosted Google Drive-like file service built on streamuploader, run cheaply on any cloud, with full-text and metadata search, tag-based virtual folders, a web UI plus API, and an optional WORM audit mode.
+lifecycle: accepted
+facts:
+  decided_by: user request 2026-10-08
+  goals:
+    primary:
+      - upload, download and view files through a web UI and the same public API
+      - search by file name, body text, author, user tags, location and dates
+      - show tags as virtual folders so one file can live in several folders
+      - keep every durable fact in S3-compatible storage; nothing else needs backup
+      - run on a single VM, Fly Machines, Cloud Run or Kubernetes from one container image
+      - scale out by tenant without a redesign
+      - offer a WORM audit mode where nothing can be edited, overwritten or deleted
+  usage_profile:
+    stated_by: user 2026-10-08 ("基本的にビューアなので編集は余りやらない想定")
+    primary_use: browsing, previewing and finding files
+    edits: rare; limited to tags, name, author and location
+    implications:
+      - the read path (listing, thumbnails, bdf viewer, search) gets the design and testing effort
+      - the journal write rate is low, so the overlay stays tiny and the indexer cadence can be relaxed
+      - last-writer-wins is sufficient for concurrent edits
+      - the UI edits metadata in a side panel; there is no in-place document editing
+  design_principles:
+    - S3 is the only source of truth; the metadata snapshots and the search index are rebuildable caches
+    - reads bypass the servers through presigned URLs on zero-egress storage, so server count follows upload volume
+    - one Go binary embeds streamuploader through its custom main pattern and runs in server, indexer or all-in-one mode
+    - the search engine is the query layer for browsing as well as search; there is no relational database
+  delivery:
+    current_milestone: m1-all-in-one-local
+    confirmed_by: user 2026-10-08 ("オールインワンが最初で良いです")
+    outcome: all-in-one mode on one machine. Upload through streamuploader, register with POST /api/drive/files, journal events on S3, indexer folds them into a local tantivy index through the Rust sidecar, web UI lists a tag folder and runs a Japanese full-text search with page-level hits.
+    excluded_from_m1: WORM mode, index snapshots on S3 (multi-instance), Cloud Run h2c, EXIF-before-strip, API tokens, geo views
+    completion_checks:
+      - a docx and a jpeg uploaded through the UI appear in a tag folder within one indexer cycle
+      - a Japanese phrase from page 3 of a PDF returns that file with page 3 as the best hit
+      - deleting the local index directory and running reindex restores identical search results
+      - opening a search hit shows the bdf preview at the matched page; opening an image hit shows the full image
+    delivered_2026_10_08:
+      code: cmd/drive (entry), drive/journal, drive/meta, drive/indexer, drive/sidecar, drive/server, drive/ui, drive/memstore, drive/objerr, search/ (Rust sidecar), Dockerfile.drive, scripts/run-drive-memory.sh, scripts/run-drive-native.sh, scripts/drive-demo-seed.sh
+      automated: drive/e2e TestAllInOneMilestone runs the whole stack in one process on the in-memory store and covers checks 1 to 3 plus the server side of check 4
+      manual: UI checked in the desktop browser pane on 2026-10-08 - folder tree, search hit opened the bdf viewer at page 3, image viewer, details panel tag edit
+      storage: also smoke-tested against RustFS (real S3 API) with presigned delivery and a cold rebuild from the bucket by a second process
+      not_in_m1: WORM, index snapshots on S3, Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge of S3 objects
+non_goals:
+  - end-user permissions and sharing ACLs in the first milestones (deferred, see requirement:local-drive-api-and-web-ui)
+  - a relational database of any kind
+  - Meilisearch or any always-on search server
+acceptance:
+  m1-folder-listing:
+    text: A docx and a jpeg uploaded through the API appear in a tag folder immediately (overlay) and after one indexer run (index).
+    scope: {milestone: m1-all-in-one-local}
+    verified_by: [e2e-milestone]
+  m1-page-hit:
+    text: A Japanese phrase that appears only on page 3 of a PDF returns that file with page 3 and a highlighted snippet.
+    scope: {milestone: m1-all-in-one-local}
+    verified_by: [e2e-milestone]
+  m1-rebuild:
+    text: Rebuilding the index, and starting a fresh process with an empty index directory, reproduce the same search and folder results from the bucket.
+    scope: {milestone: m1-all-in-one-local}
+    verified_by: [e2e-milestone]
+  m1-viewer:
+    text: Opening a search hit shows the bdf preview at the matched page; an image hit opens the full image.
+    scope: {milestone: m1-all-in-one-local}
+    verified_by: [ui-manual]
+verification:
+  e2e-milestone:
+    state: passed
+    method: integration
+    test: TestAllInOneMilestone
+    scope: {milestone: m1-all-in-one-local}
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: TestAllInOneMilestone}
+  ui-manual:
+    state: passed
+    method: manual
+    scope: {milestone: m1-all-in-one-local}
+    authority: observed
+    evidence: {path: drive/ui/src/app.js, note: "checked in the desktop browser pane on 2026-10-08 with scripts/run-drive-memory.sh and scripts/drive-demo-seed.sh"}
+relations:
+  - relation: builds_on
+    to: vision:stream-upload-wrapper
+  - relation: refined_by
+    to: requirement:local-drive-s3-only-state
+  - relation: refined_by
+    to: requirement:local-drive-search
+  - relation: refined_by
+    to: requirement:local-drive-tag-folder-views
+  - relation: refined_by
+    to: requirement:local-drive-api-and-web-ui
+  - relation: refined_by
+    to: requirement:local-drive-worm-audit-mode
+  - relation: refined_by
+    to: requirement:local-drive-portable-deployment
+  - relation: refined_by
+    to: requirement:local-drive-scale-out
+  - relation: constrained_by
+    to: metric:drive-operating-cost
