@@ -22,6 +22,11 @@ facts:
     normal: deletable after folding plus grace
     worm: retained under the storage lock forever; the checkpoint chain covers every key
   size: a few KB; full state keeps the overlay simple
+  implemented_2026_10_09:
+    file_accessed: written by drive/server/access.go in WORM mode with file_id, access {object_key, kind (download, inline, preview, thumbnail), client_hash (first 8 bytes of sha256 of the client IP, hex)}; not a file state, so the indexer and overlay skip it, but it advances the folded cursor and is covered by the checkpoint chain
+    file_versioned: written by POST /api/drive/files/{id}/versions; state.versions gains the retired object with event_id = this event
+    file_restored: written by POST /api/drive/files/{id}/restore in normal mode
+    lock: journal.Store.Lock attaches the object lock to every event in WORM mode
 relations:
   - relation: realizes
     to: decision:journal-based-metadata

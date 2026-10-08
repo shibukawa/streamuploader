@@ -2,9 +2,17 @@ id: requirement:local-drive-worm-audit-mode
 type: requirement
 title: WORM audit mode
 summary: A deployment or tenant can run write-once-read-many; originals and the journal can never be edited, overwritten or deleted, access is recorded, and tampering is detectable even on a provider without retention locks.
-lifecycle: accepted
+lifecycle: active
 facts:
   decided_by: user 2026-10-08 ("監査モードとして、Write Once Read Manyなモードも活用し、一度書いたものが編集や上書き、削除ができないモード")
+  implemented_2026_10_09:
+    switch: DRIVE_WORM_MODE=off|append_only|strict (drive/worm); the Drive sets SU_WORM_MODE for the embedded streamuploader
+    application: PATCH refused in strict, additive-only in append_only (worm.Mode.CheckUpdate); DELETE and restore refused; new_version is the edit path and earlier objects stay readable at /api/drive/files/{id}/versions/{n}
+    access_logging: drive/server/access.go writes file.accessed before bytes or a presigned URL leave; DRIVE_WORM_ACCESS_WINDOW (default 1m) collapses a viewer's range requests; HEAD is not a read; presigned TTL capped at 5 minutes
+    storage_lock: SU_OBJECT_LOCK_MODE + SU_OBJECT_LOCK_RETENTION (storage.LockPolicy) on originals, journal events and checkpoints; memstore enforces the lock so tests prove it
+    tamper_evidence: drive/audit checkpoint chain written by the indexer after every fold; `drive verify [--hash]`
+    api: GET /api/drive/info, /journal, /checkpoints[/{n}]
+    ui: badge in the top bar, delete hidden, strict panel read-only, append_only panel removes only tags added in this edit, "新しい版" button
   variants:
     strict: no metadata change after registration; only new files
     append_only: tags and comments may be added as new journal events; nothing is removed or rewritten
@@ -18,14 +26,40 @@ constraints:
 acceptance:
   no-delete:
     text: In WORM mode, DELETE on a file returns 405 through the Drive API and the storage lock refuses a direct delete of the original.
+    verified_by: [worm-e2e]
   tamper-evident:
     text: Removing one journal object out of band makes the next checkpoint verification fail and name the missing event.
+    verified_by: [worm-e2e, audit-unit]
   access-journaled:
     text: Every download in WORM mode produces a file.accessed event with actor, time and object key.
+    verified_by: [worm-e2e]
+  no-backend-delete:
+    text: With the WORM switch on, streamuploader's backend object delete and shared-key delete answer 405 worm_readonly and the object stays.
+    verified_by: [backend-route-unit]
+verification:
+  worm-e2e:
+    state: passed
+    method: integration
+    test: TestWORMStrict, TestWORMAppendOnly
+    authority: observed
+    evidence: {path: drive/e2e/worm_test.go}
+  audit-unit:
+    state: passed
+    method: unit
+    test: TestChainAppendAndVerify
+    authority: observed
+    evidence: {path: drive/audit/audit_test.go}
+  backend-route-unit:
+    state: passed
+    method: unit
+    test: TestWORMModeDisablesDestructiveBackendRoutes, TestObjectLockOnFinalUpload
+    authority: observed
+    evidence: {path: internal/server/server_test.go}
 open_questions:
   default-variant:
     text: Is strict or append-only the default WORM variant, and may an operator switch a tenant from append-only to strict later?
-    state: open
+    state: answered
+    resolution: Neither is a default; DRIVE_WORM_MODE defaults to off and the operator picks the variant explicitly. Switching append_only to strict (or off to either) is safe at any time because every rule is evaluated per request and the first checkpoint covers the whole existing journal (implemented 2026-10-09).
   external-anchor:
     text: Where are checkpoint hashes anchored externally (Git commit, RFC 3161 timestamp, a transparency log), if at all?
     state: deferred

@@ -31,6 +31,10 @@ facts:
     state_file: drive-state.json inside the index directory (last folded journal key, pending text keys); deleting the directory forces a rebuild
     env: DRIVE_TENANT, DRIVE_PREFIX, DRIVE_INDEX_DIR, DRIVE_SEARCH_BIN, DRIVE_SEARCH_TOKENIZER, DRIVE_INDEX_INTERVAL, DRIVE_DELIVERY, DRIVE_STORAGE
     not_yet: server-only and indexer-only long-running modes (index-once exists), streamuploader cleanup loop is not started by the Drive
+  implemented_2026_10_09:
+    worm: DRIVE_WORM_MODE and DRIVE_WORM_ACCESS_WINDOW; SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION reused from streamuploader for journal and audit objects; the start log states the enforcement level ("application and checkpoint only" without a storage lock)
+    verify_subcommand: drive verify [--hash] [--json] walks the audit chain and exits non-zero on findings; needs no sidecar
+    packages_added: drive/worm (mode and additive rule), drive/audit (checkpoint chain and verifier)
 open_questions:
   repository:
     text: Does the Drive live in this repository (cmd/drive) or in its own repository importing streamuploader?
