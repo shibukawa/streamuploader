@@ -46,6 +46,7 @@ mkdir -p "$BIN_DIR" "$LOG_DIR" "$DEMO_DATA_DIR" "$RUSTFS_DATA_DIR"
 
 echo "==> building host binaries"
 cd "$ROOT_DIR"
+go tool pw generate
 go build -o "$BIN_DIR/streamuploader" ./cmd/streamuploader
 go build -o "$BIN_DIR/demo-app" ./demo/app
 
@@ -71,7 +72,7 @@ wait_tcp 127.0.0.1 9000 RustFS
 echo "==> starting demo app"
 (
   cd "$ROOT_DIR"
-  SU_ADDR=:8081 \
+  PORT=8081 \
   SU_DEMO_DATA_PATH="$DEMO_DATA_DIR/files.json" \
   SU_UPLOAD_BASE_PATH=/api/upload \
   SU_DOWNLOAD_MODE=presigned \

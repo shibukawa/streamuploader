@@ -17,6 +17,8 @@ if [[ ! -x "$SIDECAR" ]]; then
     exit 1
   fi
 fi
+echo "==> generating framework code"
+(cd "$ROOT_DIR" && go tool pw generate)
 echo "==> building drive"
 (cd "$ROOT_DIR" && go build -o "$BIN_DIR/drive" ./cmd/drive)
 echo "==> drive (memory storage) on http://localhost:$PORT"
@@ -25,7 +27,7 @@ exec env \
   DRIVE_SEARCH_BIN="$SIDECAR" \
   DRIVE_INDEX_DIR="$ROOT_DIR/.cache/drive/index-memory" \
   DRIVE_INDEX_INTERVAL="${DRIVE_INDEX_INTERVAL:-5s}" \
-  SU_ADDR=":$PORT" \
+  PORT="$PORT" \
   SU_PUBLIC_BASE_URL="http://localhost:$PORT" \
   SU_THUMBNAILS_ENABLED=true \
   SU_THUMBNAILS_EXECUTION_MODE=sequential \

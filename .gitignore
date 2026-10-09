@@ -3,3 +3,13 @@ sbom-*.spdx.json
 .DS_Store
 cmd/streamuploader/streamuploader
 cmd/streamuploader/streamuploader.exe
+
+# Popcorn Web build outputs: regenerate with `go tool pw generate`.
+*_pw_gen.go
+/dist/*
+!/dist/public/
+/dist/public/*
+!/dist/public/.keep
+/.pw/
+/.log/
+/app

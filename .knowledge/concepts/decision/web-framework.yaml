@@ -1,0 +1,61 @@
+id: decision:web-framework
+type: decision
+title: Web Framework
+summary: Serve every HTTP process in this repository as a Popcorn Web (github.com/shibukawa/popcornweb) application, with the handlers reading and writing through the generated, reflection-free codecs.
+lifecycle: active
+facts:
+  decision:
+    selected: github.com/shibukawa/popcornweb v0.5.11, application package github.com/shibukawa/popcornweb/pw
+    adopted: 2026-10-09, replacing hand-rolled net/http wiring (own access log, status recorder, CORS helper, JSON writers, gorilla/websocket upgrader)
+    rationale:
+    - routing stays net/http ServeMux (pw.ServeMux is an alias) and handlers stay http.HandlerFunc, so the upload pipeline and the auth hook package are untouched
+    - request binding (pw.Parse), JSON writing (pw.WriteAPI, pw.WriteStatus), problem responses (pw.WriteProblem), typed WebSockets (pw.WebSocket) and typed configuration run on code `go tool pw generate` writes ahead of time; nothing reflects at request time
+    - the framework chain brings request ids, access log, recovery, security headers, body cap, CORS and operational endpoints as configuration rather than code
+    - one OpenAPI 3.1 document is generated from the handlers and served at server.openapi
+  generation:
+    tool: go tool pw (the cmd/pw CLI pinned in go.mod as a tool directive); `pw generate` before `go build` or `go test`, `pw check` in CI
+    project_file: popcornweb.toml at the repository root; generate.handlers lists internal/server, drive/server and demo/app; generate.config lists cmd/drive and streamuploadercli
+    outputs: '*_pw_gen.go beside the sources, dist/routes.json and dist/public; all gitignored'
+    public_assets: public.go at the module root embeds dist/public (empty tree today); the Drive UI keeps its own embed under /ui/
+  wire_types:
+    rule: the generator plans a struct from its declared field types and silently drops pointers, time.Time, embedded fields, `any`, and types from other packages that carry no codec
+    consequence: handlers declare flat input and view types (api.go in internal/server and drive/server, main.go in demo/app); times are RFC 3339 strings, optional sub-objects are value fields with omitzero, lists of records are wrapped or carry their own AppendJSONTo
+    domain_types: model.UploadItem, meta.File and extraction.Content keep their shapes and encoding/json for in-memory state, journal events, snapshots and artifacts
+    open_shapes: internal/jsonany.Map carries free-form JSON (extracted metadata) through a hand-written codec on jsonbind.AppendAny
+    patch_semantics: PATCH /api/drive/files/{id} reads name, tags, author and location from a payload:"*" rest map, which is how an absent member is told from an empty one without pointers
+  errors:
+    format: RFC 9457 application/problem+json with type, title, status, detail and code
+    code: the stable machine-readable value every API documented as `error` before; detail is the human message
+    sanitization: a 5xx is reported as code internal, detail internal error; the original code and message are logged by the framework
+  listeners:
+    streamuploader: pw.Middlewares wraps the public and the backend handlers separately; the listeners are SU_ADDR and SU_BACKEND_ADDR with the framework timeouts applied
+    drive_and_demo: pw.Run owns the single listener; the port is server.port / PORT / --port
+    startup_adjustments: internal/framework.Prepare parses the configuration, turns server.read_timeout off, lifts server.max_request_body when it is below the upload limit, disables server.public when no tree is linked (tests), and maps SU_LOG_FORMAT / SU_LOG_LEVEL onto observability defaults
+    health: /healthz stays an application route on every listener; configuring server.health on the same path is refused at startup
+  configuration:
+    framework: config.{APP_ENV}.toml in the working directory or config/, environment variables, command-line options; config/config.dev.toml serves /openapi.json and /docs
+    application: SU_* variables through internal/config are unchanged; the Drive's DRIVE_* variables became the [drive] table bound with pw.RegisterConfig, with the same environment names
+    subcommands: pw.RegisterSubCommand for streamuploader thumbnail-convert (double-dash flags) and drive reindex / index-once
+  rejected_alternatives:
+    keep_net_http_only:
+      reason: the stated goal was to run the servers on popcornweb; the standard-library boundary of the framework made the move incremental
+    reflect_based_json:
+      reason: generation is a given of the framework; reflection-free codecs are what it offers in exchange
+    commit_generated_files:
+      reason: the framework scaffold treats *_pw_gen.go as build output; the pinned tool directive makes regeneration one command everywhere, including container builds
+  risks:
+  - a handler change that forgets `go tool pw generate` fails at runtime with a missing-codec problem rather than at compile time for WriteAPI; pw check in CI catches stale output
+  - a new field in a view type that is a pointer or a time.Time is silently left out of the response; keep views flat
+  - the framework's default Content-Security-Policy (script-src 'self') refuses inline scripts, which is why the demo page script is served from /demo/app.js
+  references:
+  - api:upload-api
+  - api:drive-api
+  - system:drive-server
+  - system:application-server
+relations:
+  - relation: constrains
+    to: api:drive-api
+  - relation: constrains
+    to: api:upload-api
+  - relation: constrains
+    to: system:drive-server

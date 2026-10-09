@@ -3,33 +3,13 @@ package server
 import (
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/shibukawa/popcornweb/pw"
 
 	"streamuploader/drive/meta"
 	"streamuploader/drive/sidecar"
 )
-
-type searchHit struct {
-	File    fileView `json:"file"`
-	Score   float64  `json:"score"`
-	Page    int64    `json:"page,omitempty"`
-	View    string   `json:"view,omitempty"`
-	Snippet string   `json:"snippet,omitempty"`
-	// Fresh marks a result that came from the journal overlay rather than
-	// the index.
-	Fresh bool `json:"fresh,omitempty"`
-}
-
-type searchResponse struct {
-	Total   int         `json:"total"`
-	Hits    []searchHit `json:"hits"`
-	Query   string      `json:"query"`
-	Facets  []string    `json:"facets"`
-	Exact   bool        `json:"exact"`
-	Sort    string      `json:"sort"`
-	Overlay int         `json:"overlay"`
-}
 
 // listingFilter decides whether an overlay state belongs in a result set.
 type listingFilter struct {
@@ -65,14 +45,17 @@ func (lf listingFilter) matches(f *meta.File) bool {
 	return true
 }
 
-func parseFacetParams(r *http.Request) ([]string, bool) {
-	var facets []string
-	for _, tag := range r.URL.Query()["tag"] {
+// facetParams turns the tag and facet query values into facet paths, and
+// decides whether they must match exactly: by default a plain listing (facets
+// and no text query) is exact, and the exact parameter overrides that.
+func facetParams(tags, facets []string, exactParam, q string) ([]string, bool) {
+	var out []string
+	for _, tag := range tags {
 		if t, err := meta.NormalizeTag(tag); err == nil {
-			facets = append(facets, "/tags"+t)
+			out = append(out, "/tags"+t)
 		}
 	}
-	for _, facet := range r.URL.Query()["facet"] {
+	for _, facet := range facets {
 		facet = strings.TrimSpace(facet)
 		if facet == "" {
 			continue
@@ -80,32 +63,36 @@ func parseFacetParams(r *http.Request) ([]string, bool) {
 		if !strings.HasPrefix(facet, "/") {
 			facet = "/" + facet
 		}
-		facets = append(facets, strings.TrimRight(facet, "/"))
+		out = append(out, strings.TrimRight(facet, "/"))
 	}
-	exactParam := r.URL.Query().Get("exact")
-	exact := len(facets) > 0 && strings.TrimSpace(r.URL.Query().Get("q")) == ""
+	exact := len(out) > 0 && strings.TrimSpace(q) == ""
 	if exactParam != "" {
 		exact = exactParam == "1" || exactParam == "true"
 	}
-	return facets, exact
+	return out, exact
 }
 
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	facets, exact := parseFacetParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	in, err := pw.Parse[searchInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	q := strings.TrimSpace(in.Q)
+	facets, exact := facetParams(in.Tag, in.Facet, in.Exact, q)
+	limit := in.Limit
 	if limit <= 0 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset := in.Offset
 	if offset < 0 {
 		offset = 0
 	}
-	sortKey := strings.TrimSpace(r.URL.Query().Get("sort"))
+	sortKey := strings.TrimSpace(in.Sort)
 	if sortKey == "" {
 		if q != "" {
 			sortKey = "score"
@@ -117,12 +104,12 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		Tenant: s.cfg.Tenant, Query: q, Facets: facets, Exact: exact, Sort: sortKey, Limit: limit, Offset: offset, WithPages: true,
 	})
 	if err != nil {
-		s.fail(w, "search", err)
+		s.fail(w, r, "search", err)
 		return
 	}
 	overlay, err := s.overlayStates(ctx)
 	if err != nil {
-		s.fail(w, "overlay", err)
+		s.fail(w, r, "overlay", err)
 		return
 	}
 	filter := listingFilter{query: q, facets: facets, exact: exact}
@@ -178,7 +165,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			sortHits(hits, sortKey)
 		}
 	}
-	writeJSON(w, http.StatusOK, searchResponse{
+	pw.WriteAPI(w, r, searchResponse{
 		Total:   res.Total - dropped + added,
 		Hits:    hits,
 		Query:   q,
@@ -207,7 +194,7 @@ func sortHits(hits []searchHit, key string) {
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
-		a, b := hits[i].File.File, hits[j].File.File
+		a, b := hits[i].File.file, hits[j].File.file
 		if desc {
 			return less(b, a)
 		}
@@ -215,31 +202,25 @@ func sortHits(hits []searchHit, key string) {
 	})
 }
 
-type facetChild struct {
-	Path  string `json:"path"`
-	Name  string `json:"name"`
-	Count int64  `json:"count"`
-}
-
-type facetsResponse struct {
-	Path     string       `json:"path"`
-	Children []facetChild `json:"children"`
-}
-
 func (s *Server) facets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	path := strings.TrimRight(strings.TrimSpace(r.URL.Query().Get("path")), "/")
+	in, err := pw.Parse[facetsInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	path := strings.TrimRight(strings.TrimSpace(in.Path), "/")
 	if path == "" {
 		path = "/tags"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	facets, exact := parseFacetParams(r)
+	q := strings.TrimSpace(in.Q)
+	facets, exact := facetParams(in.Tag, in.Facet, in.Exact, q)
 	res, err := s.deps.Search.Facets(ctx, sidecar.FacetsRequest{Tenant: s.cfg.Tenant, Path: path, Query: q, Facets: facets, Exact: exact})
 	if err != nil {
-		s.fail(w, "facets", err)
+		s.fail(w, r, "facets", err)
 		return
 	}
 	counts := map[string]int64{}
@@ -250,7 +231,7 @@ func (s *Server) facets(w http.ResponseWriter, r *http.Request) {
 	// what the index counted for the old state, add the new state.
 	overlay, err := s.overlayStates(ctx)
 	if err != nil {
-		s.fail(w, "overlay", err)
+		s.fail(w, r, "overlay", err)
 		return
 	}
 	filter := listingFilter{query: q, facets: facets, exact: exact}
@@ -274,7 +255,7 @@ func (s *Server) facets(w http.ResponseWriter, r *http.Request) {
 		children = append(children, facetChild{Path: p, Name: p[strings.LastIndex(p, "/")+1:], Count: n})
 	}
 	sort.Slice(children, func(i, j int) bool { return children[i].Path < children[j].Path })
-	writeJSON(w, http.StatusOK, facetsResponse{Path: path, Children: children})
+	pw.WriteAPI(w, r, facetsResponse{Path: path, Children: children})
 }
 
 // childrenUnder maps a file's facet paths to the direct children of path they

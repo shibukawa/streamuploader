@@ -24,12 +24,12 @@ facts:
     proposal: this repository, as cmd/drive plus drive/ packages and a search/ Rust crate, because the binary imports streamuploader as a library
     alternative: a separate repository that imports the streamuploader module
   implemented_2026_10_08:
-    entry: cmd/drive/main.go with subcommands serve, reindex, index-once
+    entry: cmd/drive/main.go, a Popcorn Web application (decision:web-framework): pw.Run serves the mux, pw.RegisterSubCommand declares reindex and index-once
     packages: drive/server (routes, overlay, files, search, delivery), drive/indexer, drive/journal, drive/meta, drive/sidecar, drive/memstore (in-memory storage.Store for tests and DRIVE_STORAGE=memory), drive/objerr
     streamuploader_embedding: internal/server.New(cfg, store).Handler() mounted under /api/upload/, /api/file/, /api/files/ and /healthz; ApplicationServerURL forced empty so no reverse proxy exists
     delivery_default: proxy (bytes through the server with Range passthrough) so the bdf viewer works without bucket CORS; presigned is a switch (DRIVE_DELIVERY)
     state_file: drive-state.json inside the index directory (last folded journal key, pending text keys); deleting the directory forces a rebuild
-    env: DRIVE_TENANT, DRIVE_PREFIX, DRIVE_INDEX_DIR, DRIVE_SEARCH_BIN, DRIVE_SEARCH_TOKENIZER, DRIVE_INDEX_INTERVAL, DRIVE_DELIVERY, DRIVE_STORAGE
+    config: the [drive] table of config.{APP_ENV}.toml bound with pw.RegisterConfig (drive.tenant, drive.prefix, drive.index_dir, drive.search_bin, drive.search_tokenizer, drive.index_interval, drive.delivery, drive.storage), each also DRIVE_* in the environment and --drive-<key> on the command line; the listener is server.port / PORT
     not_yet: server-only and indexer-only long-running modes (index-once exists), streamuploader cleanup loop is not started by the Drive
 open_questions:
   repository:

@@ -1,0 +1,14 @@
+# Development runtime configuration of the Popcorn Web applications in this
+# repository (streamuploader, drive, demo-app). APP_ENV selects the file; it is
+# read from the working directory, so run the binaries from the repository
+# root to pick it up. Deployed environments get their own config.<env>.toml or
+# set the same keys as environment variables (`./drive --help` lists them).
+[server]
+# The generated OpenAPI document and the Scalar reference over it. Both are
+# served only where this file says so; leave them out of a production file.
+openapi = "/openapi.json"
+api_doc = "scalar"
+
+[observability]
+# Readable records on a terminal; deployments keep the JSON default.
+stdout_format = "plaintext"

@@ -67,11 +67,12 @@ facts:
       path: /api/drive/admin/reindex
       behavior: triggers the indexer rebuild; operator token only
   pagination: opaque cursor encoding sort key and offset
-  errors: JSON {code, message}; codes include revision_conflict, worm_readonly, not_registered
+  errors: RFC 9457 problem document (application/problem+json) with type, title, status, detail and code (decision:web-framework); codes include revision_conflict, worm_readonly, not_registered; a 5xx is reported as code internal
   openapi: generated from the Go handlers; TypeScript client for the UI, Go client for the CLI
   implemented_2026_10_08:
     done: register_file, get_file, update_file (plus clear_location), delete_file, search (q, tag, facet, exact, sort, limit, offset), facets, content/download/preview/thumbnail (proxy or presigned), stats, admin reindex, web UI at / and /ui/
-    not_yet: restore_file, new_version, bulk_zip, views, journal_export, checkpoints, OpenAPI document and generated clients, API tokens
+    not_yet: restore_file, new_version, bulk_zip, views, journal_export, checkpoints, generated clients, API tokens
+    implemented_2026_10_09: handlers moved to Popcorn Web (decision:web-framework); the OpenAPI document is generated from them and served at server.openapi (config/config.dev.toml serves /openapi.json and /docs)
 relations:
   - relation: implements
     to: requirement:local-drive-api-and-web-ui

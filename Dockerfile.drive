@@ -16,6 +16,7 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
+RUN go tool pw generate
 RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/drive ./cmd/drive
 
 FROM gcr.io/distroless/cc-debian12

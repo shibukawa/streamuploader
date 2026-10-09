@@ -102,7 +102,7 @@ func newStack(t *testing.T, store *memstore.Store, indexDir string) *stack {
 	drv := driveserver.New(driveserver.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", OverlayTTL: time.Millisecond}, driveserver.Deps{
 		Store: store, Journal: jstore, Metas: metas, Search: search, Indexer: ix, Uploader: uploader,
 	})
-	srv := httptest.NewServer(drv.Handler())
+	srv := newTestServer(t, drv.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	return &stack{t: t, ctx: ctx, store: store, cfg: cfg, search: search, metas: metas, ix: ix, srv: srv, client: &http.Client{Jar: jar}, index: indexDir}

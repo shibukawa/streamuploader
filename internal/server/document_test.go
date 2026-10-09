@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -88,7 +87,7 @@ func storedKeys(store *fakeStore) []string {
 
 func TestDocumentUploadAlwaysProducesThumbnailTextAndBDF(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+	srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 	defer srv.Close()
 
 	key := newUploadKey(t, srv.URL, "report.docx", testDocxType)
@@ -130,17 +129,17 @@ func TestDocumentUploadAlwaysProducesThumbnailTextAndBDF(t *testing.T) {
 
 func TestProtectedDocumentNeedsPasswordThenGetsLockMark(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+	srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 	defer srv.Close()
 	input := documentFixture(t, "protected.pptx")
 
 	key := newUploadKey(t, srv.URL, "secret.pptx", testPptxType)
 	resp, body, _ := putDocument(t, srv.URL, key, testPptxType, input, "")
-	if resp.StatusCode != http.StatusUnprocessableEntity || body["error"] != "document_password_required" {
+	if resp.StatusCode != http.StatusUnprocessableEntity || body["code"] != "document_password_required" {
 		t.Fatalf("no password: %d %v", resp.StatusCode, body)
 	}
 	resp, body, _ = putDocument(t, srv.URL, key, testPptxType, input, "wrong")
-	if resp.StatusCode != http.StatusUnprocessableEntity || body["error"] != "document_password_invalid" {
+	if resp.StatusCode != http.StatusUnprocessableEntity || body["code"] != "document_password_invalid" {
 		t.Fatalf("wrong password: %d %v", resp.StatusCode, body)
 	}
 	if keys := storedKeys(store); len(keys) != 0 {
@@ -175,7 +174,7 @@ func TestDocumentConversionFailureFlag(t *testing.T) {
 
 	t.Run("flag off keeps upload and marks assets failed", func(t *testing.T) {
 		store := &fakeStore{objects: map[string][]byte{}}
-		srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+		srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 		defer srv.Close()
 		key := newUploadKey(t, srv.URL, "broken.pdf", "application/pdf")
 		resp, body, item := putDocument(t, srv.URL, key, "application/pdf", broken, "")
@@ -189,11 +188,11 @@ func TestDocumentConversionFailureFlag(t *testing.T) {
 	t.Run("flag on cancels upload", func(t *testing.T) {
 		store := &fakeStore{objects: map[string][]byte{}}
 		cfg := documentTestConfig(func(c *config.Config) { c.DocumentProcessing.FailUploadOnError = true })
-		srv := httptest.NewServer(New(cfg, store).Handler())
+		srv := newTestServer(t, New(cfg, store).Handler())
 		defer srv.Close()
 		key := newUploadKey(t, srv.URL, "broken.pdf", "application/pdf")
 		resp, body, _ := putDocument(t, srv.URL, key, "application/pdf", broken, "")
-		if resp.StatusCode != http.StatusUnprocessableEntity || body["error"] != "document_processing_failed" {
+		if resp.StatusCode != http.StatusUnprocessableEntity || body["code"] != "document_processing_failed" {
 			t.Fatalf("status = %d %v", resp.StatusCode, body)
 		}
 		if keys := storedKeys(store); len(keys) != 0 {
@@ -205,7 +204,7 @@ func TestDocumentConversionFailureFlag(t *testing.T) {
 func TestPreviewRouteServesBDF(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := documentTestConfig(func(c *config.Config) { c.AllowFrontendFileAccess = true })
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 	key := newUploadKey(t, srv.URL, "report.docx", testDocxType)
 	if resp, _, _ := putDocument(t, srv.URL, key, testDocxType, documentFixture(t, "sample.docx"), ""); resp.StatusCode != http.StatusOK {
@@ -223,7 +222,7 @@ func TestPreviewRouteServesBDF(t *testing.T) {
 
 func TestRealOOXMLPassesDefaultOfficePolicy(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+	srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 	defer srv.Close()
 	for _, tc := range []struct{ file, name, contentType string }{
 		{"sample.docx", "a.docx", testDocxType},
@@ -245,7 +244,7 @@ func TestPhotoshopAndIllustratorUploads(t *testing.T) {
 	cfg := documentTestConfig(func(c *config.Config) {
 		c.Security.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"image/vnd.adobe.photoshop": {Mode: "accept_as_is"}}
 	})
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 	for _, tc := range []struct{ file, name, contentType string }{
 		{"sample.psd", "art.psd", "image/vnd.adobe.photoshop"},
@@ -268,7 +267,7 @@ func TestPhotoshopAndIllustratorUploads(t *testing.T) {
 
 func TestTextFormatsGetPreviewAndKeepTextExtraction(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+	srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 	defer srv.Close()
 	csv := "name,qty\napple,3\nbanana,12\n"
 	key := newUploadKey(t, srv.URL, "stock.csv", "text/csv")
@@ -293,7 +292,7 @@ func TestTextNotMatchingItsNameFallsBackToPlainText(t *testing.T) {
 		c.TextExtraction.Enabled = true
 		c.TextExtraction.ExecutionMode = "sequential"
 	})
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 	key := newUploadKey(t, srv.URL, "notes.csv", "text/csv")
 	resp, body, item := putDocument(t, srv.URL, key, "text/csv", []byte("Just one sentence.\n"), "")
@@ -310,7 +309,7 @@ func TestTextNotMatchingItsNameFallsBackToPlainText(t *testing.T) {
 
 func TestBinaryFormatMismatchIsRefused(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(documentTestConfig(nil), store).Handler())
+	srv := newTestServer(t, New(documentTestConfig(nil), store).Handler())
 	defer srv.Close()
 
 	// Magic numbers alone do not make an EPUB or a Parquet file.
@@ -333,8 +332,8 @@ func TestBinaryFormatMismatchIsRefused(t *testing.T) {
 		if resp.StatusCode != http.StatusUnsupportedMediaType {
 			t.Fatalf("%s: %d %v", tc.name, resp.StatusCode, body)
 		}
-		if body["error"] != "document_format_mismatch" {
-			t.Fatalf("%s: error = %v", tc.name, body["error"])
+		if body["code"] != "document_format_mismatch" {
+			t.Fatalf("%s: error = %v", tc.name, body["code"])
 		}
 	}
 	// An upload of another format under a Visio name is refused too.

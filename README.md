@@ -142,9 +142,23 @@ Password-protected documents: the first upload returns `422 document_password_re
 
 `document_processing` in the security config tunes the behavior: `fail_upload_on_error` (default `false`) cancels the upload with `422 document_processing_failed` when a document cannot be converted, instead of accepting it with failed derived assets (env `DOCUMENT_PROCESSING_FAIL_UPLOAD_ON_ERROR`; it forces sequential execution); `max_input_bytes` bounds the document read for conversion; `execution_mode` is `async` or `sequential`.
 
+## Web framework
+
+The servers (`cmd/streamuploader`, `cmd/drive`, `demo/app`) are [Popcorn Web](https://github.com/shibukawa/popcornweb) applications. Routing stays on the standard `net/http` mux and the handlers stay `http.HandlerFunc`; what the framework owns is the request chain (request ids, access log, panic recovery, security headers, body cap, operational endpoints), the listener lifecycle, and the typed, reflection-free request binding and JSON writing. `go tool pw generate` reads the handlers and writes the binders, the JSON codecs and the OpenAPI document into `*_pw_gen.go` files, which are build outputs and not committed: run it after cloning and after changing a handler, an input or a view type, or a `pw.RegisterConfig` / `pw.RegisterSubCommand` declaration. `go tool pw check` reports stale output.
+
+Framework settings come from `config.{APP_ENV}.toml` (searched in the working directory and in `config/`), environment variables and command-line options, with `default < file < environment < option` precedence; `./drive --help` lists every key, and `--generate-config toml` prints a scaffold. `config/config.dev.toml` is the development file: it serves the generated OpenAPI document at `/openapi.json` and the Scalar reference at `/docs`. Points that are specific to this repository:
+
+- `streamuploader` listens on `SU_ADDR` and `SU_BACKEND_ADDR` (two listeners), with the framework chain applied to each; `drive` and the demo app listen on the framework's `server.port` (`PORT`, `--port`, default 8080).
+- Uploads stream for minutes and can be large, so at startup the framework's `server.read_timeout` is turned off and `server.max_request_body` is lifted when it is below the upload limit; the upload policy bounds request bodies instead.
+- `SU_LOG_FORMAT` and `SU_LOG_LEVEL` are honored as defaults for `observability.stdout_format` (`json` or `plaintext`) and `observability.minimum_level`; the application's own records follow the framework's encoding.
+- Errors are RFC 9457 problem documents (`application/problem+json`): `{"type":"about:blank","title":"Bad Request","status":400,"detail":"...","code":"content_type_mismatch"}`. The stable machine-readable value is `code`, the human message is `detail`. A 5xx is reported as `code: internal` with `detail: internal error`; the cause stays in the server log.
+- `/healthz` is served by the applications themselves (JSON `{"status":"ok"}`), on every listener. The framework's own probes (`server.health`, `server.readiness`) can be configured on other paths.
+- Subcommands are framework subcommands: `streamuploader thumbnail-convert --width 400 --height 400 --fit contain --format avif`, `drive reindex`, `drive index-once`.
+
 ## Local build
 
 ```bash
+go tool pw generate      # binders, JSON codecs, OpenAPI; rerun after changing handlers
 go test ./...
 go build ./cmd/streamuploader
 go build ./demo/app
@@ -248,6 +262,7 @@ Build from source:
 ```bash
 (cd search && cargo build --release)      # sidecar, Rust 1.85+; ~50 MB with the IPADIC dictionary
 (cd drive/ui && npm install && npm run build)   # UI bundle, only after changing drive/ui/src
+go tool pw generate                       # framework binders and codecs
 go build ./cmd/drive
 ```
 
@@ -255,18 +270,18 @@ go build ./cmd/drive
 
 Subcommands: `drive` serves (all-in-one: server plus indexer loop), `drive reindex` rebuilds the index from the bucket and exits, `drive index-once` folds pending journal events and exits. A missing or stale index directory is rebuilt from the bucket at start.
 
-Environment (in addition to the `SU_*` variables of streamuploader, whose S3 settings the Drive reuses):
+Configuration: the listener is the framework's (`server.port` / `PORT` / `--port`, default 8080); the object store and upload policy are the `SU_*` variables of streamuploader; the Drive's own settings are the `[drive]` table of `config.{APP_ENV}.toml`, each also an environment variable and a `--drive-<key>` option:
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `DRIVE_TENANT` | `default` | tenant id used in every key and index document |
-| `DRIVE_PREFIX` | `drive/` | key prefix of journal, meta and audit objects in the bucket |
-| `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
-| `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
-| `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
-| `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; writes also poke the indexer immediately |
-| `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
-| `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
+| Key | Environment | Default | Meaning |
+|---|---|---|---|
+| `drive.tenant` | `DRIVE_TENANT` | `default` | tenant id used in every key and index document |
+| `drive.prefix` | `DRIVE_PREFIX` | `drive/` | key prefix of journal, meta and audit objects in the bucket |
+| `drive.index_dir` | `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
+| `drive.search_bin` | `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
+| `drive.search_tokenizer` | `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
+| `drive.index_interval` | `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; writes also poke the indexer immediately |
+| `drive.delivery` | `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
+| `drive.storage` | `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
 
 API (same origin as the upload API; no authentication yet):
 

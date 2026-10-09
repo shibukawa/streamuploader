@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -20,10 +20,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shibukawa/popcornweb/pw"
+	"github.com/shibukawa/tinybind-go/jsonbind"
+
+	"streamuploader/internal/framework"
 )
 
 type appConfig struct {
-	Addr                    string
 	DataPath                string
 	UploadBasePath          string
 	DownloadMode            string
@@ -37,20 +41,25 @@ type appConfig struct {
 	BackendControlURL       string
 }
 
-type fileFact struct {
-	UploadKey      string `json:"upload_key"`
-	OriginalName   string `json:"original_name"`
-	ContentType    string `json:"content_type,omitempty"`
-	SizeBytes      int64  `json:"size_bytes,omitempty"`
-	ChecksumSHA256 string `json:"checksum_sha256,omitempty"`
-	ObjectKey      string `json:"object_key"`
-	DisplayKey     string `json:"display_key"`
-	Thumbnail      *struct {
-		URL         string `json:"url,omitempty"`
-		ObjectKey   string `json:"object_key,omitempty"`
-		ContentType string `json:"content_type,omitempty"`
-		Status      string `json:"status,omitempty"`
-	} `json:"thumbnail,omitempty"`
+// thumbnailFact is the thumbnail part of an upload record a browser hands
+// back from streamuploader.
+type thumbnailFact struct {
+	URL         string `json:"url"`
+	ObjectKey   string `json:"object_key"`
+	ContentType string `json:"content_type"`
+	Status      string `json:"status"`
+}
+
+// fileFactInput is one uploaded file as the browser reports it.
+type fileFactInput struct {
+	UploadKey      string        `json:"upload_key"`
+	OriginalName   string        `json:"original_name"`
+	ContentType    string        `json:"content_type"`
+	SizeBytes      int64         `json:"size_bytes"`
+	ChecksumSHA256 string        `json:"checksum_sha256"`
+	ObjectKey      string        `json:"object_key"`
+	DisplayKey     string        `json:"display_key"`
+	Thumbnail      thumbnailFact `json:"thumbnail"`
 }
 
 type fileRecord struct {
@@ -68,10 +77,77 @@ type fileRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-type submitRequest struct {
-	Title string     `json:"title"`
-	Note  string     `json:"note,omitempty"`
-	Files []fileFact `json:"files"`
+// submitInput is the body of POST /api/files.
+type submitInput struct {
+	Title string          `payload:"title"`
+	Note  string          `payload:"note"`
+	Files []fileFactInput `payload:"files"`
+}
+
+// fileRecordView is a stored file as the API reports it.
+type fileRecordView struct {
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	Note           string `json:"note,omitempty"`
+	UploadKey      string `json:"upload_key"`
+	OriginalName   string `json:"original_name"`
+	ContentType    string `json:"content_type,omitempty"`
+	SizeBytes      int64  `json:"size_bytes,omitzero"`
+	ChecksumSHA256 string `json:"checksum_sha256,omitempty"`
+	ObjectKey      string `json:"object_key"`
+	DisplayKey     string `json:"display_key"`
+	ThumbnailURL   string `json:"thumbnail_url,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// The list endpoints answer a bare JSON array, which the generator does not
+// plan on its own: the element type gets a generated encoder, and the list
+// carries its own codec over it.
+var _ = jsonbind.GenerateEncoder[fileRecordView]()
+
+type fileRecordList []fileRecordView
+
+// AppendJSONTo implements jsonbind.Appender.
+func (l fileRecordList) AppendJSONTo(dst []byte) []byte {
+	dst = append(dst, '[')
+	for i, rec := range l {
+		if i > 0 {
+			dst = append(dst, ',')
+		}
+		dst = rec.AppendJSONTo(dst)
+	}
+	return append(dst, ']')
+}
+
+func viewsOfRecords(records []fileRecord) fileRecordList {
+	out := make(fileRecordList, 0, len(records))
+	for _, rec := range records {
+		out = append(out, fileRecordView{
+			ID:             rec.ID,
+			Title:          rec.Title,
+			Note:           rec.Note,
+			UploadKey:      rec.UploadKey,
+			OriginalName:   rec.OriginalName,
+			ContentType:    rec.ContentType,
+			SizeBytes:      rec.SizeBytes,
+			ChecksumSHA256: rec.ChecksumSHA256,
+			ObjectKey:      rec.ObjectKey,
+			DisplayKey:     rec.DisplayKey,
+			ThumbnailURL:   rec.ThumbnailURL,
+			CreatedAt:      rec.CreatedAt.Format(time.RFC3339Nano),
+		})
+	}
+	return out
+}
+
+type configView struct {
+	UploadBasePath          string `json:"upload_base_path"`
+	DownloadMode            string `json:"download_mode"`
+	StreamUploaderPublicURL string `json:"streamuploader_public_url"`
+}
+
+type healthView struct {
+	Status string `json:"status"`
 }
 
 type store struct {
@@ -86,16 +162,33 @@ type app struct {
 }
 
 func main() {
+	if err := pw.SetOpenAPIInfo(pw.OpenAPIInfo{Title: "streamuploader demo app", Version: "0.1.0"}); err != nil {
+		slog.Error("demo_openapi_info", "error", err)
+		os.Exit(1)
+	}
 	cfg := loadConfig()
 	st, err := newStore(cfg.DataPath)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("demo_store_failed", "error", err)
+		os.Exit(1)
+	}
+	// The demo proxies uploads to streamuploader when it is opened directly,
+	// so the framework's body cap and read timeout must not cut them off.
+	if err := framework.Prepare(framework.Options{MaxRequestBody: 1 << 30, StreamingUploads: true}); err != nil {
+		framework.Exit(err)
+	}
+	if handled, err := framework.RunAction(); handled {
+		if err != nil {
+			framework.Exit(err)
+		}
+		return
 	}
 	a := &app{cfg: cfg, store: st}
-	mux := http.NewServeMux()
+	mux := pw.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.index)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	mux.HandleFunc("GET /demo/app.js", a.script)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		pw.WriteAPI(w, r, healthView{Status: "ok"})
 	})
 	mux.HandleFunc("GET /demo/api/config", a.configAPI)
 	mux.HandleFunc("GET /demo/api/files", a.listFilesAPI)
@@ -111,27 +204,39 @@ func main() {
 	mux.HandleFunc("DELETE /api/files/{id}", a.deleteFileAPI)
 	mux.HandleFunc("GET /api/files/{id}/download", a.downloadFileAPI)
 	mux.HandleFunc("GET /api/files/download.zip", a.downloadZipAPI)
-	log.Printf("demo app listening on %s", cfg.Addr)
-	log.Fatal(http.ListenAndServe(cfg.Addr, mux))
+	if err := pw.Run(context.Background(), mux); err != nil {
+		slog.Error("demo_app_failed", "error", err)
+		os.Exit(1)
+	}
 }
 
-func (a *app) index(w http.ResponseWriter, _ *http.Request) {
+func (a *app) index(w http.ResponseWriter, r *http.Request) {
+	pw.SetRoute(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = indexTemplate.Execute(w, map[string]string{"UploadBasePath": a.cfg.UploadBasePath})
 }
 
-func (a *app) configAPI(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"upload_base_path":          a.cfg.UploadBasePath,
-		"download_mode":             a.cfg.DownloadMode,
-		"streamuploader_public_url": a.cfg.StreamUploaderPublicURL,
+// script serves the page's JavaScript as its own file, which is what the
+// framework's default Content-Security-Policy (script-src 'self') admits.
+func (a *app) script(w http.ResponseWriter, r *http.Request) {
+	pw.SetRoute(w, r)
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = io.WriteString(w, demoScript)
+}
+
+func (a *app) configAPI(w http.ResponseWriter, r *http.Request) {
+	pw.WriteAPI(w, r, configView{
+		UploadBasePath:          a.cfg.UploadBasePath,
+		DownloadMode:            a.cfg.DownloadMode,
+		StreamUploaderPublicURL: a.cfg.StreamUploaderPublicURL,
 	})
 }
 
 func (a *app) uploadProxy(w http.ResponseWriter, r *http.Request) {
 	target, err := url.Parse(strings.TrimRight(a.cfg.StreamUploaderProxyURL, "/"))
 	if err != nil || target.Scheme == "" || target.Host == "" {
-		writeError(w, http.StatusBadGateway, "upload_proxy_not_configured", "streamuploader proxy URL is invalid")
+		writeProblem(w, r, http.StatusBadGateway, "upload_proxy_not_configured", "streamuploader proxy URL is invalid")
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -146,28 +251,28 @@ func (a *app) uploadProxy(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func (a *app) listFilesAPI(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.store.list())
+func (a *app) listFilesAPI(w http.ResponseWriter, r *http.Request) {
+	pw.WriteAPI(w, r, viewsOfRecords(a.store.list()))
 }
 
 func (a *app) createFilesAPI(w http.ResponseWriter, r *http.Request) {
-	var req submitRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+	req, err := pw.Parse[submitInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	if strings.TrimSpace(req.Title) == "" {
 		req.Title = "Untitled"
 	}
 	if len(req.Files) == 0 {
-		writeError(w, http.StatusBadRequest, "missing_files", "files is required")
+		writeProblem(w, r, http.StatusBadRequest, "missing_files", "files is required")
 		return
 	}
 	now := time.Now().UTC()
 	records := make([]fileRecord, 0, len(req.Files))
 	for _, file := range req.Files {
 		if file.ObjectKey == "" {
-			writeError(w, http.StatusBadRequest, "missing_object_key", "each file needs object_key")
+			writeProblem(w, r, http.StatusBadRequest, "missing_object_key", "each file needs object_key")
 			return
 		}
 		name := file.OriginalName
@@ -190,56 +295,59 @@ func (a *app) createFilesAPI(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := a.store.add(records); err != nil {
-		writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+		writeProblem(w, r, http.StatusInternalServerError, "store_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, records)
+	pw.WriteStatus(w, r, http.StatusCreated, viewsOfRecords(records))
 }
 
 func (a *app) deleteFileAPI(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := pw.PathValue(r, "id")
 	rec, ok := a.store.get(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	if a.cfg.DeleteObjectsOnDelete {
 		if err := a.deleteObjectFromStreamUploader(r.Context(), rec.ObjectKey); err != nil {
-			writeError(w, http.StatusBadGateway, "streamuploader_delete_error", err.Error())
+			writeProblem(w, r, http.StatusBadGateway, "streamuploader_delete_error", err.Error())
 			return
 		}
 	}
 	if err := a.store.delete(id); err != nil {
-		writeError(w, http.StatusInternalServerError, "store_error", err.Error())
+		writeProblem(w, r, http.StatusInternalServerError, "store_error", err.Error())
 		return
 	}
+	pw.SetRoute(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *app) downloadFileAPI(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := pw.PathValue(r, "id")
 	rec, ok := a.store.get(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	target, err := a.downloadURL(r.Context(), rec, r.URL.Query().Get("mode"))
+	mode, _ := pw.QueryValue(r, "mode")
+	target, err := a.downloadURL(r.Context(), rec, mode)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "download_url_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "download_url_error", err.Error())
 		return
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	pw.Redirect(w, r, target, http.StatusFound)
 }
 
 func (a *app) downloadZipAPI(w http.ResponseWriter, r *http.Request) {
-	ids := splitCSV(r.URL.Query().Get("ids"))
+	idsParam, _ := pw.QueryValue(r, "ids")
+	ids := splitCSV(idsParam)
 	if len(ids) == 0 {
-		writeError(w, http.StatusBadRequest, "missing_ids", "ids is required")
+		writeProblem(w, r, http.StatusBadRequest, "missing_ids", "ids is required")
 		return
 	}
 	records := a.store.getMany(ids)
 	if len(records) == 0 {
-		writeError(w, http.StatusNotFound, "not_found", "files not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "files not found")
 		return
 	}
 	keys := make([]string, 0, len(records))
@@ -247,7 +355,7 @@ func (a *app) downloadZipAPI(w http.ResponseWriter, r *http.Request) {
 		keys = append(keys, url.PathEscape(rec.ObjectKey))
 	}
 	archive := streamUploaderPublicURL(a.cfg) + "/api/files/" + strings.Join(keys, ",") + "?filename=" + url.QueryEscape("streamuploader-demo.zip")
-	http.Redirect(w, r, archive, http.StatusFound)
+	pw.Redirect(w, r, archive, http.StatusFound)
 }
 
 func (a *app) downloadURL(ctx context.Context, rec fileRecord, mode string) (string, error) {
@@ -434,7 +542,6 @@ func (s *store) saveLocked() error {
 
 func loadConfig() appConfig {
 	return appConfig{
-		Addr:                    env("ADDR", ":8081"),
 		DataPath:                env("DEMO_DATA_PATH", "/data/files.json"),
 		UploadBasePath:          cleanBasePath(env("UPLOAD_BASE_PATH", "/api/upload")),
 		DownloadMode:            env("DOWNLOAD_MODE", "presigned"),
@@ -457,8 +564,8 @@ func publicObjectURL(cfg appConfig, objectKey string) string {
 	return base + "/" + escapeObjectPath(objectKey)
 }
 
-func thumbnailURL(cfg appConfig, file fileFact) string {
-	if file.Thumbnail != nil && file.Thumbnail.URL != "" {
+func thumbnailURL(cfg appConfig, file fileFactInput) string {
+	if file.Thumbnail.URL != "" {
 		return file.Thumbnail.URL
 	}
 	if file.ObjectKey == "" {
@@ -490,14 +597,10 @@ func splitCSV(value string) []string {
 	return out
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"error": code, "message": message})
+// writeProblem answers with an RFC 9457 problem document carrying the demo's
+// stable error code.
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	pw.WriteProblem(w, r, pw.Problem{Status: status, Title: http.StatusText(status), Code: code, Message: message})
 }
 
 func env(key, fallback string) string {
@@ -654,8 +757,13 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
   </section>
 </main>
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="true"></div>
-<script>
-const uploadBase = "{{.UploadBasePath}}";
+<script src="/demo/app.js" data-upload-base="{{.UploadBasePath}}"></script>
+</body>
+</html>`))
+
+// demoScript is the page script, served at /demo/app.js. It must not contain
+// a backtick.
+const demoScript = `const uploadBase = (document.currentScript && document.currentScript.dataset.uploadBase) || "/api/upload";
 const uploadsEl = document.querySelector("#uploads");
 const fileInput = document.querySelector("#files");
 const saveButton = document.querySelector("#save");
@@ -908,7 +1016,9 @@ async function readJSONOrText(resp) {
 function formatResponseError(value) {
   if (!value) return "request failed";
   if (typeof value === "string") return value.trim() || "request failed";
+  if (value.detail) return value.detail;
   if (value.message) return value.message;
+  if (value.code) return value.code;
   if (value.error) return value.error;
   return JSON.stringify(value);
 }
@@ -1035,6 +1145,4 @@ function formatBytes(n) {
 
 connectWatch();
 loadFiles();
-</script>
-</body>
-</html>`))
+`

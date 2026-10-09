@@ -142,59 +142,59 @@ facts:
         content_type_mismatch:
           status: 415
           body:
-            error: content_type_mismatch
-            message: declared content type does not match detected content type
+            code: content_type_mismatch
+            detail: declared content type does not match detected content type
         detected_type_unknown:
           status: 415
           body:
-            error: detected_type_unknown
-            message: uploaded content type could not be detected
+            code: detected_type_unknown
+            detail: uploaded content type could not be detected
         script_upload_rejected:
           status: 415
           body:
-            error: script_upload_rejected
-            message: detected script family, expected script MIME, and opt-in setting
+            code: script_upload_rejected
+            detail: detected script family, expected script MIME, and opt-in setting
               hint
         content_type_denied:
           status: 415
           body:
-            error: content_type_denied
-            message: uploaded content type is denied
+            code: content_type_denied
+            detail: uploaded content type is denied
         content_type_not_allowed:
           status: 415
           body:
-            error: content_type_not_allowed
-            message: uploaded content type is not allowed
+            code: content_type_not_allowed
+            detail: uploaded content type is not allowed
         prefix_read_failed:
           status: 400
           body:
-            error: prefix_read_failed
-            message: uploaded content prefix could not be read
+            code: prefix_read_failed
+            detail: uploaded content prefix could not be read
         upload_key_expired:
           status: 410
           body:
-            error: upload_key_expired
-            message: upload key start deadline has passed
+            code: upload_key_expired
+            detail: upload key start deadline has passed
         upload_deadline_exceeded:
           status: 408
           body:
-            error: upload_deadline_exceeded
-            message: upload did not finish before deadline
+            code: upload_deadline_exceeded
+            detail: upload did not finish before deadline
         file_sanitization_policy_violation:
           status: 415
           body:
-            error: file_sanitization_policy_violation
-            message: uploaded file violates configured file type sanitization policy
+            code: file_sanitization_policy_violation
+            detail: uploaded file violates configured file type sanitization policy
         resource_limit_exceeded:
           status: 413
           body:
-            error: resource_limit_exceeded
-            message: uploaded file exceeds configured resource limits
+            code: resource_limit_exceeded
+            detail: uploaded file exceeds configured resource limits
         structural_validation_failed:
           status: 415
           body:
-            error: structural_validation_failed
-            message: uploaded file is malformed or structurally inconsistent
+            code: structural_validation_failed
+            detail: uploaded file is malformed or structurally inconsistent
     cancel_upload_key:
       method: DELETE
       path: '{base_path}/keys/{upload_key}'
@@ -208,13 +208,13 @@ facts:
         owner_mismatch:
           status: 403
           body:
-            error: owner_mismatch
-            message: upload key belongs to another client
+            code: owner_mismatch
+            detail: upload key belongs to another client
         upload_already_started:
           status: 409
           body:
-            error: upload_already_started
-            message: upload key can be canceled only before upload starts
+            code: upload_already_started
+            detail: upload key can be canceled only before upload starts
     wait_uploads:
       method: POST
       path: '{base_path}/wait'
@@ -272,6 +272,7 @@ facts:
   - policy:frontend-upload-cancel-policy
   - api:backend-control-api
   - requirement:application-metadata-submit
+  error_body: RFC 9457 problem document (application/problem+json) with type, title, status, detail and code; code carries the stable value listed under errors, detail the message (decision:web-framework)
 relations:
 - relation: mentions
   to: api:backend-control-api

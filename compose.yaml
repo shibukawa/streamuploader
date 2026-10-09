@@ -19,7 +19,7 @@ services:
       dockerfile: demo/Dockerfile
     image: streamuploader-demo-app:local
     environment:
-      SU_ADDR: :8081
+      PORT: "8081"
       SU_DEMO_DATA_PATH: /data/files.json
       SU_UPLOAD_BASE_PATH: /api/upload
       SU_DOWNLOAD_MODE: presigned

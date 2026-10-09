@@ -36,6 +36,7 @@ facts:
     - public upload listener exposes /healthz for frontend-facing process health
     - backend control listener exposes /healthz for backend/control-plane health
     - probes can target either or both listeners
+  framework_probes: the Popcorn Web probes (server.health, server.readiness) can be configured on other paths; /healthz stays an application route, so naming it as server.health is refused at startup (decision:web-framework)
   constraints:
   - health responses do not expose secrets
   - backend-only readiness detail is returned only on backend listener when enabled
