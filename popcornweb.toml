@@ -1,0 +1,24 @@
+[project]
+name = "streamuploader"
+main = "./cmd/drive"
+toolchain = "go"
+
+# Each purpose reads only the directories it lists, and nothing else. A source
+# directory is invisible to that purpose until it appears here.
+[generate]
+handlers = ["internal/server", "drive/server", "demo/app"]
+templates = []
+queries = []
+config = ["cmd/drive", "streamuploadercli"]
+line_directives = false
+
+[generate.api.cbor]
+enabled = false
+
+[dev.watch]
+includes = []
+excludes = ["drive/ui/node_modules", "search/target", ".cache"]
+
+[dev.logs]
+enabled = true
+directory = ".log"

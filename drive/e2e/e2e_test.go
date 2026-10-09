@@ -140,7 +140,7 @@ func buildStack(t *testing.T, store *memstore.Store, indexDir, mode string) *sta
 	drv := driveserver.New(driveserver.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", OverlayTTL: -1}, driveserver.Deps{
 		Store: store, Journal: jstore, Metas: metas, Search: search, Indexer: control, Uploader: uploader,
 	})
-	srv := httptest.NewServer(drv.Handler())
+	srv := newTestServer(t, drv.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	s.srv, s.client = srv, &http.Client{Jar: jar}

@@ -143,9 +143,23 @@ Password-protected documents: the first upload returns `422 document_password_re
 
 `document_processing` in the security config tunes the behavior: `fail_upload_on_error` (default `false`) cancels the upload with `422 document_processing_failed` when a document cannot be converted, instead of accepting it with failed derived assets (env `DOCUMENT_PROCESSING_FAIL_UPLOAD_ON_ERROR`; it forces sequential execution); `max_input_bytes` bounds the document read for conversion; `execution_mode` is `async` or `sequential`.
 
+## Web framework
+
+The servers (`cmd/streamuploader`, `cmd/drive`, `demo/app`) are [Popcorn Web](https://github.com/shibukawa/popcornweb) applications. Routing stays on the standard `net/http` mux and the handlers stay `http.HandlerFunc`; what the framework owns is the request chain (request ids, access log, panic recovery, security headers, body cap, operational endpoints), the listener lifecycle, and the typed, reflection-free request binding and JSON writing. `go tool pw generate` reads the handlers and writes the binders, the JSON codecs and the OpenAPI document into `*_pw_gen.go` files, which are build outputs and not committed: run it after cloning and after changing a handler, an input or a view type, or a `pw.RegisterConfig` / `pw.RegisterSubCommand` declaration. `go tool pw check` reports stale output.
+
+Framework settings come from `config.{APP_ENV}.toml` (searched in the working directory and in `config/`), environment variables and command-line options, with `default < file < environment < option` precedence; `./drive --help` lists every key, and `--generate-config toml` prints a scaffold. `config/config.dev.toml` is the development file: it serves the generated OpenAPI document at `/openapi.json` and the Scalar reference at `/docs`. Points that are specific to this repository:
+
+- `streamuploader` listens on `SU_ADDR` and `SU_BACKEND_ADDR` (two listeners), with the framework chain applied to each; `drive` and the demo app listen on the framework's `server.port` (`PORT`, `--port`, default 8080).
+- Uploads stream for minutes and can be large, so at startup the framework's `server.read_timeout` is turned off and `server.max_request_body` is lifted when it is below the upload limit; the upload policy bounds request bodies instead.
+- `SU_LOG_FORMAT` and `SU_LOG_LEVEL` are honored as defaults for `observability.stdout_format` (`json` or `plaintext`) and `observability.minimum_level`; the application's own records follow the framework's encoding.
+- Errors are RFC 9457 problem documents (`application/problem+json`): `{"type":"about:blank","title":"Bad Request","status":400,"detail":"...","code":"content_type_mismatch"}`. The stable machine-readable value is `code`, the human message is `detail`. A 5xx is reported as `code: internal` with `detail: internal error`; the cause stays in the server log.
+- `/healthz` is served by the applications themselves (JSON `{"status":"ok"}`), on every listener. The framework's own probes (`server.health`, `server.readiness`) can be configured on other paths.
+- Subcommands are framework subcommands: `streamuploader thumbnail-convert --width 400 --height 400 --fit contain --format avif`, `drive reindex`, `drive index-once`.
+
 ## Local build
 
 ```bash
+go tool pw generate      # binders, JSON codecs, OpenAPI; rerun after changing handlers
 go test ./...
 go build ./cmd/streamuploader
 go build ./demo/app
@@ -250,6 +264,7 @@ Build from source:
 ```bash
 (cd search && cargo build --release)      # sidecar, Rust 1.85+; ~50 MB with the IPADIC dictionary
 (cd drive/ui && npm install && npm run build)   # UI bundle, only after changing drive/ui/src
+go tool pw generate                       # framework binders and codecs
 go build ./cmd/drive
 ```
 
@@ -306,25 +321,25 @@ The kit is `.env` (every setting, read by compose and passed to the container), 
 
 Generated files carry no credentials except the development pair of the local RustFS. Re-running `drive init --force` regenerates the kit from the flags, not from edits. The requirement, the per-target limits and the open questions are in `.knowledge/concepts/requirement/drive-init-subcommand.yaml`; the generator is `drive/deploy` with golden kits under `drive/deploy/testdata`.
 
-Environment (in addition to the `SU_*` variables of streamuploader, whose S3 settings the Drive reuses):
+Configuration: the listener is the framework's (`server.port` / `PORT` / `--port`, default 8080); the object store and upload policy are the `SU_*` variables of streamuploader; the Drive's own settings are the `[drive]` table of `config.{APP_ENV}.toml`, each also an environment variable and a `--drive-<key>` option:
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `DRIVE_TENANT` | `default` | tenant id used in every key and index document |
-| `DRIVE_PREFIX` | `drive/` | key prefix of journal, meta and audit objects in the bucket |
-| `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
-| `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
-| `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
-| `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; in all-in-one mode writes also poke the indexer immediately |
-| `DRIVE_INDEX_SNAPSHOT` | `true` | publish the index to `drive/search/{tenant}/` after every commit and adopt it at start; `false` keeps the index local (all-in-one only) |
-| `DRIVE_SNAPSHOT_REFRESH` | `10s` | server mode: how often the pointer is checked for a new generation (one HEAD request) |
-| `DRIVE_SNAPSHOT_GC_GRACE` | `15m` | how long a segment file no pointer references stays in the bucket; keep it longer than the refresh interval plus a download |
-| `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
-| `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
-| `DRIVE_WORM_MODE` | `off` | `append_only` or `strict` turns on the WORM audit mode described below |
-| `DRIVE_WORM_ACCESS_WINDOW` | `1m` | repeated reads of one object by one client within this window produce a single `file.accessed` event; `0` records every request |
-| `SU_OBJECT_LOCK_MODE` | unset | `governance`, `compliance` or `legal_hold`: the Object Lock put on originals, journal events and checkpoints |
-| `SU_OBJECT_LOCK_RETENTION` | unset | retention period for `governance` and `compliance`, such as `87600h` |
+| Key | Environment | Default | Meaning |
+|---|---|---|---|
+| `drive.tenant` | `DRIVE_TENANT` | `default` | tenant id used in every key and index document |
+| `drive.prefix` | `DRIVE_PREFIX` | `drive/` | key prefix of journal, meta and audit objects in the bucket |
+| `drive.index_dir` | `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
+| `drive.search_bin` | `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
+| `drive.search_tokenizer` | `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
+| `drive.index_interval` | `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; in all-in-one mode writes also poke the indexer immediately |
+| `drive.index_snapshot` | `DRIVE_INDEX_SNAPSHOT` | `true` | publish the index to `drive/search/{tenant}/` after every commit and adopt it at start; `false` keeps the index local (all-in-one only) |
+| `drive.snapshot_refresh` | `DRIVE_SNAPSHOT_REFRESH` | `10s` | server mode: how often the pointer is checked for a new generation (one HEAD request) |
+| `drive.snapshot_gc_grace` | `DRIVE_SNAPSHOT_GC_GRACE` | `15m` | how long a segment file no pointer references stays in the bucket; keep it longer than the refresh interval plus a download |
+| `drive.delivery` | `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
+| `drive.storage` | `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
+| `drive.worm_mode` | `DRIVE_WORM_MODE` | `off` | `append_only` or `strict` turns on the WORM audit mode described below |
+| `drive.worm_access_window` | `DRIVE_WORM_ACCESS_WINDOW` | `1m` | repeated reads of one object by one client within this window produce a single `file.accessed` event; `0` records every request |
+| (streamuploader) | `SU_OBJECT_LOCK_MODE` | unset | `governance`, `compliance` or `legal_hold`: the Object Lock put on originals, journal events and checkpoints |
+| (streamuploader) | `SU_OBJECT_LOCK_RETENTION` | unset | retention period for `governance` and `compliance`, such as `87600h` |
 
 API (same origin as the upload API; no authentication yet):
 

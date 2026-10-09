@@ -21,18 +21,18 @@ import (
 	"net/url"
 	"path"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/gorilla/websocket"
+	"github.com/shibukawa/popcornweb/pw"
 
 	"streamuploader/auth"
 	"streamuploader/internal/config"
 	"streamuploader/internal/docpreview"
 	"streamuploader/internal/extraction"
+	"streamuploader/internal/framework"
 	"streamuploader/internal/model"
 	"streamuploader/internal/storage"
 	"streamuploader/internal/thumbnail"
@@ -44,7 +44,6 @@ type Server struct {
 	cfg        config.Config
 	store      storage.Store
 	proxy      *httputil.ReverseProxy
-	upgrader   websocket.Upgrader
 	mu         sync.RWMutex
 	uploads    map[string]*model.UploadItem
 	watchers   map[string]map[chan model.WatchServerMessage]struct{}
@@ -143,14 +142,10 @@ func New(cfg config.Config, store storage.Store) *Server {
 			}
 		}
 	}
-	checkOrigin := func(r *http.Request) bool {
-		return originAllowed(r.Header.Get("Origin"), cfg.AllowedOrigins)
-	}
 	return &Server{
 		cfg:        cfg,
 		store:      store,
 		proxy:      proxy,
-		upgrader:   websocket.Upgrader{CheckOrigin: checkOrigin},
 		uploads:    map[string]*model.UploadItem{},
 		watchers:   map[string]map[chan model.WatchServerMessage]struct{}{},
 		uploadBase: strings.TrimRight(cfg.UploadBasePath, "/"),
@@ -159,56 +154,63 @@ func New(cfg config.Config, store storage.Store) *Server {
 	}
 }
 
+// Handler is the public listener's routes: the upload and file APIs, the
+// optional reverse proxy and, when no backend listener is configured, the
+// backend control API under its own path. It is the application half of the
+// stack; Run wraps it in the framework chain, and an embedding such as the
+// Drive mounts it inside its own mux.
 func (s *Server) Handler() http.Handler {
-	publicMux := http.NewServeMux()
+	publicMux := pw.NewServeMux()
 	s.registerPublicRoutes(publicMux)
 	if s.proxy != nil && s.cfg.Mode == "simple_fronting_reverse_proxy" {
 		publicMux.Handle("/", s.proxy)
 	}
 	frontendHandler := auth.NewFrontendAuthMiddleware(s.withCORS(publicMux), &s.cfg)
 	if s.cfg.BackendAddr != "" {
-		return s.withAccessLog(frontendHandler)
+		return frontendHandler
 	}
 	backendHandler := auth.NewBackendAuthMiddleware(s.backendRoutesHandler(), &s.cfg)
-	return s.withAccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.isBackendPath(r.URL.Path) {
 			backendHandler.ServeHTTP(w, r)
 			return
 		}
 		frontendHandler.ServeHTTP(w, r)
-	}))
+	})
 }
 
+// BackendHandler is the backend control listener's routes, served when
+// SU_BACKEND_ADDR names a second listener.
 func (s *Server) BackendHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		s.health(w)
+	mux := pw.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		s.health(w, r)
 	})
 	backendHandler := auth.NewBackendAuthMiddleware(s.backendRoutesHandler(), &s.cfg)
-	return s.withAccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.isBackendPath(r.URL.Path) {
 			backendHandler.ServeHTTP(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
-	}))
+	})
 }
 
-func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		s.health(w)
+func (s *Server) registerPublicRoutes(mux *pw.ServeMux) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		s.health(w, r)
 	})
 	mux.HandleFunc("POST "+s.uploadBase+"/keys", s.createUploadKey)
 	mux.HandleFunc("POST "+s.uploadBase+"/wait", s.waitUploads)
 	mux.HandleFunc("GET "+s.uploadBase+"/watch", s.watchUploads)
 	mux.HandleFunc("GET "+s.uploadBase+"/keys/{uploadKey}", func(w http.ResponseWriter, r *http.Request) {
-		s.getUpload(w, r, r.PathValue("uploadKey"))
+		s.getUpload(w, r, pw.PathValue(r, "uploadKey"))
 	})
 	mux.HandleFunc("DELETE "+s.uploadBase+"/keys/{uploadKey}", func(w http.ResponseWriter, r *http.Request) {
-		s.cancelUploadKey(w, r, r.PathValue("uploadKey"))
+		s.cancelUploadKey(w, r, pw.PathValue(r, "uploadKey"))
 	})
 	mux.HandleFunc("PUT "+s.uploadBase+"/keys/{uploadKey}/content", func(w http.ResponseWriter, r *http.Request) {
-		s.uploadFile(w, r, r.PathValue("uploadKey"))
+		s.uploadFile(w, r, pw.PathValue(r, "uploadKey"))
 	})
 	mux.HandleFunc("GET "+s.fileBase+"/shared/{sharedKey}/content", func(w http.ResponseWriter, r *http.Request) {
 		s.streamSharedObject(w, r, false)
@@ -227,7 +229,7 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+s.filesBase+"/{keys}", s.streamFrontendArchive)
 }
 
-func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
+func (s *Server) registerBackendRoutes(mux *pw.ServeMux) {
 	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
 	mux.HandleFunc("POST "+base+"/file/presigned-url", s.createPresignedURL)
 	mux.HandleFunc("POST "+base+"/file/shared-keys", s.createSharedKey)
@@ -241,17 +243,17 @@ func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.deleteObjectAPI)
 	}
 	mux.HandleFunc("GET "+base+"/objects/{objectKey}/extracted-content", func(w http.ResponseWriter, r *http.Request) {
-		s.getExtractedContent(w, r, r.PathValue("objectKey"))
+		s.getExtractedContent(w, r, pw.PathValue(r, "objectKey"))
 	})
 	mux.HandleFunc("POST "+base+"/objects/{objectKey}/extracted-content/presigned-url", func(w http.ResponseWriter, r *http.Request) {
-		s.createExtractedContentPresignedURL(w, r, r.PathValue("objectKey"))
+		s.createExtractedContentPresignedURL(w, r, pw.PathValue(r, "objectKey"))
 	})
 	mux.HandleFunc("GET "+base+"/tasks/wait", s.waitAsyncTasks)
 }
 
 // wormReadonly refuses a destructive backend operation in WORM mode.
-func (s *Server) wormReadonly(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusMethodNotAllowed, "worm_readonly", "this deployment runs in WORM mode: stored objects cannot be deleted or replaced")
+func (s *Server) wormReadonly(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r, http.StatusMethodNotAllowed, "worm_readonly", "this deployment runs in WORM mode: stored objects cannot be deleted or replaced")
 }
 
 // finalRetention is the object lock attached to a final uploaded object.
@@ -260,7 +262,7 @@ func (s *Server) finalRetention() *storage.Retention {
 }
 
 func (s *Server) backendRoutesHandler() http.Handler {
-	mux := http.NewServeMux()
+	mux := pw.NewServeMux()
 	s.registerBackendRoutes(mux)
 	return mux
 }
@@ -284,23 +286,8 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) health(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-type presignRequest struct {
-	ObjectKey  string `json:"object_key"`
-	FileName   string `json:"file_name,omitempty"`
-	TTLSeconds int    `json:"ttl_seconds,omitempty"`
-}
-
-type sharedKeyRequest struct {
-	ObjectKey   string `json:"object_key"`
-	FileName    string `json:"file_name,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	CreatedBy   string `json:"created_by,omitempty"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	TTLSeconds  int    `json:"ttl_seconds,omitempty"`
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	pw.WriteAPI(w, r, healthView{Status: "ok"})
 }
 
 type sharedKeyRecord struct {
@@ -313,59 +300,44 @@ type sharedKeyRecord struct {
 	Revoked         bool   `json:"revoked,omitempty"`
 }
 
-type extractedContentResponse struct {
-	ObjectKey         string                      `json:"object_key"`
-	ArtifactObjectKey string                      `json:"artifact_object_key"`
-	Status            string                      `json:"status"`
-	Content           *extraction.Content         `json:"content,omitempty"`
-	Tasks             []model.WaitAsyncTaskStatus `json:"tasks,omitempty"`
-	ErrorCode         string                      `json:"error_code,omitempty"`
-}
-
-type extractedContentPresignRequest struct {
-	TTLSeconds           int  `json:"ttl_seconds,omitempty"`
-	Wait                 bool `json:"wait,omitempty"`
-	IncludePendingStatus bool `json:"include_pending_status,omitempty"`
-}
-
 func (s *Server) deleteSharedKeyAPI(w http.ResponseWriter, r *http.Request) {
-	sharedKey := r.PathValue("sharedKey")
+	sharedKey := pw.PathValue(r, "sharedKey")
 	if strings.TrimSpace(sharedKey) == "" || strings.Contains(sharedKey, "/") {
-		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
 		return
 	}
 	if !s.cfg.EnableSharedKey {
-		writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "shared key API is disabled")
 		return
 	}
 	if err := s.deleteSharedKey(r.Context(), sharedKey); err != nil {
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) deleteObjectAPI(w http.ResponseWriter, r *http.Request) {
-	objectKey, ok := backendObjectKeyFromPathValue(w, r.PathValue("objectKey"))
+	objectKey, ok := backendObjectKeyFromPathValue(w, r, pw.PathValue(r, "objectKey"))
 	if !ok {
 		return
 	}
 	if err := s.deleteObjectAndShares(r.Context(), objectKey); err != nil {
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createPresignedURL(w http.ResponseWriter, r *http.Request) {
-	var req presignRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+	req, err := pw.Parse[presignInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
 		return
 	}
 	objectKey := strings.TrimSpace(req.ObjectKey)
 	if objectKey == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object_key is required")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object_key is required")
 		return
 	}
 	ttl := s.cfg.PresignTTL
@@ -383,65 +355,66 @@ func (s *Server) createPresignedURL(w http.ResponseWriter, r *http.Request) {
 		ResponseContentDisposition: contentDispositionAttachment(name),
 	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "presign_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "presign_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"url":        out.URL,
-		"expires_at": out.ExpiresAt,
-	})
+	pw.WriteAPI(w, r, presignView{URL: out.URL, ExpiresAt: formatTime(out.ExpiresAt)})
 }
 
 func (s *Server) getExtractedContent(w http.ResponseWriter, r *http.Request, escapedKey string) {
-	objectKey, ok := backendObjectKeyFromPathValue(w, escapedKey)
+	objectKey, ok := backendObjectKeyFromPathValue(w, r, escapedKey)
 	if !ok {
 		return
 	}
-	query := r.URL.Query()
+	in, err := pw.Parse[extractedContentInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
+		return
+	}
 	kinds := []string{"text_extraction", "metadata_extraction", "ocr_extraction"}
-	if queryBool(query.Get("wait")) {
-		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, query.Get("timeout_seconds"), query.Get("poll_millis"))
+	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
+	if in.Wait {
+		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, in.TimeoutSeconds, in.PollMillis)
 		if !ready {
-			writeJSON(w, http.StatusAccepted, extractedContentResponse{
+			pw.WriteStatus(w, r, http.StatusAccepted, extractedContentStatus{
 				ObjectKey:         objectKey,
-				ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+				ArtifactObjectKey: artifactKey,
 				Status:            "pending",
-				Tasks:             tasks,
+				Tasks:             viewsOfAsyncTasks(tasks),
 			})
 			return
 		}
 	}
 	tasks, ready := s.asyncTaskStatuses(r.Context(), []string{objectKey}, kinds)
 	if !ready {
-		writeJSON(w, http.StatusAccepted, extractedContentResponse{
+		pw.WriteStatus(w, r, http.StatusAccepted, extractedContentStatus{
 			ObjectKey:         objectKey,
-			ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+			ArtifactObjectKey: artifactKey,
 			Status:            "pending",
-			Tasks:             tasks,
+			Tasks:             viewsOfAsyncTasks(tasks),
 		})
 		return
 	}
-	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
 	out, err := s.store.GetObject(r.Context(), storage.GetInput{Bucket: s.cfg.Bucket, Key: artifactKey})
 	if err != nil {
 		status := "not_scheduled"
 		if s.cfg.TextExtraction.Enabled {
 			status = "skipped"
 		}
-		if queryBool(query.Get("status_only")) {
-			writeJSON(w, http.StatusOK, extractedContentResponse{
+		if in.StatusOnly {
+			pw.WriteAPI(w, r, extractedContentStatus{
 				ObjectKey:         objectKey,
 				ArtifactObjectKey: artifactKey,
 				Status:            status,
-				Tasks:             tasks,
+				Tasks:             viewsOfAsyncTasks(tasks),
 			})
 			return
 		}
-		writeJSON(w, http.StatusNotFound, extractedContentResponse{
+		pw.WriteStatus(w, r, http.StatusNotFound, extractedContentStatus{
 			ObjectKey:         objectKey,
 			ArtifactObjectKey: artifactKey,
 			Status:            status,
-			Tasks:             tasks,
+			Tasks:             viewsOfAsyncTasks(tasks),
 			ErrorCode:         "artifact_not_found",
 		})
 		return
@@ -450,62 +423,67 @@ func (s *Server) getExtractedContent(w http.ResponseWriter, r *http.Request, esc
 	var content extraction.Content
 	body, err := io.ReadAll(io.LimitReader(out.Body, s.cfg.TextExtraction.MaxOutputBytes+1))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
 	if s.cfg.TextExtraction.MaxOutputBytes > 0 && int64(len(body)) > s.cfg.TextExtraction.MaxOutputBytes {
-		writeError(w, http.StatusBadGateway, "artifact_too_large", "extracted content artifact exceeds configured maximum")
+		writeProblem(w, r, http.StatusBadGateway, "artifact_too_large", "extracted content artifact exceeds configured maximum")
 		return
 	}
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &content); err != nil {
-			writeError(w, http.StatusBadGateway, "invalid_artifact", "extracted content artifact is not valid JSON")
+			writeProblem(w, r, http.StatusBadGateway, "invalid_artifact", "extracted content artifact is not valid JSON")
 			return
 		}
 	}
-	if include := includeSet(query["include"]); len(include) > 0 {
+	if include := includeSet(in.Include); len(include) > 0 {
 		content = extraction.Filter(content, include)
 	}
-	resp := extractedContentResponse{
+	if in.StatusOnly {
+		pw.WriteAPI(w, r, extractedContentStatus{
+			ObjectKey:         objectKey,
+			ArtifactObjectKey: artifactKey,
+			Status:            "generated",
+			Tasks:             viewsOfAsyncTasks(tasks),
+		})
+		return
+	}
+	pw.WriteAPI(w, r, extractedContentResponse{
 		ObjectKey:         objectKey,
 		ArtifactObjectKey: artifactKey,
 		Status:            "generated",
-		Tasks:             tasks,
-	}
-	if !queryBool(query.Get("status_only")) {
-		resp.Content = &content
-	}
-	writeJSON(w, http.StatusOK, resp)
+		Content:           viewOfExtractedContent(content),
+		Tasks:             viewsOfAsyncTasks(tasks),
+	})
 }
 
 func (s *Server) createExtractedContentPresignedURL(w http.ResponseWriter, r *http.Request, escapedKey string) {
-	objectKey, ok := backendObjectKeyFromPathValue(w, escapedKey)
+	objectKey, ok := backendObjectKeyFromPathValue(w, r, escapedKey)
 	if !ok {
 		return
 	}
-	var req extractedContentPresignRequest
-	if r.Body != nil {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
-			return
-		}
+	// An empty body is an ordinary request here: every field has a default.
+	req, err := pw.Parse[extractedContentPresignInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
+		return
 	}
 	kinds := []string{"text_extraction", "metadata_extraction", "ocr_extraction"}
+	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
 	if req.Wait {
-		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, "", "")
+		tasks, ready := s.waitForAsyncTaskKinds(r.Context(), []string{objectKey}, kinds, 0, 0)
 		if !ready {
-			writeJSON(w, http.StatusAccepted, extractedContentResponse{
+			pw.WriteStatus(w, r, http.StatusAccepted, extractedContentStatus{
 				ObjectKey:         objectKey,
-				ArtifactObjectKey: extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction),
+				ArtifactObjectKey: artifactKey,
 				Status:            "pending",
-				Tasks:             tasks,
+				Tasks:             viewsOfAsyncTasks(tasks),
 			})
 			return
 		}
 	}
-	artifactKey := extraction.ArtifactObjectKey(objectKey, s.cfg.TextExtraction)
 	if _, err := s.store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: artifactKey}); err != nil {
-		writeJSON(w, http.StatusNotFound, extractedContentResponse{
+		pw.WriteStatus(w, r, http.StatusNotFound, extractedContentStatus{
 			ObjectKey:         objectKey,
 			ArtifactObjectKey: artifactKey,
 			Status:            "not_scheduled",
@@ -523,30 +501,30 @@ func (s *Server) createExtractedContentPresignedURL(w http.ResponseWriter, r *ht
 		Expires: ttl,
 	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "presign_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "presign_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"artifact_object_key": artifactKey,
-		"url":                 out.URL,
-		"expires_at":          out.ExpiresAt,
-		"status":              "generated",
+	pw.WriteAPI(w, r, extractedPresignView{
+		ArtifactObjectKey: artifactKey,
+		URL:               out.URL,
+		ExpiresAt:         formatTime(out.ExpiresAt),
+		Status:            "generated",
 	})
 }
 
 func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.EnableSharedKey {
-		writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "shared key API is disabled")
 		return
 	}
-	var req sharedKeyRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+	req, err := pw.Parse[sharedKeyInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
 		return
 	}
 	objectKey := strings.TrimSpace(req.ObjectKey)
 	if objectKey == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object_key is required")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object_key is required")
 		return
 	}
 	now := time.Now().UTC()
@@ -554,18 +532,18 @@ func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresAt != "" {
 		parsed, err := time.Parse(time.RFC3339, req.ExpiresAt)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_expires_at", "expires_at must be RFC3339")
+			writeProblem(w, r, http.StatusBadRequest, "invalid_expires_at", "expires_at must be RFC3339")
 			return
 		}
 		if s.cfg.SharedKeyMaxTTL > 0 && parsed.UTC().After(now.Add(s.cfg.SharedKeyMaxTTL)) {
-			writeError(w, http.StatusBadRequest, "ttl_too_large", "shared key expiry exceeds max ttl")
+			writeProblem(w, r, http.StatusBadRequest, "ttl_too_large", "shared key expiry exceeds max ttl")
 			return
 		}
 		expiresAt = parsed.UTC().Format(time.RFC3339)
 	} else if req.TTLSeconds > 0 {
 		ttl := time.Duration(req.TTLSeconds) * time.Second
 		if s.cfg.SharedKeyMaxTTL > 0 && ttl > s.cfg.SharedKeyMaxTTL {
-			writeError(w, http.StatusBadRequest, "ttl_too_large", "shared key ttl exceeds max ttl")
+			writeProblem(w, r, http.StatusBadRequest, "ttl_too_large", "shared key ttl exceeds max ttl")
 			return
 		}
 		expiresAt = now.Add(ttl).Format(time.RFC3339)
@@ -605,7 +583,7 @@ func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 		ContentType: "application/json",
 		Metadata:    metadata,
 	}); err != nil {
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
 	if _, err := s.store.PutObject(r.Context(), storage.PutInput{
@@ -616,20 +594,20 @@ func (s *Server) createSharedKey(w http.ResponseWriter, r *http.Request) {
 		Metadata:    metadata,
 	}); err != nil {
 		_ = s.store.DeleteObject(r.Context(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: s.sharedKeyObjectKey(sharedKey)})
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"shared_key":   sharedKey,
-		"download_url": strings.TrimRight(s.cfg.PublicBaseURL, "/") + s.fileBase + "/shared/" + url.PathEscape(sharedKey) + "/download",
-		"expires_at":   expiresAt,
+	pw.WriteStatus(w, r, http.StatusCreated, sharedKeyView{
+		SharedKey:   sharedKey,
+		DownloadURL: strings.TrimRight(s.cfg.PublicBaseURL, "/") + s.fileBase + "/shared/" + url.PathEscape(sharedKey) + "/download",
+		ExpiresAt:   expiresAt,
 	})
 }
 
 func (s *Server) streamSharedObject(w http.ResponseWriter, r *http.Request, attachment bool) {
-	sharedKey := r.PathValue("sharedKey")
+	sharedKey := pw.PathValue(r, "sharedKey")
 	if strings.TrimSpace(sharedKey) == "" || strings.Contains(sharedKey, "/") {
-		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
 		return
 	}
 	key, name, contentType, ok := s.resolveSharedKey(w, r, sharedKey)
@@ -640,15 +618,15 @@ func (s *Server) streamSharedObject(w http.ResponseWriter, r *http.Request, atta
 }
 
 func (s *Server) streamThumbnail(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := pw.PathValue(r, "key")
 	if strings.TrimSpace(key) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 		return
 	}
 	if !s.cfg.Thumbnails.Enabled {
 		// PDF/Office thumbnails exist even when image thumbnails are off.
 		if _, err := s.store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: key + s.cfg.Thumbnails.ObjectKeySuffix}); err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "thumbnail not found")
+			writeProblem(w, r, http.StatusNotFound, "not_found", "thumbnail not found")
 			return
 		}
 	}
@@ -656,9 +634,9 @@ func (s *Server) streamThumbnail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) streamPreview(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := pw.PathValue(r, "key")
 	if strings.TrimSpace(key) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 		return
 	}
 	s.streamObject(w, r, docpreview.ObjectKey(key), path.Base(key)+docpreview.Extension, docpreview.ContentType, false)
@@ -669,29 +647,29 @@ func (s *Server) previewURL(objectKey string) string {
 }
 
 func (s *Server) streamFrontendObject(w http.ResponseWriter, r *http.Request, attachment bool) {
-	key := r.PathValue("key")
+	key := pw.PathValue(r, "key")
 	if strings.TrimSpace(key) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 		return
 	}
 	s.streamObject(w, r, key, path.Base(key), "", attachment)
 }
 
 func (s *Server) streamFrontendArchive(w http.ResponseWriter, r *http.Request) {
-	keysValue := r.PathValue("keys")
+	keysValue := pw.PathValue(r, "keys")
 	if keysValue == "" {
-		writeError(w, http.StatusNotFound, "not_found", "files route not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "files route not found")
 		return
 	}
 	parts := strings.Split(keysValue, ",")
 	if len(parts) == 0 || len(parts) > s.cfg.MaxArchiveFiles {
-		writeError(w, http.StatusBadRequest, "too_many_files", "too many files requested")
+		writeProblem(w, r, http.StatusBadRequest, "too_many_files", "too many files requested")
 		return
 	}
 	keys := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if strings.TrimSpace(part) == "" {
-			writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
+			writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object key is invalid")
 			return
 		}
 		keys = append(keys, part)
@@ -700,25 +678,25 @@ func (s *Server) streamFrontendArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
-	var req model.CreateUploadKeyRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+	req, err := pw.Parse[createUploadKeyInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
 		return
 	}
 	if strings.TrimSpace(req.FileName) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_file_name", "file_name is required")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_file_name", "file_name is required")
 		return
 	}
 	maxUploadBytes := s.effectiveMaxUploadBytes()
 	if req.SizeBytes > maxUploadBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "resource_limit_exceeded", "declared upload size exceeds configured maximum file size")
+		writeProblem(w, r, http.StatusRequestEntityTooLarge, "resource_limit_exceeded", "declared upload size exceeds configured maximum file size")
 		return
 	}
 	now := time.Now().UTC()
 	ownerToken := s.uploadOwnerToken(w, r)
 	ownerTokenHash := hashToken(ownerToken)
 	if s.activeUploadKeyCountForOwner(ownerTokenHash) >= s.cfg.MaxUploadKeysPerOwner {
-		writeError(w, http.StatusTooManyRequests, "too_many_upload_keys", "too many active upload keys for owner")
+		writeProblem(w, r, http.StatusTooManyRequests, "too_many_upload_keys", "too many active upload keys for owner")
 		return
 	}
 	uploadKey := randomToken(24)
@@ -755,7 +733,7 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:            now.Format(time.RFC3339Nano),
 			UpdatedAt:            now.Format(time.RFC3339Nano),
 		}); err != nil {
-			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+			writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 			return
 		}
 	}
@@ -763,9 +741,9 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 	s.uploads[uploadKey] = item
 	s.mu.Unlock()
 	s.broadcastSnapshot(item)
-	writeJSON(w, http.StatusCreated, model.CreateUploadKeyResponse{
+	pw.WriteStatus(w, r, http.StatusCreated, createUploadKeyView{
 		UploadKey:      uploadKey,
-		ExpiresAt:      item.ExpiresAt,
+		ExpiresAt:      item.ExpiresAt.Format(time.RFC3339Nano),
 		UploadURL:      fmt.Sprintf("%s%s/keys/%s/content", strings.TrimRight(s.cfg.PublicBaseURL, "/"), s.uploadBase, uploadKey),
 		StoragePrefix:  prefix,
 		ObjectKey:      objectKey,
@@ -774,37 +752,37 @@ func (s *Server) createUploadKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) getUpload(w http.ResponseWriter, _ *http.Request, uploadKey string) {
+func (s *Server) getUpload(w http.ResponseWriter, r *http.Request, uploadKey string) {
 	item, ok := s.upload(uploadKey)
 	if !ok {
-		writeError(w, http.StatusNotFound, "upload_not_found", "upload key not found")
+		writeProblem(w, r, http.StatusNotFound, "upload_not_found", "upload key not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	pw.WriteAPI(w, r, viewOfUpload(item))
 }
 
 func (s *Server) cancelUploadKey(w http.ResponseWriter, r *http.Request, uploadKey string) {
 	item, ok := s.upload(uploadKey)
 	if !ok {
-		writeError(w, http.StatusNotFound, "upload_not_found", "upload key not found")
+		writeProblem(w, r, http.StatusNotFound, "upload_not_found", "upload key not found")
 		return
 	}
 	if item.Status != model.UploadKeyCreated {
-		writeError(w, http.StatusConflict, "upload_already_started", "upload key can be canceled only before upload starts")
+		writeProblem(w, r, http.StatusConflict, "upload_already_started", "upload key can be canceled only before upload starts")
 		return
 	}
 	if !s.uploadOwnerMatches(r, item.OwnerTokenHash) {
-		writeError(w, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
+		writeProblem(w, r, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
 		return
 	}
 	if s.cfg.UploadDeadlines.Enabled {
 		marker, err := s.loadUploadMarker(r.Context(), uploadKey)
 		if err != nil {
-			writeError(w, http.StatusGone, "upload_key_expired", "upload key expired or missing")
+			writeProblem(w, r, http.StatusGone, "upload_key_expired", "upload key expired or missing")
 			return
 		}
 		if marker.OwnerTokenHash != "" && !s.uploadOwnerMatches(r, marker.OwnerTokenHash) {
-			writeError(w, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
+			writeProblem(w, r, http.StatusForbidden, "owner_mismatch", "upload key belongs to another client")
 			return
 		}
 		_ = s.deleteUploadMarker(r.Context(), uploadKey)
@@ -818,9 +796,16 @@ func (s *Server) cancelUploadKey(w http.ResponseWriter, r *http.Request, uploadK
 }
 
 func (s *Server) effectiveMaxUploadBytes() int64 {
-	maxUploadBytes := s.cfg.MaxUploadBytes
-	if s.cfg.Security.ResourceLimits.Enabled && s.cfg.Security.ResourceLimits.MaxFileSizeBytes > 0 && (maxUploadBytes <= 0 || s.cfg.Security.ResourceLimits.MaxFileSizeBytes < maxUploadBytes) {
-		maxUploadBytes = s.cfg.Security.ResourceLimits.MaxFileSizeBytes
+	return EffectiveMaxUploadBytes(s.cfg)
+}
+
+// EffectiveMaxUploadBytes is the largest upload the configuration admits:
+// the upload limit, tightened by the resource-limit policy, with a 1 GiB
+// default. The framework's own body cap is lifted to it at startup.
+func EffectiveMaxUploadBytes(cfg config.Config) int64 {
+	maxUploadBytes := cfg.MaxUploadBytes
+	if cfg.Security.ResourceLimits.Enabled && cfg.Security.ResourceLimits.MaxFileSizeBytes > 0 && (maxUploadBytes <= 0 || cfg.Security.ResourceLimits.MaxFileSizeBytes < maxUploadBytes) {
+		maxUploadBytes = cfg.Security.ResourceLimits.MaxFileSizeBytes
 	}
 	if maxUploadBytes <= 0 {
 		return 1 << 30
@@ -850,15 +835,15 @@ func (s *Server) activeUploadKeyCountForOwner(ownerTokenHash string) int {
 func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey string) {
 	target, ok := s.uploadTarget(uploadKey)
 	if !ok {
-		writeError(w, http.StatusNotFound, "upload_not_found", "upload key not found")
+		writeProblem(w, r, http.StatusNotFound, "upload_not_found", "upload key not found")
 		return
 	}
 	if target.status == model.UploadUploaded {
-		writeError(w, http.StatusConflict, "already_uploaded", "upload key already has content")
+		writeProblem(w, r, http.StatusConflict, "already_uploaded", "upload key already has content")
 		return
 	}
 	if target.status == model.UploadCanceled {
-		writeError(w, http.StatusGone, "upload_canceled", "upload key was canceled")
+		writeProblem(w, r, http.StatusGone, "upload_canceled", "upload key was canceled")
 		return
 	}
 	uploadCtx := r.Context()
@@ -868,7 +853,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		var err error
 		marker, err = s.loadUploadMarker(r.Context(), uploadKey)
 		if err != nil {
-			writeError(w, http.StatusGone, "upload_key_expired", "upload key expired or missing")
+			writeProblem(w, r, http.StatusGone, "upload_key_expired", "upload key expired or missing")
 			return
 		}
 		now := time.Now().UTC()
@@ -876,7 +861,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		if err != nil || now.After(startDeadline) {
 			s.expireUpload(uploadKey, "upload key start deadline has passed")
 			_ = s.deleteUploadMarker(r.Context(), uploadKey)
-			writeError(w, http.StatusGone, "upload_key_expired", "upload key start deadline has passed")
+			writeProblem(w, r, http.StatusGone, "upload_key_expired", "upload key start deadline has passed")
 			return
 		}
 		finishDeadline, err := time.Parse(time.RFC3339Nano, marker.UploadFinishDeadline)
@@ -904,7 +889,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			message: "uploaded file exceeds configured maximum file size",
 		}
 		s.failUpload(uploadKey, err.Error())
-		writeError(w, err.status, err.code, err.Error())
+		writeProblem(w, r, err.status, err.code, err.Error())
 		return
 	}
 	limited := http.MaxBytesReader(w, r.Body, maxUploadBytes)
@@ -915,7 +900,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	if err != nil {
 		s.failUpload(uploadKey, err.Error())
 		status, code := securityErrorResponse(err)
-		writeError(w, status, code, err.Error())
+		writeProblem(w, r, status, code, err.Error())
 		return
 	}
 	inspectedPrefix = inspection.prefix
@@ -951,7 +936,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		if err != nil {
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
-			writeError(w, status, code, err.Error())
+			writeProblem(w, r, status, code, err.Error())
 			return
 		}
 	}
@@ -959,7 +944,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	if err != nil {
 		s.failUpload(uploadKey, err.Error())
 		status, code := securityErrorResponse(err)
-		writeError(w, status, code, err.Error())
+		writeProblem(w, r, status, code, err.Error())
 		return
 	}
 	body = sanitized.reader
@@ -1051,7 +1036,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			item.UpdatedAt = time.Now().UTC()
 		})
 		s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadFailed, Item: mustUpload(s.upload(uploadKey))})
-		writeError(w, status, code, err.Error())
+		writeProblem(w, r, status, code, err.Error())
 		return
 	}
 	if archiveUpload {
@@ -1059,7 +1044,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
-			writeError(w, status, code, err.Error())
+			writeProblem(w, r, status, code, err.Error())
 			return
 		}
 	}
@@ -1068,7 +1053,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
-			writeError(w, status, code, err.Error())
+			writeProblem(w, r, status, code, err.Error())
 			return
 		}
 	}
@@ -1086,7 +1071,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 			s.failUpload(uploadKey, err.Error())
 			status, code := securityErrorResponse(err)
-			writeError(w, status, code, err.Error())
+			writeProblem(w, r, status, code, err.Error())
 			return
 		}
 	}
@@ -1101,7 +1086,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 		if err != nil {
 			s.failUpload(uploadKey, err.Error())
-			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+			writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 			return
 		}
 		if copyResult.ETag != "" {
@@ -1175,7 +1160,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 	}
 	w.Header().Set("ETag", result.ETag)
 	s.broadcast(model.WatchServerMessage{Type: "state", UploadKey: uploadKey, Status: model.UploadUploaded, Item: uploaded})
-	writeJSON(w, http.StatusOK, uploaded)
+	pw.WriteAPI(w, r, viewOfUpload(uploaded))
 }
 
 func (s *Server) failUpload(uploadKey, message string) {
@@ -1197,13 +1182,13 @@ func (s *Server) expireUpload(uploadKey, message string) {
 }
 
 func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
-	var req model.WaitUploadsRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be JSON")
+	req, err := pw.Parse[waitUploadsInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
 		return
 	}
 	if len(req.UploadKeys) == 0 {
-		writeError(w, http.StatusBadRequest, "missing_upload_keys", "upload_keys is required")
+		writeProblem(w, r, http.StatusBadRequest, "missing_upload_keys", "upload_keys is required")
 		return
 	}
 	timeout := 60 * time.Second
@@ -1217,7 +1202,7 @@ func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
 	for {
 		items, ready := s.uploadsForKeys(req.UploadKeys)
 		if ready {
-			writeJSON(w, http.StatusOK, model.WaitUploadsResponse{Ready: true, Items: items})
+			pw.WriteAPI(w, r, waitUploadsView{Ready: true, Items: viewsOfUploads(items)})
 			return
 		}
 		select {
@@ -1225,7 +1210,7 @@ func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-deadline.C:
 			items, _ = s.uploadsForKeys(req.UploadKeys)
-			writeJSON(w, http.StatusOK, model.WaitUploadsResponse{Ready: false, Timeout: true, Items: items})
+			pw.WriteAPI(w, r, waitUploadsView{Ready: false, Timeout: true, Items: viewsOfUploads(items)})
 			return
 		case <-ticker.C:
 		}
@@ -1233,23 +1218,27 @@ func (s *Server) waitUploads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	objectKeys := splitQueryValues(query["object_key"])
-	objectKeys = append(objectKeys, splitQueryValues(query["object_keys"])...)
-	if len(objectKeys) == 0 {
-		writeError(w, http.StatusBadRequest, "missing_object_keys", "object_keys is required")
+	in, err := pw.Parse[waitAsyncTasksInput](r)
+	if err != nil {
+		writeInvalidRequest(w, r, err)
 		return
 	}
-	kinds := splitQueryValues(query["kind"])
-	kinds = append(kinds, splitQueryValues(query["kinds"])...)
+	objectKeys := splitQueryValues(in.ObjectKey)
+	objectKeys = append(objectKeys, splitQueryValues(in.ObjectKeys)...)
+	if len(objectKeys) == 0 {
+		writeProblem(w, r, http.StatusBadRequest, "missing_object_keys", "object_keys is required")
+		return
+	}
+	kinds := splitQueryValues(in.Kind)
+	kinds = append(kinds, splitQueryValues(in.Kinds)...)
 	kinds = normalizedTaskKinds(kinds)
 	timeout := 60 * time.Second
-	if timeoutSeconds := positiveQueryInt(query.Get("timeout_seconds")); timeoutSeconds > 0 {
-		timeout = time.Duration(timeoutSeconds) * time.Second
+	if in.TimeoutSeconds > 0 {
+		timeout = time.Duration(in.TimeoutSeconds) * time.Second
 	}
 	poll := 200 * time.Millisecond
-	if pollMillis := positiveQueryInt(query.Get("poll_millis")); pollMillis > 0 {
-		poll = time.Duration(pollMillis) * time.Millisecond
+	if in.PollMillis > 0 {
+		poll = time.Duration(in.PollMillis) * time.Millisecond
 	}
 	if poll < 50*time.Millisecond {
 		poll = 50 * time.Millisecond
@@ -1264,7 +1253,7 @@ func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
 	for {
 		tasks, ready := s.asyncTaskStatuses(r.Context(), objectKeys, kinds)
 		if ready {
-			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: true, Tasks: tasks})
+			pw.WriteAPI(w, r, waitAsyncTasksView{Ready: true, Tasks: viewsOfAsyncTasks(tasks)})
 			return
 		}
 		select {
@@ -1272,20 +1261,20 @@ func (s *Server) waitAsyncTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-deadline.C:
 			tasks, _ = s.asyncTaskStatuses(context.Background(), objectKeys, kinds)
-			writeJSON(w, http.StatusOK, model.WaitAsyncTasksResponse{Ready: false, Timeout: true, Tasks: tasks})
+			pw.WriteAPI(w, r, waitAsyncTasksView{Ready: false, Timeout: true, Tasks: viewsOfAsyncTasks(tasks)})
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (s *Server) waitForAsyncTaskKinds(ctx context.Context, objectKeys, kinds []string, timeoutValue, pollValue string) ([]model.WaitAsyncTaskStatus, bool) {
+func (s *Server) waitForAsyncTaskKinds(ctx context.Context, objectKeys, kinds []string, timeoutSeconds, pollMillis int) ([]model.WaitAsyncTaskStatus, bool) {
 	timeout := 60 * time.Second
-	if timeoutSeconds := positiveQueryInt(timeoutValue); timeoutSeconds > 0 {
+	if timeoutSeconds > 0 {
 		timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 	poll := 200 * time.Millisecond
-	if pollMillis := positiveQueryInt(pollValue); pollMillis > 0 {
+	if pollMillis > 0 {
 		poll = time.Duration(pollMillis) * time.Millisecond
 	}
 	if poll < 50*time.Millisecond {
@@ -1314,86 +1303,92 @@ func (s *Server) waitForAsyncTaskKinds(ctx context.Context, objectKeys, kinds []
 	}
 }
 
-func backendObjectKeyFromPathValue(w http.ResponseWriter, objectKey string) (string, bool) {
+func backendObjectKeyFromPathValue(w http.ResponseWriter, r *http.Request, objectKey string) (string, bool) {
 	if strings.TrimSpace(objectKey) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_object_key", "object key is required")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_object_key", "object key is required")
 		return "", false
 	}
 	return objectKey, true
 }
 
+// watchUploads is the upload progress WebSocket. The framework opens the
+// socket on generated codecs for the two message types; the origin check is
+// streamuploader's own, because the allowed origins are its configuration.
 func (s *Server) watchUploads(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
+	options := pw.SocketOptions{
+		CheckOrigin: func(origin, _ string) bool { return originAllowed(origin, s.cfg.AllowedOrigins) },
 	}
-	defer conn.Close()
-	updates := make(chan model.WatchServerMessage, 64)
-	watched := map[string]struct{}{}
-	done := make(chan struct{})
-	defer close(done)
-	defer func() {
-		s.mu.Lock()
-		for key := range watched {
-			s.removeWatcherLocked(key, updates)
-		}
-		s.mu.Unlock()
-	}()
-	go func() {
-		for {
-			select {
-			case msg := <-updates:
-				_ = conn.WriteJSON(msg)
-			case <-done:
-				return
-			}
-		}
-	}()
-	for {
-		var msg model.WatchClientMessage
-		if err := conn.ReadJSON(&msg); err != nil {
-			return
-		}
-		switch msg.Type {
-		case "watch":
-			for _, key := range msg.UploadKeys {
-				if key == "" {
-					continue
-				}
-				s.mu.Lock()
-				if _, ok := watched[key]; !ok {
-					watched[key] = struct{}{}
-					if s.watchers[key] == nil {
-						s.watchers[key] = map[chan model.WatchServerMessage]struct{}{}
-					}
-					s.watchers[key][updates] = struct{}{}
-				}
-				item := cloneUpload(s.uploads[key])
-				s.mu.Unlock()
-				if item == nil {
-					updates <- model.WatchServerMessage{Type: "error", UploadKey: key, Code: "upload_not_found", Message: "upload key not found"}
-				} else {
-					updates <- model.WatchServerMessage{Type: "snapshot", UploadKey: key, Item: item, Status: item.Status}
-				}
-			}
-		case "unwatch":
+	err := pw.WebSocketWith(w, r, options, func(socket *pw.Socket[watchClientMessage, watchServerMessage]) error {
+		updates := make(chan model.WatchServerMessage, 64)
+		watched := map[string]struct{}{}
+		done := make(chan struct{})
+		defer close(done)
+		defer func() {
 			s.mu.Lock()
-			for _, key := range msg.UploadKeys {
-				delete(watched, key)
+			for key := range watched {
 				s.removeWatcherLocked(key, updates)
 			}
 			s.mu.Unlock()
-		case "ping":
-			updates <- model.WatchServerMessage{Type: "snapshot", Message: "pong"}
-		default:
-			updates <- model.WatchServerMessage{Type: "error", Code: "unknown_message", Message: "unknown message type"}
+		}()
+		go func() {
+			for {
+				select {
+				case msg := <-updates:
+					_ = socket.Write(viewOfWatchMessage(msg))
+				case <-done:
+					return
+				}
+			}
+		}()
+		for {
+			msg, err := socket.Read()
+			if err != nil {
+				return nil
+			}
+			switch msg.Type {
+			case "watch":
+				for _, key := range msg.UploadKeys {
+					if key == "" {
+						continue
+					}
+					s.mu.Lock()
+					if _, ok := watched[key]; !ok {
+						watched[key] = struct{}{}
+						if s.watchers[key] == nil {
+							s.watchers[key] = map[chan model.WatchServerMessage]struct{}{}
+						}
+						s.watchers[key][updates] = struct{}{}
+					}
+					item := cloneUpload(s.uploads[key])
+					s.mu.Unlock()
+					if item == nil {
+						updates <- model.WatchServerMessage{Type: "error", UploadKey: key, Code: "upload_not_found", Message: "upload key not found"}
+					} else {
+						updates <- model.WatchServerMessage{Type: "snapshot", UploadKey: key, Item: item, Status: item.Status}
+					}
+				}
+			case "unwatch":
+				s.mu.Lock()
+				for _, key := range msg.UploadKeys {
+					delete(watched, key)
+					s.removeWatcherLocked(key, updates)
+				}
+				s.mu.Unlock()
+			case "ping":
+				updates <- model.WatchServerMessage{Type: "snapshot", Message: "pong"}
+			default:
+				updates <- model.WatchServerMessage{Type: "error", Code: "unknown_message", Message: "unknown message type"}
+			}
 		}
+	})
+	if err != nil {
+		pw.Logger(r).Warn("watch upgrade refused", pw.Err(err))
 	}
 }
 
 func (s *Server) streamObject(w http.ResponseWriter, r *http.Request, objectKey, fileName, overrideContentType string, attachment bool) {
 	if !s.cfg.AllowFrontendFileAccess {
-		writeError(w, http.StatusForbidden, "file_access_disabled", "frontend file access is disabled")
+		writeProblem(w, r, http.StatusForbidden, "file_access_disabled", "frontend file access is disabled")
 		return
 	}
 	out, err := s.store.GetObject(r.Context(), storage.GetInput{
@@ -1402,7 +1397,7 @@ func (s *Server) streamObject(w http.ResponseWriter, r *http.Request, objectKey,
 		Range:  r.Header.Get("Range"),
 	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+		writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 		return
 	}
 	defer out.Body.Close()
@@ -1445,7 +1440,7 @@ func (s *Server) streamObject(w http.ResponseWriter, r *http.Request, objectKey,
 
 func (s *Server) streamZipArchive(w http.ResponseWriter, r *http.Request, keys []string) {
 	if !s.cfg.AllowFrontendFileAccess {
-		writeError(w, http.StatusForbidden, "file_access_disabled", "frontend file access is disabled")
+		writeProblem(w, r, http.StatusForbidden, "file_access_disabled", "frontend file access is disabled")
 		return
 	}
 	type zipObject struct {
@@ -1457,14 +1452,14 @@ func (s *Server) streamZipArchive(w http.ResponseWriter, r *http.Request, keys [
 	for _, key := range keys {
 		head, err := s.store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: key})
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "storage_error", err.Error())
+			writeProblem(w, r, http.StatusBadGateway, "storage_error", err.Error())
 			return
 		}
 		if head.ContentLength > 0 {
 			total += head.ContentLength
 		}
 		if total > s.cfg.MaxArchiveBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, "archive_too_large", "archive request exceeds max archive bytes")
+			writeProblem(w, r, http.StatusRequestEntityTooLarge, "archive_too_large", "archive request exceeds max archive bytes")
 			return
 		}
 		objects = append(objects, zipObject{key: key, head: head})
@@ -1506,16 +1501,16 @@ func (s *Server) streamZipArchive(w http.ResponseWriter, r *http.Request, keys [
 
 func (s *Server) resolveSharedKey(w http.ResponseWriter, r *http.Request, sharedKey string) (string, string, string, bool) {
 	if !s.cfg.EnableSharedKey {
-		writeError(w, http.StatusNotFound, "not_found", "shared key API is disabled")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "shared key API is disabled")
 		return "", "", "", false
 	}
 	if strings.TrimSpace(sharedKey) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_shared_key", "shared key is invalid")
 		return "", "", "", false
 	}
 	out, err := s.store.GetObject(r.Context(), storage.GetInput{Bucket: s.cfg.Bucket, Key: s.sharedKeyObjectKey(sharedKey)})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "shared_key_not_found", "shared key not found")
+		writeProblem(w, r, http.StatusNotFound, "shared_key_not_found", "shared key not found")
 		return "", "", "", false
 	}
 	defer out.Body.Close()
@@ -1536,18 +1531,18 @@ func (s *Server) resolveSharedKey(w http.ResponseWriter, r *http.Request, shared
 		rec.ExpiresAt = metadata["expires-at"]
 	}
 	if rec.Revoked || strings.EqualFold(metadata["revoked"], "true") {
-		writeError(w, http.StatusForbidden, "shared_key_revoked", "shared key was revoked")
+		writeProblem(w, r, http.StatusForbidden, "shared_key_revoked", "shared key was revoked")
 		return "", "", "", false
 	}
 	if rec.ExpiresAt != "" {
 		expiresAt, err := time.Parse(time.RFC3339, rec.ExpiresAt)
 		if err != nil || time.Now().UTC().After(expiresAt) {
-			writeError(w, http.StatusForbidden, "shared_key_expired", "shared key expired")
+			writeProblem(w, r, http.StatusForbidden, "shared_key_expired", "shared key expired")
 			return "", "", "", false
 		}
 	}
 	if rec.TargetObjectKey == "" {
-		writeError(w, http.StatusBadGateway, "invalid_shared_key_record", "shared key record has no target object")
+		writeProblem(w, r, http.StatusBadGateway, "invalid_shared_key_record", "shared key record has no target object")
 		return "", "", "", false
 	}
 	return rec.TargetObjectKey, rec.OriginalName, rec.ContentType, true
@@ -2098,51 +2093,6 @@ func (s *Server) removeWatcherLocked(key string, ch chan model.WatchServerMessag
 	}
 }
 
-func (s *Server) withAccessLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			next.ServeHTTP(w, r)
-			slog.Info("http_request",
-				"method", r.Method,
-				"route", requestRoutePattern(r, s),
-				"status", http.StatusSwitchingProtocols,
-				"duration_ms", time.Since(start).Milliseconds(),
-				"request_id", r.Header.Get("X-Request-ID"),
-				"source_ip", r.RemoteAddr,
-			)
-			return
-		}
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		slog.Info("http_request",
-			"method", r.Method,
-			"route", requestRoutePattern(r, s),
-			"status", rec.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-			"request_id", r.Header.Get("X-Request-ID"),
-			"source_ip", r.RemoteAddr,
-		)
-	})
-}
-
-func requestRoutePattern(r *http.Request, s *Server) string {
-	if r.Pattern != "" {
-		return r.Pattern
-	}
-	return routeTemplate(r.URL.Path, s)
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
 func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Mode != "standalone_cross_origin" && s.cfg.Mode != "standalone" {
 		return
@@ -2184,35 +2134,6 @@ func originAllowed(origin string, allowed []string) bool {
 		return true
 	}
 	return contains(allowed, "*") || contains(allowed, origin)
-}
-
-func routeTemplate(pathValue string, s *Server) string {
-	switch {
-	case pathValue == "/healthz":
-		return "/healthz"
-	case pathValue == s.uploadBase+"/keys":
-		return s.uploadBase + "/keys"
-	case strings.HasPrefix(pathValue, s.uploadBase+"/keys/") && strings.HasSuffix(pathValue, "/content"):
-		return s.uploadBase + "/keys/{upload_key}/content"
-	case strings.HasPrefix(pathValue, s.uploadBase+"/keys/"):
-		return s.uploadBase + "/keys/{upload_key}"
-	case pathValue == s.uploadBase+"/wait":
-		return s.uploadBase + "/wait"
-	case pathValue == s.uploadBase+"/watch":
-		return s.uploadBase + "/watch"
-	case strings.HasPrefix(pathValue, s.fileBase+"/shared/"):
-		return s.fileBase + "/shared/{shared_key}"
-	case strings.HasPrefix(pathValue, s.fileBase+"/"):
-		return s.fileBase + "/{key}"
-	case strings.HasPrefix(pathValue, s.filesBase+"/"):
-		return s.filesBase + "/{keys}"
-	case strings.HasPrefix(pathValue, s.cfg.BackendBasePath+"/file/shared-keys"):
-		return s.cfg.BackendBasePath + "/file/shared-keys"
-	case strings.HasPrefix(pathValue, s.cfg.BackendBasePath):
-		return s.cfg.BackendBasePath
-	default:
-		return pathValue
-	}
 }
 
 type progressReader struct {
@@ -2699,17 +2620,6 @@ func (r *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"error": code, "message": message})
-}
-
 func (s *Server) uploadOwnerToken(w http.ResponseWriter, r *http.Request) string {
 	const cookieName = "streamuploader_owner"
 	if cookie, err := r.Cookie(cookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
@@ -2877,11 +2787,6 @@ func splitQueryValues(values []string) []string {
 	return out
 }
 
-func queryBool(value string) bool {
-	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-	return err == nil && parsed
-}
-
 func includeSet(values []string) map[string]bool {
 	parts := splitQueryValues(values)
 	if len(parts) == 0 {
@@ -2895,17 +2800,6 @@ func includeSet(values []string) map[string]bool {
 		}
 	}
 	return out
-}
-
-func positiveQueryInt(value string) int {
-	if strings.TrimSpace(value) == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(value)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return n
 }
 
 func cloneUpload(item *model.UploadItem) *model.UploadItem {
@@ -2936,27 +2830,33 @@ func mustUpload(item *model.UploadItem, _ bool) *model.UploadItem {
 	return item
 }
 
+// Run serves the public listener and, when configured, the backend control
+// listener, each under the Popcorn Web request chain, until ctx is cancelled.
+// framework.Prepare must have run first.
 func Run(ctx context.Context, cfg config.Config, store storage.Store) error {
 	app := New(cfg, store)
 	if cfg.UploadDeadlines.Enabled && cfg.UploadDeadlines.CleanupEnabled && cfg.UploadDeadlines.CleanupMode == "server_loop" {
 		go app.runCleanupLoop(ctx)
 	}
-	httpServer := &http.Server{Addr: cfg.Addr, Handler: app.Handler()}
-	servers := []*http.Server{httpServer}
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- httpServer.ListenAndServe()
-	}()
+	frontend, err := pw.Middlewares(app.Handler())
+	if err != nil {
+		return err
+	}
+	servers := []*http.Server{framework.NewHTTPServer(cfg.Addr, frontend)}
 	if cfg.BackendAddr != "" {
-		backendServer := &http.Server{Addr: cfg.BackendAddr, Handler: app.BackendHandler()}
-		servers = append(servers, backendServer)
-		go func() {
-			errCh <- backendServer.ListenAndServe()
-		}()
+		backend, err := pw.Middlewares(app.BackendHandler())
+		if err != nil {
+			return err
+		}
+		servers = append(servers, framework.NewHTTPServer(cfg.BackendAddr, backend))
+	}
+	errCh := make(chan error, len(servers))
+	for _, srv := range servers {
+		go func(srv *http.Server) { errCh <- srv.ListenAndServe() }(srv)
 	}
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), framework.Server().ShutdownTimeout)
 		defer cancel()
 		for _, srv := range servers {
 			if err := srv.Shutdown(shutdownCtx); err != nil {

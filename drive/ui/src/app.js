@@ -17,7 +17,7 @@ const api = {
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
     if (!res.ok) {
-      const err = new Error(data?.message || res.statusText);
+      const err = new Error(data?.detail || data?.message || res.statusText);
       err.status = res.status; err.code = data?.code; err.data = data;
       throw err;
     }
@@ -408,7 +408,7 @@ function putWithProgress(url, file, headers, onProgress) {
       let data = null;
       try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { data = { message: xhr.responseText }; }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-      else { const err = new Error(data?.message || xhr.statusText); err.status = xhr.status; err.code = data?.code; reject(err); }
+      else { const err = new Error(data?.detail || data?.message || xhr.statusText); err.status = xhr.status; err.code = data?.code; reject(err); }
     };
     xhr.onerror = () => reject(new Error("network error"));
     xhr.send(file);

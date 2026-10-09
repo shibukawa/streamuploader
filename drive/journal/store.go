@@ -148,20 +148,27 @@ func (s *Store) Get(ctx context.Context, key string) (*Event, error) {
 
 // Read reads one event together with the digest of its stored bytes.
 func (s *Store) Read(ctx context.Context, key string) (Entry, error) {
+	entry, _, err := s.ReadRaw(ctx, key)
+	return entry, err
+}
+
+// ReadRaw is Read that also hands back the stored bytes, for an export that
+// forwards the event exactly as the bucket holds it.
+func (s *Store) ReadRaw(ctx context.Context, key string) (Entry, []byte, error) {
 	out, err := s.Objects.GetObject(ctx, storage.GetInput{Bucket: s.Bucket, Key: key})
 	if err != nil {
-		return Entry{}, fmt.Errorf("journal: get %s: %w", key, err)
+		return Entry{}, nil, fmt.Errorf("journal: get %s: %w", key, err)
 	}
 	defer out.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(out.Body, 8<<20))
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, nil, err
 	}
 	var ev Event
 	if err := json.Unmarshal(body, &ev); err != nil {
-		return Entry{}, fmt.Errorf("journal: parse %s: %w", key, err)
+		return Entry{}, nil, fmt.Errorf("journal: parse %s: %w", key, err)
 	}
-	return Entry{Key: key, Digest: Digest(body), Event: &ev}, nil
+	return Entry{Key: key, Digest: Digest(body), Event: &ev}, body, nil
 }
 
 // Digest is the hex SHA-256 of an event object's bytes, the leaf value of

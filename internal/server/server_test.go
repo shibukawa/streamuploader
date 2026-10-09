@@ -201,7 +201,7 @@ func TestUploadKeyFlow(t *testing.T) {
 		SessionTTL:     time.Hour,
 		MaxUploadBytes: 1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"hello.txt","content_type":"text/plain"}`)
@@ -258,7 +258,7 @@ func TestCreateUploadKeyRejectsDeclaredSizeLimit(t *testing.T) {
 		SessionTTL:     time.Hour,
 		MaxUploadBytes: 10,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"huge.txt","content_type":"text/plain","size_bytes":11}`)
@@ -267,9 +267,9 @@ func TestCreateUploadKeyRejectsDeclaredSizeLimit(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("create key status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "resource_limit_exceeded" {
+	if errorBody["code"] != "resource_limit_exceeded" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 }
@@ -280,7 +280,7 @@ func TestCreateUploadKeyReturnsEffectiveMaxUploadBytes(t *testing.T) {
 	security.ResourceLimits.MaxFileSizeBytes = 8
 	cfg := testUploadConfig(security)
 	cfg.MaxUploadBytes = 10
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"small.txt","content_type":"text/plain","size_bytes":8}`)
@@ -308,7 +308,7 @@ func TestCreateUploadKeyRejectsOwnerActiveKeyLimit(t *testing.T) {
 		MaxUploadBytes:        1024,
 		MaxUploadKeysPerOwner: 2,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	firstResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"one.txt"}`)
@@ -340,9 +340,9 @@ func TestCreateUploadKeyRejectsOwnerActiveKeyLimit(t *testing.T) {
 		respBody, _ := io.ReadAll(thirdResp.Body)
 		t.Fatalf("third create key status = %d body=%q", thirdResp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, thirdResp, &errorBody)
-	if errorBody["error"] != "too_many_upload_keys" {
+	if errorBody["code"] != "too_many_upload_keys" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 }
@@ -359,7 +359,7 @@ func TestCreateUploadKeyOwnerLimitIgnoresCanceledKeys(t *testing.T) {
 		MaxUploadBytes:        1024,
 		MaxUploadKeysPerOwner: 1,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	firstResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"one.txt"}`)
@@ -414,7 +414,7 @@ func TestTextExtractionAsyncAndBackendAPI(t *testing.T) {
 			ExtractMetadata:  true,
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"note.txt","content_type":"text/plain"}`)
@@ -505,7 +505,7 @@ func TestExtractedContentAPIReportsPending(t *testing.T) {
 	if err := srv.putAsyncTaskMarker(context.Background(), asyncTaskMarker{ObjectKey: objectKey, Kind: "text_extraction", Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	app := httptest.NewServer(srv.Handler())
+	app := newTestServer(t, srv.Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/internal/objects/" + url.PathEscape(objectKey) + "/extracted-content")
@@ -547,7 +547,7 @@ func TestCancelUploadKeyRequiresOwnerCookie(t *testing.T) {
 			FinishTimeout: time.Minute,
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"hello.txt"}`)
@@ -612,7 +612,7 @@ func TestBackendWaitAsyncTasks(t *testing.T) {
 		SessionTTL:      time.Hour,
 	}
 	srv := New(cfg, store)
-	app := httptest.NewServer(srv.Handler())
+	app := newTestServer(t, srv.Handler())
 	defer app.Close()
 
 	objectKey := "uploads/key/image.png"
@@ -688,7 +688,7 @@ func TestUploadImageGeneratesThumbnail(t *testing.T) {
 			ObjectKeySuffix: "/thumbnail",
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"image.png","content_type":"image/png"}`)
@@ -791,7 +791,7 @@ func TestUploadImageGeneratesThumbnailWithExternalWebhook(t *testing.T) {
 			ExternalTimeout:    time.Second,
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"image.png","content_type":"image/png"}`)
@@ -851,7 +851,7 @@ func TestUploadRejectsMimeMagicMismatchBeforeStorage(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       config.DefaultSecurityPolicy(),
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"fake.jpg","content_type":"image/jpeg"}`)
@@ -870,11 +870,11 @@ func TestUploadRejectsMimeMagicMismatchBeforeStorage(t *testing.T) {
 		body, _ := io.ReadAll(uploadResp.Body)
 		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["error"] != "content_type_mismatch" {
+	if body["code"] != "content_type_mismatch" {
 		t.Fatalf("error body = %+v", body)
 	}
 	store.mu.Lock()
@@ -909,7 +909,7 @@ func TestUploadRejectsScriptDeclaredAsText(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       config.DefaultSecurityPolicy(),
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"note.txt","content_type":"text/plain"}`)
@@ -927,14 +927,14 @@ func TestUploadRejectsScriptDeclaredAsText(t *testing.T) {
 		body, _ := io.ReadAll(uploadResp.Body)
 		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["error"] != "script_upload_rejected" {
+	if body["code"] != "script_upload_rejected" {
 		t.Fatalf("error body = %+v", body)
 	}
-	if !strings.Contains(body["message"], "text/x-shellscript") {
+	if !strings.Contains(body["detail"].(string), "text/x-shellscript") {
 		t.Fatalf("error message = %+v", body)
 	}
 	store.mu.Lock()
@@ -959,7 +959,7 @@ func TestUploadAllowsConfiguredScriptType(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       security,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"run.sh","content_type":"text/plain"}`)
@@ -1227,7 +1227,7 @@ func TestUploadMimeMagicCheckAlwaysRejectsMismatch(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       security,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"fake.jpg","content_type":"image/jpeg"}`)
@@ -1259,7 +1259,7 @@ func TestUploadRejectsExtensionContentTypeMismatch(t *testing.T) {
 	security := config.DefaultSecurityPolicy()
 	security.FileSanitization.Enabled = false
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	png := makeTestPNG(t, 1, 1)
@@ -1269,11 +1269,11 @@ func TestUploadRejectsExtensionContentTypeMismatch(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(body))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "file_extension_mismatch" {
+	if errorBody["code"] != "file_extension_mismatch" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1312,7 +1312,7 @@ func TestUploadAllowFileTypeCategory(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       security,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"pixel.png","content_type":"image/png"}`)
@@ -1354,7 +1354,7 @@ func TestUploadAllowFileTypeCategoryRejectsOutsideType(t *testing.T) {
 		MaxUploadBytes: 1024,
 		Security:       security,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"doc.pdf","content_type":"application/pdf"}`)
@@ -1373,11 +1373,11 @@ func TestUploadAllowFileTypeCategoryRejectsOutsideType(t *testing.T) {
 		body, _ := io.ReadAll(uploadResp.Body)
 		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["error"] != "content_type_not_allowed" {
+	if body["code"] != "content_type_not_allowed" {
 		t.Fatalf("error body = %+v", body)
 	}
 	store.mu.Lock()
@@ -1395,7 +1395,7 @@ func TestUploadRejectsZipArchiveBombBeforeStorage(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 512
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
@@ -1405,11 +1405,11 @@ func TestUploadRejectsZipArchiveBombBeforeStorage(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1428,7 +1428,7 @@ func TestUploadRejectsGzipArchiveBombBeforeStorage(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 512
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeGzip(t, bytes.Repeat([]byte("a"), 1024))
@@ -1438,11 +1438,11 @@ func TestUploadRejectsGzipArchiveBombBeforeStorage(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1461,7 +1461,7 @@ func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	zstdBody := makeZstd(t, []byte("small zstd payload"))
@@ -1494,7 +1494,7 @@ func TestUploadAllowsBoundedZstdAndBrotliArchives(t *testing.T) {
 func TestUploadRejectsZipSymlink(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZipSymlink(t, "link", "target.txt")
@@ -1504,11 +1504,11 @@ func TestUploadRejectsZipSymlink(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_link_rejected" {
+	if errorBody["code"] != "archive_link_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1523,7 +1523,7 @@ func TestUploadRejectsZipSymlink(t *testing.T) {
 func TestUploadRejectsZipSpecialFile(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZipSpecialFile(t, "pipe", fs.ModeNamedPipe|0644)
@@ -1533,11 +1533,11 @@ func TestUploadRejectsZipSpecialFile(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_special_file_rejected" {
+	if errorBody["code"] != "archive_special_file_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1552,7 +1552,7 @@ func TestUploadRejectsZipSpecialFile(t *testing.T) {
 func TestUploadRejectsArchiveWindowsDrivePath(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "C:/temp/evil.txt", []byte("bad"))
@@ -1562,11 +1562,11 @@ func TestUploadRejectsArchiveWindowsDrivePath(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_path_unsafe" {
+	if errorBody["code"] != "archive_path_unsafe" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1581,7 +1581,7 @@ func TestUploadRejectsArchiveWindowsDrivePath(t *testing.T) {
 func TestUploadRejectsZipEntryExtensionMismatch(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "photo.jpg", makeTestPNG(t, 1, 1))
@@ -1591,11 +1591,11 @@ func TestUploadRejectsZipEntryExtensionMismatch(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_type_mismatch" {
+	if errorBody["code"] != "archive_entry_type_mismatch" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1610,7 +1610,7 @@ func TestUploadRejectsZipEntryExtensionMismatch(t *testing.T) {
 func TestUploadRejectsZipScriptEntry(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "run.sh", []byte("#!/bin/sh\necho bad\n"))
@@ -1620,11 +1620,11 @@ func TestUploadRejectsZipScriptEntry(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_script_rejected" {
+	if errorBody["code"] != "archive_entry_script_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1641,7 +1641,7 @@ func TestUploadAllowsZipScriptEntryWhenExplicitlyAllowed(t *testing.T) {
 	security := config.DefaultSecurityPolicy()
 	security.MimeMagic.AllowedScriptExtensions = map[string]bool{"sh": true}
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "run.sh", []byte("#!/bin/sh\necho ok\n"))
@@ -1663,7 +1663,7 @@ func TestUploadAllowsZipScriptEntryWhenExplicitlyAllowed(t *testing.T) {
 func TestUploadAllowsZipEntryGenericTextForJSONExtension(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeZip(t, "payload.json", []byte(`{"ok":true}`))
@@ -1689,7 +1689,7 @@ func TestUploadRejectsNestedZipArchiveBomb(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
@@ -1700,11 +1700,11 @@ func TestUploadRejectsNestedZipArchiveBomb(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1722,7 +1722,7 @@ func TestUploadRejectsNestedArchiveDepth(t *testing.T) {
 	security.ArchiveGuard.MaxDepth = 1
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	inner := makeZip(t, "note.txt", []byte("hello"))
@@ -1733,11 +1733,11 @@ func TestUploadRejectsNestedArchiveDepth(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_deep" {
+	if errorBody["code"] != "archive_too_deep" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1756,7 +1756,7 @@ func TestUploadRejectsNestedArchiveAggregateSize(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	innerA := makeZip(t, "a.txt", bytes.Repeat([]byte("a"), 400))
@@ -1768,11 +1768,11 @@ func TestUploadRejectsNestedArchiveAggregateSize(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1791,7 +1791,7 @@ func TestUploadRejectsNestedCompressedStreamAggregateSize(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	streamA := makeGzip(t, bytes.Repeat([]byte("a"), 400))
@@ -1803,11 +1803,11 @@ func TestUploadRejectsNestedCompressedStreamAggregateSize(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1825,7 +1825,7 @@ func TestUploadRejectsNestedArchiveAggregateEntryCount(t *testing.T) {
 	security.ArchiveGuard.MaxEntries = 3
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	innerA := makeZip(t, "a.txt", []byte("a"))
@@ -1837,11 +1837,11 @@ func TestUploadRejectsNestedArchiveAggregateEntryCount(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_many_entries" {
+	if errorBody["code"] != "archive_too_many_entries" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1860,7 +1860,7 @@ func TestUploadRejectsNestedZipArchiveByMagicWithoutExtension(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
@@ -1871,11 +1871,11 @@ func TestUploadRejectsNestedZipArchiveByMagicWithoutExtension(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1894,7 +1894,7 @@ func TestUploadRejectsTarNestedArchiveBomb(t *testing.T) {
 	security.ArchiveGuard.MaxSingleEntryBytes = 2048
 	security.ArchiveGuard.MaxCompressionRatio = 1000
 	cfg := testUploadConfig(security)
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	inner := makeZip(t, "huge.txt", bytes.Repeat([]byte("a"), 1024))
@@ -1905,11 +1905,11 @@ func TestUploadRejectsTarNestedArchiveBomb(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_too_large" {
+	if errorBody["code"] != "archive_too_large" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1933,7 +1933,7 @@ func TestUploadRejectsTarLinks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &fakeStore{objects: map[string][]byte{}}
 			cfg := testUploadConfig(config.DefaultSecurityPolicy())
-			app := httptest.NewServer(New(cfg, store).Handler())
+			app := newTestServer(t, New(cfg, store).Handler())
 			defer app.Close()
 
 			body := makeTarLink(t, tt.name, "target.txt", tt.typeflag)
@@ -1943,11 +1943,11 @@ func TestUploadRejectsTarLinks(t *testing.T) {
 				respBody, _ := io.ReadAll(resp.Body)
 				t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 			}
-			var errorBody map[string]string
+			var errorBody map[string]any
 			if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 				t.Fatal(err)
 			}
-			if errorBody["error"] != "archive_link_rejected" {
+			if errorBody["code"] != "archive_link_rejected" {
 				t.Fatalf("error body = %+v", errorBody)
 			}
 			store.mu.Lock()
@@ -1964,7 +1964,7 @@ func TestUploadRejectsTarLinks(t *testing.T) {
 func TestUploadRejectsTarSpecialFile(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeTarSpecialFile(t, "pipe", tar.TypeFifo)
@@ -1974,11 +1974,11 @@ func TestUploadRejectsTarSpecialFile(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_special_file_rejected" {
+	if errorBody["code"] != "archive_special_file_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -1993,7 +1993,7 @@ func TestUploadRejectsTarSpecialFile(t *testing.T) {
 func TestUploadRejectsTarEntryExtensionMismatch(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeTarWithEntries(t, map[string][]byte{"photo.jpg": makeTestPNG(t, 1, 1)})
@@ -2003,11 +2003,11 @@ func TestUploadRejectsTarEntryExtensionMismatch(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_type_mismatch" {
+	if errorBody["code"] != "archive_entry_type_mismatch" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2022,7 +2022,7 @@ func TestUploadRejectsTarEntryExtensionMismatch(t *testing.T) {
 func TestUploadRejectsTarScriptEntry(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeTarWithEntries(t, map[string][]byte{"run.sh": []byte("#!/bin/sh\necho bad\n")})
@@ -2032,11 +2032,11 @@ func TestUploadRejectsTarScriptEntry(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_script_rejected" {
+	if errorBody["code"] != "archive_entry_script_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2051,7 +2051,7 @@ func TestUploadRejectsTarScriptEntry(t *testing.T) {
 func TestUploadAllowsTarEntryGenericTextForJSONExtension(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeTarWithEntries(t, map[string][]byte{"payload.json": []byte(`{"ok":true}`)})
@@ -2073,7 +2073,7 @@ func TestUploadAllowsTarEntryGenericTextForJSONExtension(t *testing.T) {
 func TestUploadRejectsTarGzipSymlink(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeGzip(t, makeTarLink(t, "link", "target.txt", tar.TypeSymlink))
@@ -2083,11 +2083,11 @@ func TestUploadRejectsTarGzipSymlink(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_link_rejected" {
+	if errorBody["code"] != "archive_link_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2102,7 +2102,7 @@ func TestUploadRejectsTarGzipSymlink(t *testing.T) {
 func TestUploadRejectsTarGzipScriptEntry(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeGzip(t, makeTarWithEntries(t, map[string][]byte{"run.sh": []byte("#!/bin/sh\necho bad\n")}))
@@ -2112,11 +2112,11 @@ func TestUploadRejectsTarGzipScriptEntry(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_script_rejected" {
+	if errorBody["code"] != "archive_entry_script_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2131,7 +2131,7 @@ func TestUploadRejectsTarGzipScriptEntry(t *testing.T) {
 func TestUploadRejectsTarGzipEntryExtensionMismatch(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	body := makeGzip(t, makeTarWithEntries(t, map[string][]byte{"photo.jpg": makeTestPNG(t, 1, 1)}))
@@ -2141,11 +2141,11 @@ func TestUploadRejectsTarGzipEntryExtensionMismatch(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&errorBody); err != nil {
 		t.Fatal(err)
 	}
-	if errorBody["error"] != "archive_entry_type_mismatch" {
+	if errorBody["code"] != "archive_entry_type_mismatch" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2166,7 +2166,7 @@ func TestUploadWithClamAVScansTmpThenPublishes(t *testing.T) {
 	security.ClamAV.Address = clamAddr
 	cfg := testUploadConfig(security)
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "note.txt", "text/plain", []byte("hello from clamav"))
@@ -2196,7 +2196,7 @@ func TestUploadWithClamAVRejectsDetectionAndDeletesTmp(t *testing.T) {
 	security.ClamAV.Address = clamAddr
 	cfg := testUploadConfig(security)
 	store := &fakeStore{objects: map[string][]byte{}}
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "note.txt", "text/plain", []byte("bad content"))
@@ -2204,10 +2204,10 @@ func TestUploadWithClamAVRejectsDetectionAndDeletesTmp(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(body))
 	}
-	var body map[string]string
+	var body map[string]any
 	decode(t, resp, &body)
-	if body["error"] != "malware_detected" {
-		t.Fatalf("error = %q", body["error"])
+	if body["code"] != "malware_detected" {
+		t.Fatalf("error = %q", body["code"])
 	}
 	if got := string(<-scannedBody); got != "bad content" {
 		t.Fatalf("scanned body = %q", got)
@@ -2221,7 +2221,7 @@ func TestUploadWithClamAVRejectsDetectionAndDeletesTmp(t *testing.T) {
 func TestUploadSanitizesJPEGEXIFBeforeStorage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := makeJPEGWithAPP1(t)
@@ -2249,7 +2249,7 @@ func TestUploadSanitizesQuickTimeMetadataBeforeStorage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := makeBMFF(
@@ -2300,7 +2300,7 @@ func TestUploadRejectsSVGActiveContent(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "bad.svg", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>`))
@@ -2309,9 +2309,9 @@ func TestUploadRejectsSVGActiveContent(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var body map[string]string
+	var body map[string]any
 	decode(t, resp, &body)
-	if body["error"] != "svg_active_content_rejected" && body["error"] != "svg_script_detected" {
+	if body["code"] != "svg_active_content_rejected" && body["code"] != "svg_script_detected" {
 		t.Fatalf("error body = %+v", body)
 	}
 	store.mu.Lock()
@@ -2327,7 +2327,7 @@ func TestUploadRejectsSVGDimensionLimit(t *testing.T) {
 	security := config.DefaultSecurityPolicy()
 	security.ResourceLimits.MaxImageWidth = 10
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="11" height="1"></svg>`)
@@ -2337,9 +2337,9 @@ func TestUploadRejectsSVGDimensionLimit(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "resource_limit_exceeded" {
+	if errorBody["code"] != "resource_limit_exceeded" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2355,7 +2355,7 @@ func TestUploadRejectsSVGViewBoxPixelLimit(t *testing.T) {
 	security := config.DefaultSecurityPolicy()
 	security.ResourceLimits.MaxImagePixelCount = 99
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"></svg>`)
@@ -2365,9 +2365,9 @@ func TestUploadRejectsSVGViewBoxPixelLimit(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "resource_limit_exceeded" {
+	if errorBody["code"] != "resource_limit_exceeded" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2418,7 +2418,7 @@ func TestInspectMarkupRejectsXMLExternalEntity(t *testing.T) {
 func TestUploadRejectsHTMLIframe(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "bad.html", "text/html", []byte(`<html><body><iframe src="https://example.test"></iframe></body></html>`))
@@ -2427,9 +2427,9 @@ func TestUploadRejectsHTMLIframe(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var body map[string]string
+	var body map[string]any
 	decode(t, resp, &body)
-	if body["error"] != "markup_iframe_detected" {
+	if body["code"] != "markup_iframe_detected" {
 		t.Fatalf("error body = %+v", body)
 	}
 	store.mu.Lock()
@@ -2444,7 +2444,7 @@ func TestUploadRejectsRTFByDefaultAndAllowsOptOut(t *testing.T) {
 	body := []byte(`{\rtf1\ansi{\object\objemb{\*\objdata 01050000}}}`)
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "doc.rtf", "application/rtf", body)
@@ -2453,9 +2453,9 @@ func TestUploadRejectsRTFByDefaultAndAllowsOptOut(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "legacy_document_rejected" {
+	if errorBody["code"] != "legacy_document_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2469,7 +2469,7 @@ func TestUploadRejectsRTFByDefaultAndAllowsOptOut(t *testing.T) {
 	optOut := config.DefaultSecurityPolicy()
 	optOut.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"application/rtf": {Mode: "accept_as_is"}}
 	optOutCfg := testUploadConfig(optOut)
-	optOutSrv := httptest.NewServer(New(optOutCfg, optOutStore).Handler())
+	optOutSrv := newTestServer(t, New(optOutCfg, optOutStore).Handler())
 	defer optOutSrv.Close()
 
 	okResp, okKey := uploadTestObject(t, optOutSrv.URL, "doc.rtf", "application/rtf", body)
@@ -2489,7 +2489,7 @@ func TestUploadRejectsRTFByDefaultAndAllowsOptOut(t *testing.T) {
 func TestUploadRejectsPDFJavaScript(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	pdf := []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog /OpenAction << /S /JavaScript /JS (app.alert('x')) >> >>\nendobj\n%%EOF\n")
@@ -2499,9 +2499,9 @@ func TestUploadRejectsPDFJavaScript(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var body map[string]string
+	var body map[string]any
 	decode(t, resp, &body)
-	if body["error"] != "document_active_content_rejected" {
+	if body["code"] != "document_active_content_rejected" {
 		t.Fatalf("error body = %+v", body)
 	}
 	store.mu.Lock()
@@ -2530,7 +2530,7 @@ func TestDisplayedUploadBytesHoldsAtNinetyEightPercentDuringPostUploadCheck(t *t
 func TestUploadPDFScansTmpThenPublishes(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	pdf := []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n2 0 obj\n<< /Type /Page >>\nendobj\n%%EOF\n")
@@ -2557,7 +2557,7 @@ func TestUploadRejectsOfficeMacroPart(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := makeZipWithEntries(t, map[string][]byte{
@@ -2572,9 +2572,9 @@ func TestUploadRejectsOfficeMacroPart(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "document_active_content_rejected" {
+	if errorBody["code"] != "document_active_content_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2635,7 +2635,7 @@ func TestInspectOfficeOpenXMLRequiresContentTypesAndMainPart(t *testing.T) {
 func TestUploadAcceptsValidOpenDocumentPackage(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	cfg := testUploadConfig(config.DefaultSecurityPolicy())
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	body := makeOpenDocumentPackage(t, "application/vnd.oasis.opendocument.text")
@@ -2720,7 +2720,7 @@ func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{}}
 	security := config.DefaultSecurityPolicy()
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, key := uploadTestObject(t, srv.URL, "legacy.doc", "application/msword", body)
@@ -2729,9 +2729,9 @@ func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var errorBody map[string]string
+	var errorBody map[string]any
 	decode(t, resp, &errorBody)
-	if errorBody["error"] != "legacy_office_rejected" {
+	if errorBody["code"] != "legacy_office_rejected" {
 		t.Fatalf("error body = %+v", errorBody)
 	}
 	store.mu.Lock()
@@ -2745,7 +2745,7 @@ func TestUploadRejectsLegacyOfficeByDefaultAndAllowsOptOut(t *testing.T) {
 	optOut := config.DefaultSecurityPolicy()
 	optOut.FileSanitization.PerFileType = map[string]config.FileTypePolicy{"application/msword": {Mode: "accept_as_is"}}
 	optOutCfg := testUploadConfig(optOut)
-	optOutSrv := httptest.NewServer(New(optOutCfg, optOutStore).Handler())
+	optOutSrv := newTestServer(t, New(optOutCfg, optOutStore).Handler())
 	defer optOutSrv.Close()
 
 	okResp, okKey := uploadTestObject(t, optOutSrv.URL, "legacy.doc", "application/msword", body)
@@ -2767,7 +2767,7 @@ func TestUploadRejectsImageDimensionLimit(t *testing.T) {
 	security := config.DefaultSecurityPolicy()
 	security.ResourceLimits.MaxImageWidth = 1
 	cfg := testUploadConfig(security)
-	srv := httptest.NewServer(New(cfg, store).Handler())
+	srv := newTestServer(t, New(cfg, store).Handler())
 	defer srv.Close()
 
 	resp, _ := uploadTestObject(t, srv.URL, "wide.png", "image/png", makeTestPNG(t, 2, 1))
@@ -2776,9 +2776,9 @@ func TestUploadRejectsImageDimensionLimit(t *testing.T) {
 		respBody, _ := io.ReadAll(resp.Body)
 		t.Fatalf("upload status = %d body=%q", resp.StatusCode, string(respBody))
 	}
-	var body map[string]string
+	var body map[string]any
 	decode(t, resp, &body)
-	if body["error"] != "resource_limit_exceeded" {
+	if body["code"] != "resource_limit_exceeded" {
 		t.Fatalf("error body = %+v", body)
 	}
 }
@@ -2802,7 +2802,7 @@ func TestReverseProxyNonUploadPaths(t *testing.T) {
 		SessionTTL:           time.Hour,
 		MaxUploadBytes:       1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/demo")
@@ -2827,7 +2827,7 @@ func TestWatchUploadSnapshot(t *testing.T) {
 		SessionTTL:     time.Hour,
 		MaxUploadBytes: 1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"hello.txt"}`)
 	var key struct {
@@ -2879,7 +2879,7 @@ func TestUploadKeyStartDeadlineExpires(t *testing.T) {
 			CleanupMode:     "disabled",
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	keyResp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"late.txt","content_type":"text/plain"}`)
@@ -2897,11 +2897,11 @@ func TestUploadKeyStartDeadlineExpires(t *testing.T) {
 		body, _ := io.ReadAll(uploadResp.Body)
 		t.Fatalf("upload status = %d body=%q", uploadResp.StatusCode, string(body))
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(uploadResp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["error"] != "upload_key_expired" {
+	if body["code"] != "upload_key_expired" {
 		t.Fatalf("error body = %+v", body)
 	}
 }
@@ -2927,7 +2927,7 @@ func TestCleanupExpiredUploadMarkers(t *testing.T) {
 		},
 	}
 	srv := New(cfg, store)
-	app := httptest.NewServer(srv.Handler())
+	app := newTestServer(t, srv.Handler())
 	defer app.Close()
 	resp := postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"stale.txt"}`)
 	if resp.StatusCode != http.StatusCreated {
@@ -2958,7 +2958,7 @@ func TestSharedKeyUsesConfiguredDefaultTTL(t *testing.T) {
 		SharedKeyPrefix:         ".streamuploader/shared/",
 		SharedKeyTTL:            time.Hour,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp := postJSON(t, app.URL+"/internal/file/shared-keys", `{"object_key":"uploads/a/file.txt"}`)
@@ -2992,7 +2992,7 @@ func TestDownloadHeadersUseCachePolicy(t *testing.T) {
 			ForwardLastMod: true,
 		},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/api/file/" + url.PathEscape(objectKey) + "/download")
@@ -3025,17 +3025,17 @@ func TestWORMModeDisablesDestructiveBackendRoutes(t *testing.T) {
 		EnableSharedKey: true,
 		WORMMode:        true,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	for _, target := range []string{"/internal/objects/" + url.PathEscape("uploads/test/file.txt"), "/internal/file/shared-keys/abc"} {
 		req, _ := http.NewRequest(http.MethodDelete, app.URL+target, nil)
 		resp := do(t, req)
-		var body map[string]string
+		var body map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&body)
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusMethodNotAllowed || body["error"] != "worm_readonly" {
-			t.Fatalf("DELETE %s: status %d code %q", target, resp.StatusCode, body["error"])
+		if resp.StatusCode != http.StatusMethodNotAllowed || body["code"] != "worm_readonly" {
+			t.Fatalf("DELETE %s: status %d code %q", target, resp.StatusCode, body["code"])
 		}
 	}
 	store.mu.Lock()
@@ -3067,7 +3067,7 @@ func TestObjectLockOnFinalUpload(t *testing.T) {
 		MaxUploadBytes: 1024,
 		ObjectLock:     storage.LockPolicy{Mode: storage.LockModeCompliance, Period: 24 * time.Hour},
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	var key model.CreateUploadKeyResponse
@@ -3129,7 +3129,7 @@ func TestBackendDeleteObjectSamePort(t *testing.T) {
 		SessionTTL:      time.Hour,
 		MaxUploadBytes:  1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
@@ -3149,7 +3149,7 @@ func TestBackendAuthMiddlewareCanBeCustomized(t *testing.T) {
 	auth.SetBackendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer secret" {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
+				writeProblem(w, r, http.StatusUnauthorized, "unauthorized", "backend authorization failed")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -3168,7 +3168,7 @@ func TestBackendAuthMiddlewareCanBeCustomized(t *testing.T) {
 		SessionTTL:      time.Hour,
 		MaxUploadBytes:  1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	req, _ := http.NewRequest(http.MethodDelete, app.URL+"/internal/objects/"+url.PathEscape("uploads/test/file.txt"), nil)
@@ -3191,7 +3191,7 @@ func TestFrontendAuthMiddlewareCanBeCustomizedWithoutWrappingBackend(t *testing.
 	auth.SetFrontendAuthMiddleware(func(next http.Handler, _ *auth.Config) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Frontend-Auth") != "ok" {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "frontend authorization failed")
+				writeProblem(w, r, http.StatusUnauthorized, "unauthorized", "frontend authorization failed")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -3210,7 +3210,7 @@ func TestFrontendAuthMiddlewareCanBeCustomizedWithoutWrappingBackend(t *testing.
 		SessionTTL:      time.Hour,
 		MaxUploadBytes:  1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/healthz")
@@ -3238,7 +3238,7 @@ func TestBackendHealthHandler(t *testing.T) {
 		SessionTTL:      time.Hour,
 		MaxUploadBytes:  1024,
 	}
-	app := httptest.NewServer(New(cfg, store).BackendHandler())
+	app := newTestServer(t, New(cfg, store).BackendHandler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/healthz")
@@ -3263,7 +3263,7 @@ func TestFileProxyDownload(t *testing.T) {
 		MaxUploadBytes:          1024,
 		AllowFrontendFileAccess: true,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/api/file/" + url.PathEscape("uploads/test/hello.txt") + "/content")
@@ -3305,7 +3305,7 @@ func TestSharedKeyDownload(t *testing.T) {
 		SharedKeyBits:           128,
 		SharedKeyPrefix:         ".streamuploader/shared/",
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp := postJSON(t, app.URL+"/internal/file/shared-keys", `{"object_key":"uploads/test/hello.txt","file_name":"hello.txt"}`)
@@ -3361,7 +3361,7 @@ func TestObjectDeleteCascadesSharedKeys(t *testing.T) {
 		SharedKeyBits:           128,
 		SharedKeyPrefix:         ".streamuploader/shared/",
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	var created []struct {
@@ -3415,7 +3415,7 @@ func TestDeleteSharedKeyDeletesMarker(t *testing.T) {
 		SharedKeyBits:           128,
 		SharedKeyPrefix:         ".streamuploader/shared/",
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp := postJSON(t, app.URL+"/internal/file/shared-keys", `{"object_key":"uploads/test/hello.txt","file_name":"hello.txt"}`)
@@ -3458,7 +3458,7 @@ func TestZipArchiveDownload(t *testing.T) {
 		MaxArchiveFiles:         10,
 		MaxArchiveBytes:         1024,
 	}
-	app := httptest.NewServer(New(cfg, store).Handler())
+	app := newTestServer(t, New(cfg, store).Handler())
 	defer app.Close()
 
 	resp, err := http.Get(app.URL + "/api/files/" + url.PathEscape("uploads/test/a.txt") + "," + url.PathEscape("uploads/test/b.txt"))

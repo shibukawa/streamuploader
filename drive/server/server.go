@@ -1,15 +1,21 @@
 // Package server is the Drive's HTTP surface: the /api/drive API, the web UI
 // and the pass-through of streamuploader's upload and file routes, all on
 // one origin. See .knowledge/concepts/api/drive-api.yaml.
+//
+// The routes are registered on a Popcorn Web mux and the handlers read and
+// write through the framework's generated codecs: `go tool pw generate`
+// writes the request binders and the JSON writers for the types in api.go.
+// The framework request chain (request id, access log, recovery, security
+// headers, body cap) is applied by the binary that serves this mux.
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/shibukawa/popcornweb/pw"
 
 	"streamuploader/drive/audit"
 	"streamuploader/drive/journal"
@@ -118,16 +124,25 @@ func New(cfg Config, deps Deps) *Server {
 // maxWORMPresignTTL bounds presigned URLs in WORM mode.
 const maxWORMPresignTTL = 5 * time.Minute
 
-// Handler builds the routes.
+// healthPattern is deliberately not a literal in the registrations below: the
+// upload API's generated OpenAPI fragment already declares GET /healthz, and
+// the generator would merge a second literal declaration of the same route
+// into a conflict that fails the whole document.
+var healthPattern = "GET /healthz"
+
+// Handler builds the routes. It is the application half of the stack: the
+// serving binary wraps it in the framework chain with pw.Run.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
+	mux := pw.NewServeMux()
 	if s.deps.Uploader != nil {
 		mux.Handle("/api/upload/", s.deps.Uploader)
 		mux.Handle("/api/file/", s.deps.Uploader)
 		mux.Handle("/api/files/", s.deps.Uploader)
-		mux.Handle("GET /healthz", s.deps.Uploader)
+		mux.Handle(healthPattern, s.deps.Uploader)
 	} else {
-		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		mux.HandleFunc(healthPattern, func(w http.ResponseWriter, r *http.Request) {
+			pw.WriteAPI(w, r, healthView{Status: "ok"})
+		})
 	}
 	mux.HandleFunc("GET /api/drive/info", s.info)
 	mux.HandleFunc("POST /api/drive/files", s.registerFile)
@@ -153,74 +168,37 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /ui/", http.StripPrefix("/ui/", http.FileServerFS(ui.Dist())))
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		pw.SetRoute(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(ui.IndexHTML)
 	})
-	return s.withAccessLog(mux)
+	return mux
 }
 
-func (s *Server) withAccessLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/upload/") || strings.HasPrefix(r.URL.Path, "/api/file") {
-			// streamuploader logs its own routes.
-			next.ServeHTTP(w, r)
-			return
-		}
-		started := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		s.logger.Info("drive_http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration_ms", time.Since(started).Milliseconds())
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-// Unwrap lets http.ResponseController reach the underlying writer.
-func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, apiError{Code: code, Message: message})
+// writeProblem answers with an RFC 9457 problem document carrying the Drive's
+// stable error code. The framework reports a 5xx to the client as a generic
+// internal problem and keeps the code and message for the log.
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	pw.WriteProblem(w, r, pw.Problem{Status: status, Title: http.StatusText(status), Code: code, Message: message})
 }
 
 // writeReadonly answers a change that WORM mode refuses.
-func writeReadonly(w http.ResponseWriter, err error) {
+func writeReadonly(w http.ResponseWriter, r *http.Request, err error) {
 	msg := "this deployment runs in WORM mode"
 	var ro *worm.ErrReadonly
 	if errors.As(err, &ro) {
 		msg = ro.Reason
 	}
-	writeError(w, http.StatusMethodNotAllowed, "worm_readonly", msg)
+	writeProblem(w, r, http.StatusMethodNotAllowed, "worm_readonly", msg)
 }
 
 // info describes the deployment to clients: the UI hides what WORM mode
 // refuses, and an auditor sees which storage lock the deployment relies on.
-func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	lock := map[string]any{"mode": s.cfg.ObjectLock.Mode, "description": s.cfg.ObjectLock.String()}
+func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	lock := objectLockView{Mode: string(s.cfg.ObjectLock.Mode), Description: s.cfg.ObjectLock.String()}
 	if s.cfg.ObjectLock.Period > 0 {
-		lock["retention"] = s.cfg.ObjectLock.Period.String()
+		lock.Retention = s.cfg.ObjectLock.Period.String()
 	}
 	enforcement := "none"
 	if s.cfg.WORM.Enabled() {
@@ -229,18 +207,18 @@ func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 			enforcement = "application, checkpoint and storage lock"
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant":   s.cfg.Tenant,
-		"delivery": s.cfg.Delivery,
-		"actor":    s.cfg.Actor,
-		"worm": map[string]any{
-			"mode":          s.cfg.WORM.String(),
-			"enabled":       s.cfg.WORM.Enabled(),
-			"enforcement":   enforcement,
-			"access_window": s.cfg.AccessWindow.String(),
-			"read_logging":  s.readLogging(),
-			"presign_ttl":   s.cfg.PresignTTL.String(),
-			"object_lock":   lock,
+	pw.WriteAPI(w, r, infoView{
+		Tenant:   s.cfg.Tenant,
+		Delivery: s.cfg.Delivery,
+		Actor:    s.cfg.Actor,
+		WORM: wormView{
+			Mode:         s.cfg.WORM.String(),
+			Enabled:      s.cfg.WORM.Enabled(),
+			Enforcement:  enforcement,
+			AccessWindow: s.cfg.AccessWindow.String(),
+			ReadLogging:  s.readLogging(),
+			PresignTTL:   s.cfg.PresignTTL.String(),
+			ObjectLock:   lock,
 		},
 	})
 }

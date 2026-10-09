@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,7 +65,7 @@ func newWORMStack(t *testing.T, store *memstore.Store, indexDir string, mode wor
 	drv := driveserver.New(driveserver.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", OverlayTTL: time.Millisecond, WORM: mode, AccessWindow: window, ObjectLock: lock}, driveserver.Deps{
 		Store: store, Journal: jstore, Metas: metas, Search: search, Indexer: ix, Uploader: uploader, Chain: ix.Chain(),
 	})
-	srv := httptest.NewServer(drv.Handler())
+	srv := newTestServer(t, drv.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	return &stack{t: t, ctx: ctx, store: store, cfg: cfg, search: search, metas: metas, ix: ix, srv: srv, client: &http.Client{Jar: jar}, index: indexDir}

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +8,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/shibukawa/popcornweb/pw"
 
 	"streamuploader/drive/journal"
 	"streamuploader/drive/meta"
@@ -19,86 +20,33 @@ import (
 	"streamuploader/internal/storage"
 )
 
-const maxBodyBytes = 1 << 20
-
-type locationInput struct {
-	Lat float64 `json:"lat"`
-	Lon float64 `json:"lon"`
-}
-
-type registerRequest struct {
-	Upload   model.UploadItem `json:"upload"`
-	Name     string           `json:"name"`
-	Tags     []string         `json:"tags"`
-	Author   string           `json:"author"`
-	Location *locationInput   `json:"location"`
-}
-
-// fileView is the API shape of a file: the state plus the URLs a client needs.
-type fileView struct {
-	*meta.File
-	Facets []string `json:"facets"`
-	URLs   fileURLs `json:"urls"`
-}
-
-type fileURLs struct {
-	Content   string `json:"content"`
-	Download  string `json:"download"`
-	Preview   string `json:"preview,omitempty"`
-	Thumbnail string `json:"thumbnail,omitempty"`
-}
-
-func (s *Server) view(f *meta.File) fileView {
-	base := "/api/drive/files/" + f.FileID
-	v := fileView{File: f, Facets: sidecar.FacetPaths(f), URLs: fileURLs{Content: base + "/content", Download: base + "/download"}}
-	if f.Derived.Preview.ObjectKey != "" {
-		v.URLs.Preview = base + "/preview"
-	}
-	if f.Derived.Thumbnail.ObjectKey != "" {
-		v.URLs.Thumbnail = base + "/thumbnail"
-	}
-	return v
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
-	if err != nil || len(body) > maxBodyBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body is too large")
-		return false
-	}
-	if err := json.Unmarshal(body, v); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
-		return false
-	}
-	return true
-}
-
 func (s *Server) registerFile(w http.ResponseWriter, r *http.Request) {
-	var req registerRequest
-	if !decodeJSON(w, r, &req) {
+	req, err := pw.Parse[registerInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
 	up := req.Upload
 	if strings.TrimSpace(up.ObjectKey) == "" {
-		writeError(w, http.StatusBadRequest, "missing_object_key", "upload.object_key is required")
+		writeProblem(w, r, http.StatusBadRequest, "missing_object_key", "upload.object_key is required")
 		return
 	}
-	if up.Status != "" && up.Status != model.UploadUploaded {
-		writeError(w, http.StatusConflict, "upload_not_complete", fmt.Sprintf("upload status is %q", up.Status))
+	if up.Status != "" && up.Status != string(model.UploadUploaded) {
+		writeProblem(w, r, http.StatusConflict, "upload_not_complete", fmt.Sprintf("upload status is %q", up.Status))
 		return
 	}
 	head, err := s.deps.Store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: up.ObjectKey})
 	if err != nil {
 		if objerr.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "object_not_found", "the uploaded object does not exist")
+			writeProblem(w, r, http.StatusNotFound, "object_not_found", "the uploaded object does not exist")
 			return
 		}
-		s.fail(w, "head_object", err)
+		s.fail(w, r, "head_object", err)
 		return
 	}
 	tags, err := meta.NormalizeTags(req.Tags)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_tag", err.Error())
+		writeProblem(w, r, http.StatusBadRequest, "invalid_tag", err.Error())
 		return
 	}
 	now := time.Now().UTC()
@@ -129,107 +77,137 @@ func (s *Server) registerFile(w http.ResponseWriter, r *http.Request) {
 		Protected:      up.Protected,
 		Dates:          meta.Dates{Uploaded: now, Modified: now},
 	}
-	if up.UploadedAt != nil && !up.UploadedAt.IsZero() {
-		f.Dates.Uploaded = up.UploadedAt.UTC()
+	if uploadedAt, ok := parseUploadedAt(up.UploadedAt); ok {
+		f.Dates.Uploaded = uploadedAt
 	}
-	if up.Thumbnail != nil {
-		f.Derived.Thumbnail = meta.Asset{ObjectKey: up.Thumbnail.ObjectKey, ContentType: up.Thumbnail.ContentType, Status: up.Thumbnail.Status}
-	}
-	if up.ExtractedContent != nil {
-		f.Derived.Text = meta.TextAsset{ObjectKey: up.ExtractedContent.ObjectKey, Status: up.ExtractedContent.Status}
-	}
-	if up.Preview != nil {
-		f.Derived.Preview = meta.Asset{ObjectKey: up.Preview.ObjectKey, ContentType: up.Preview.ContentType, Status: up.Preview.Status}
-	}
-	if req.Location != nil {
+	f.Derived = derivedOf(up)
+	if req.Location != (locationInput{}) {
 		f.Location = &meta.Location{Lat: req.Location.Lat, Lon: req.Location.Lon, Source: "user", Geohash: sidecar.Geohash(req.Location.Lat, req.Location.Lon, 8)}
 	}
-	facts, _ := json.Marshal(up)
 	if _, err := s.appendEvent(r.Context(), &journal.Event{
 		TenantID:    s.cfg.Tenant,
 		Type:        journal.FileCreated,
 		Actor:       s.cfg.Actor,
 		FileID:      f.FileID,
 		State:       f,
-		UploadFacts: facts,
+		UploadFacts: up.AppendJSONTo(nil),
 	}); err != nil {
-		s.fail(w, "append_event", err)
+		s.fail(w, r, "append_event", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.view(f))
+	pw.WriteStatus(w, r, http.StatusCreated, s.view(f))
+}
+
+// parseUploadedAt reads the upload time streamuploader reported.
+func parseUploadedAt(value string) (time.Time, bool) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil || t.IsZero() {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
+
+// derivedOf copies the derived assets streamuploader reported for an upload.
+func derivedOf(up uploadFacts) meta.Derived {
+	var d meta.Derived
+	if up.Thumbnail.ObjectKey != "" || up.Thumbnail.Status != "" {
+		d.Thumbnail = meta.Asset{ObjectKey: up.Thumbnail.ObjectKey, ContentType: up.Thumbnail.ContentType, Status: up.Thumbnail.Status}
+	}
+	if up.ExtractedContent.ObjectKey != "" || up.ExtractedContent.Status != "" {
+		d.Text = meta.TextAsset{ObjectKey: up.ExtractedContent.ObjectKey, Status: up.ExtractedContent.Status}
+	}
+	if up.Preview.ObjectKey != "" || up.Preview.Status != "" {
+		d.Preview = meta.Asset{ObjectKey: up.Preview.ObjectKey, ContentType: up.Preview.ContentType, Status: up.Preview.Status}
+	}
+	return d
 }
 
 func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
-	f, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	f, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || f.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.view(f))
-}
-
-type patchRequest struct {
-	Name             *string        `json:"name"`
-	Tags             *[]string      `json:"tags"`
-	Author           *string        `json:"author"`
-	Location         *locationInput `json:"location"`
-	ClearLocation    bool           `json:"clear_location"`
-	ExpectedRevision int64          `json:"expected_revision"`
+	pw.WriteAPI(w, r, s.view(f))
 }
 
 func (s *Server) patchFile(w http.ResponseWriter, r *http.Request) {
-	var req patchRequest
-	if !decodeJSON(w, r, &req) {
+	req, err := pw.Parse[patchInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
-	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	cur, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || cur.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	if req.ExpectedRevision != 0 && req.ExpectedRevision != cur.Revision {
-		writeError(w, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
+		writeProblem(w, r, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
 		return
 	}
 	if s.cfg.WORM == worm.Strict {
-		writeReadonly(w, s.cfg.WORM.CheckUpdate(cur, cur))
+		writeReadonly(w, r, s.cfg.WORM.CheckUpdate(cur, cur))
 		return
 	}
 	f := cur.Clone()
-	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
+	if raw, ok := req.Fields["name"]; ok {
+		name, ok := raw.(string)
+		if !ok {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_json", "name must be a string")
+			return
+		}
+		name = strings.TrimSpace(name)
 		if name == "" {
-			writeError(w, http.StatusBadRequest, "invalid_name", "name must not be empty")
+			writeProblem(w, r, http.StatusBadRequest, "invalid_name", "name must not be empty")
 			return
 		}
 		f.Name = name
 	}
-	if req.Tags != nil {
-		tags, err := meta.NormalizeTags(*req.Tags)
+	if raw, ok := req.Fields["tags"]; ok {
+		values, ok := stringList(raw)
+		if !ok {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_json", "tags must be a list of strings")
+			return
+		}
+		tags, err := meta.NormalizeTags(values)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_tag", err.Error())
+			writeProblem(w, r, http.StatusBadRequest, "invalid_tag", err.Error())
 			return
 		}
 		f.Tags = tags
 	}
-	if req.Author != nil {
-		f.Author.Override = strings.TrimSpace(*req.Author)
+	if raw, ok := req.Fields["author"]; ok {
+		author, ok := raw.(string)
+		if !ok {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_json", "author must be a string")
+			return
+		}
+		f.Author.Override = strings.TrimSpace(author)
 	}
 	if req.ClearLocation {
 		f.Location = nil
-	} else if req.Location != nil {
-		f.Location = &meta.Location{Lat: req.Location.Lat, Lon: req.Location.Lon, Source: "user", Geohash: sidecar.Geohash(req.Location.Lat, req.Location.Lon, 8)}
+	} else if raw, ok := req.Fields["location"]; ok && raw != nil {
+		lat, lon, ok := locationFields(raw)
+		if !ok {
+			writeProblem(w, r, http.StatusBadRequest, "invalid_json", "location must carry numeric lat and lon")
+			return
+		}
+		f.Location = &meta.Location{Lat: lat, Lon: lon, Source: "user", Geohash: sidecar.Geohash(lat, lon, 8)}
 	}
 	if err := s.cfg.WORM.CheckUpdate(cur, f); err != nil {
-		writeReadonly(w, err)
+		writeReadonly(w, r, err)
 		return
 	}
 	f.Revision++
@@ -242,24 +220,58 @@ func (s *Server) patchFile(w http.ResponseWriter, r *http.Request) {
 		State:            f,
 		ExpectedRevision: req.ExpectedRevision,
 	}); err != nil {
-		s.fail(w, "append_event", err)
+		s.fail(w, r, "append_event", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.view(f))
+	pw.WriteAPI(w, r, s.view(f))
+}
+
+// stringList reads a decoded JSON array of strings.
+func stringList(raw any) ([]string, bool) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, raw == nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, value)
+	}
+	return out, true
+}
+
+// locationFields reads lat and lon out of a decoded JSON object.
+func locationFields(raw any) (float64, float64, bool) {
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return 0, 0, false
+	}
+	lat, ok := object["lat"].(float64)
+	if !ok {
+		return 0, 0, false
+	}
+	lon, ok := object["lon"].(float64)
+	if !ok {
+		return 0, 0, false
+	}
+	return lat, lon, true
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.WORM.Enabled() {
-		writeReadonly(w, &worm.ErrReadonly{Reason: "files cannot be deleted in WORM mode"})
+		writeReadonly(w, r, &worm.ErrReadonly{Reason: "files cannot be deleted in WORM mode"})
 		return
 	}
-	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	cur, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || cur.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	f := cur.Clone()
@@ -273,9 +285,10 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		FileID:   f.FileID,
 		State:    f,
 	}); err != nil {
-		s.fail(w, "append_event", err)
+		s.fail(w, r, "append_event", err)
 		return
 	}
+	pw.SetRoute(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -283,20 +296,20 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 // restore and refuses the call like every other state rewrite.
 func (s *Server) restoreFile(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.WORM.Enabled() {
-		writeReadonly(w, &worm.ErrReadonly{Reason: "nothing is deleted in WORM mode, so nothing can be restored"})
+		writeReadonly(w, r, &worm.ErrReadonly{Reason: "nothing is deleted in WORM mode, so nothing can be restored"})
 		return
 	}
-	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	cur, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	if !cur.Deleted {
-		writeError(w, http.StatusConflict, "not_deleted", "file is not deleted")
+		writeProblem(w, r, http.StatusConflict, "not_deleted", "file is not deleted")
 		return
 	}
 	f := cur.Clone()
@@ -310,64 +323,60 @@ func (s *Server) restoreFile(w http.ResponseWriter, r *http.Request) {
 		FileID:   f.FileID,
 		State:    f,
 	}); err != nil {
-		s.fail(w, "append_event", err)
+		s.fail(w, r, "append_event", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.view(f))
-}
-
-type versionRequest struct {
-	Upload           model.UploadItem `json:"upload"`
-	ExpectedRevision int64            `json:"expected_revision"`
+	pw.WriteAPI(w, r, s.view(f))
 }
 
 // newVersion replaces the bytes of a file with a new upload. The earlier
 // object stays in the bucket and is listed under versions; this is the only
 // edit path WORM mode allows. See requirement:local-drive-worm-audit-mode.
 func (s *Server) newVersion(w http.ResponseWriter, r *http.Request) {
-	var req versionRequest
-	if !decodeJSON(w, r, &req) {
+	req, err := pw.Parse[versionInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
-	cur, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	cur, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || cur.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	if req.ExpectedRevision != 0 && req.ExpectedRevision != cur.Revision {
-		writeError(w, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
+		writeProblem(w, r, http.StatusConflict, "revision_conflict", fmt.Sprintf("file is at revision %d", cur.Revision))
 		return
 	}
 	up := req.Upload
 	if strings.TrimSpace(up.ObjectKey) == "" {
-		writeError(w, http.StatusBadRequest, "missing_object_key", "upload.object_key is required")
+		writeProblem(w, r, http.StatusBadRequest, "missing_object_key", "upload.object_key is required")
 		return
 	}
-	if up.Status != "" && up.Status != model.UploadUploaded {
-		writeError(w, http.StatusConflict, "upload_not_complete", fmt.Sprintf("upload status is %q", up.Status))
+	if up.Status != "" && up.Status != string(model.UploadUploaded) {
+		writeProblem(w, r, http.StatusConflict, "upload_not_complete", fmt.Sprintf("upload status is %q", up.Status))
 		return
 	}
 	if up.ObjectKey == cur.ObjectKey {
-		writeError(w, http.StatusConflict, "same_object", "the upload is already the current version")
+		writeProblem(w, r, http.StatusConflict, "same_object", "the upload is already the current version")
 		return
 	}
 	for _, v := range cur.Versions {
 		if v.ObjectKey == up.ObjectKey {
-			writeError(w, http.StatusConflict, "same_object", "the upload is already an earlier version of this file")
+			writeProblem(w, r, http.StatusConflict, "same_object", "the upload is already an earlier version of this file")
 			return
 		}
 	}
 	head, err := s.deps.Store.HeadObject(r.Context(), storage.HeadInput{Bucket: s.cfg.Bucket, Key: up.ObjectKey})
 	if err != nil {
 		if objerr.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "object_not_found", "the uploaded object does not exist")
+			writeProblem(w, r, http.StatusNotFound, "object_not_found", "the uploaded object does not exist")
 			return
 		}
-		s.fail(w, "head_object", err)
+		s.fail(w, r, "head_object", err)
 		return
 	}
 	now := time.Now().UTC()
@@ -393,28 +402,18 @@ func (s *Server) newVersion(w http.ResponseWriter, r *http.Request) {
 		f.ContentType = head.ContentType
 	}
 	f.Protected = up.Protected
-	f.Derived = meta.Derived{}
-	if up.Thumbnail != nil {
-		f.Derived.Thumbnail = meta.Asset{ObjectKey: up.Thumbnail.ObjectKey, ContentType: up.Thumbnail.ContentType, Status: up.Thumbnail.Status}
-	}
-	if up.ExtractedContent != nil {
-		f.Derived.Text = meta.TextAsset{ObjectKey: up.ExtractedContent.ObjectKey, Status: up.ExtractedContent.Status}
-	}
-	if up.Preview != nil {
-		f.Derived.Preview = meta.Asset{ObjectKey: up.Preview.ObjectKey, ContentType: up.Preview.ContentType, Status: up.Preview.Status}
-	}
+	f.Derived = derivedOf(up)
 	// Extracted values belong to the old bytes; the indexer re-reads them.
 	f.Author.Extracted = ""
 	f.Dates.Created = nil
 	f.Dates.Shot = nil
-	if up.UploadedAt != nil && !up.UploadedAt.IsZero() {
-		f.Dates.Uploaded = up.UploadedAt.UTC()
+	if uploadedAt, ok := parseUploadedAt(up.UploadedAt); ok {
+		f.Dates.Uploaded = uploadedAt
 	} else {
 		f.Dates.Uploaded = now
 	}
 	f.Dates.Modified = now
 	f.Revision++
-	facts, _ := json.Marshal(up)
 	if _, err := s.appendEvent(r.Context(), &journal.Event{
 		EventID:          eventID,
 		At:               now,
@@ -424,83 +423,80 @@ func (s *Server) newVersion(w http.ResponseWriter, r *http.Request) {
 		FileID:           f.FileID,
 		State:            f,
 		ExpectedRevision: req.ExpectedRevision,
-		UploadFacts:      facts,
+		UploadFacts:      up.AppendJSONTo(nil),
 	}); err != nil {
-		s.fail(w, "append_event", err)
+		s.fail(w, r, "append_event", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.view(f))
-}
-
-type versionView struct {
-	meta.Version
-	N    int `json:"n"`
-	URLs struct {
-		Content  string `json:"content"`
-		Download string `json:"download"`
-	} `json:"urls"`
+	pw.WriteStatus(w, r, http.StatusCreated, s.view(f))
 }
 
 // listVersions returns the earlier objects of a file, oldest first.
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
-	f, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	f, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || f.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	out := make([]versionView, 0, len(f.Versions))
+	out := make([]versionEntryView, 0, len(f.Versions))
 	for i, v := range f.Versions {
-		vv := versionView{Version: v, N: i + 1}
 		base := fmt.Sprintf("/api/drive/files/%s/versions/%d", f.FileID, i+1)
-		vv.URLs.Content = base + "/content"
-		vv.URLs.Download = base + "/download"
-		out = append(out, vv)
+		out = append(out, versionEntryView{
+			ObjectKey:      v.ObjectKey,
+			EventID:        v.EventID,
+			At:             v.At.Format(time.RFC3339Nano),
+			SizeBytes:      v.SizeBytes,
+			ChecksumSHA256: v.ChecksumSHA256,
+			ContentType:    v.ContentType,
+			Name:           v.Name,
+			N:              i + 1,
+			URLs:           versionURLs{Content: base + "/content", Download: base + "/download"},
+		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"file_id": f.FileID, "current_object_key": f.ObjectKey, "revision": f.Revision, "versions": out})
+	pw.WriteAPI(w, r, versionsResponse{FileID: f.FileID, CurrentObjectKey: f.ObjectKey, Revision: f.Revision, Versions: out})
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{
-		"tenant":           s.cfg.Tenant,
-		"files_cached":     s.deps.Metas.Len(),
-		"overlay_entries":  s.overlayEntryCount(),
-		"last_journal_key": "",
+	out := statsResponse{
+		Tenant:         s.cfg.Tenant,
+		FilesCached:    s.deps.Metas.Len(),
+		OverlayEntries: s.overlayEntryCount(),
 	}
 	if s.deps.Indexer != nil {
-		out["last_journal_key"] = s.deps.Indexer.LastJournalKey()
+		out.LastJournalKey = s.deps.Indexer.LastJournalKey()
 		if sr, ok := s.deps.Indexer.(StatusReporter); ok {
-			out["indexer"] = sr.Status()
+			out.Indexer = viewOfIndexStatus(sr.Status())
 		}
 	}
 	if s.deps.Search != nil {
 		if st, err := s.deps.Search.Stats(r.Context()); err == nil {
-			out["index"] = st
+			out.Index = indexStatsView{NumDocs: st.NumDocs, Segments: st.Segments, SchemaVersion: st.SchemaVersion}
 		} else {
-			out["index_error"] = err.Error()
+			out.IndexError = err.Error()
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	pw.WriteAPI(w, r, out)
 }
 
-func (s *Server) reindex(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) reindex(w http.ResponseWriter, r *http.Request) {
 	rb, ok := s.deps.Indexer.(Rebuilder)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "no_indexer", "this server has no indexer; run `drive reindex` where the indexer runs")
+		writeProblem(w, r, http.StatusServiceUnavailable, "no_indexer", "this server has no indexer; run `drive reindex` where the indexer runs")
 		return
 	}
 	rb.RebuildAsync()
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "rebuild_scheduled"})
+	pw.WriteStatus(w, r, http.StatusAccepted, reindexResponse{Status: "rebuild_scheduled"})
 }
 
-func (s *Server) fail(w http.ResponseWriter, op string, err error) {
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, op string, err error) {
 	if errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		writeProblem(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	s.logger.Error("drive_"+op+"_failed", "error", err)
-	writeError(w, http.StatusInternalServerError, "internal_error", op+" failed")
+	pw.Logger(r).Error("drive_"+op+"_failed", pw.Err(err))
+	writeProblem(w, r, http.StatusInternalServerError, "internal_error", op+" failed")
 }

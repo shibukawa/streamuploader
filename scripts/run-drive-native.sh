@@ -36,6 +36,7 @@ if [[ ! -x "$SIDECAR" ]]; then
   (cd "$ROOT_DIR/search" && PATH="$HOME/.cargo/bin:$PATH" cargo build --release)
 fi
 echo "==> building drive"
+(cd "$ROOT_DIR" && go tool pw generate)
 (cd "$ROOT_DIR" && go build -o "$BIN_DIR/drive" ./cmd/drive)
 
 if "$RUNTIME" ps --format '{{.Names}}' | grep -qx "$RUSTFS_NAME"; then
@@ -62,7 +63,7 @@ exec env \
   DRIVE_SEARCH_BIN="$SIDECAR" \
   DRIVE_INDEX_DIR="$INDEX_DIR" \
   DRIVE_DELIVERY="${DRIVE_DELIVERY:-proxy}" \
-  SU_ADDR=":$PORT" \
+  PORT="$PORT" \
   SU_PUBLIC_BASE_URL="http://localhost:$PORT" \
   SU_S3_BUCKET="${SU_S3_BUCKET:-stream-upload}" \
   SU_S3_ENDPOINT="http://127.0.0.1:9000" \

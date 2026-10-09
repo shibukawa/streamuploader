@@ -5,8 +5,6 @@ package streamuploadercli
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,23 +12,53 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/shibukawa/popcornweb/pw"
+
 	"streamuploader/internal/config"
 	"streamuploader/internal/extraction"
+	"streamuploader/internal/framework"
 	"streamuploader/internal/server"
 	"streamuploader/internal/storage"
 	"streamuploader/internal/thumbnail"
 )
 
+// thumbnailConvertCommand is `streamuploader thumbnail-convert`: read one
+// image from stdin, write the thumbnail to stdout and its facts to stderr.
+type thumbnailConvertCommand struct {
+	Width          int    `default:"400" help:"thumbnail width"`
+	Height         int    `default:"400" help:"thumbnail height"`
+	Fit            string `default:"contain" enum:"contain,cover" help:"contain or cover"`
+	Format         string `default:"avif" enum:"avif,webp,jpeg" help:"avif, webp, or jpeg"`
+	LosslessPolicy string `default:"force_avif_reduction" enum:"force_avif_reduction,webp_lossless" help:"force_avif_reduction or webp_lossless"`
+}
+
+// Main is the streamuploader entry point. The process is a Popcorn Web
+// application: the request chain and the listener timeouts come from the
+// framework configuration (config.{APP_ENV}.toml, environment, --help), while
+// the listeners themselves are SU_ADDR and SU_BACKEND_ADDR, because
+// streamuploader serves two of them.
 func Main() {
-	if len(os.Args) > 1 && os.Args[1] == "thumbnail-convert" {
-		if err := runThumbnailConvert(os.Args[2:]); err != nil {
+	if err := pw.SetOpenAPIInfo(pw.OpenAPIInfo{Title: "streamuploader API", Version: "0.1.0"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	pw.RegisterSubCommand[thumbnailConvertCommand]("thumbnail-convert", "convert the image on stdin to a thumbnail on stdout")
+	cfg := config.Load()
+	if err := framework.Prepare(framework.Options{
+		MaxRequestBody:   server.EffectiveMaxUploadBytes(cfg),
+		StreamingUploads: true,
+		LegacyLogFormat:  cfg.Logging.Format,
+		LegacyLogLevel:   cfg.Logging.Level,
+	}); err != nil {
+		framework.Exit(err)
+	}
+	if command, ok := pw.Command[thumbnailConvertCommand](); ok {
+		if err := runThumbnailConvert(command); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
-	cfg := config.Load()
-	configureLogging(cfg.Logging)
 	logStartupConfig(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -66,27 +94,14 @@ func Main() {
 	}
 }
 
-func runThumbnailConvert(args []string) error {
-	fs := flag.NewFlagSet("thumbnail-convert", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	width := fs.Int("width", 400, "thumbnail width")
-	height := fs.Int("height", 400, "thumbnail height")
-	fit := fs.String("fit", "contain", "contain or cover")
-	format := fs.String("format", "avif", "avif, webp, or jpeg")
-	losslessPolicy := fs.String("lossless-policy", "force_avif_reduction", "force_avif_reduction or webp_lossless")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
+func runThumbnailConvert(command thumbnailConvertCommand) error {
 	policy := config.DefaultSecurityPolicy().Thumbnails
 	policy.Enabled = true
-	policy.Width = *width
-	policy.Height = *height
-	policy.Fit = *fit
-	policy.PreferredFormat = *format
-	policy.LosslessPolicy = *losslessPolicy
+	policy.Width = command.Width
+	policy.Height = command.Height
+	policy.Fit = command.Fit
+	policy.PreferredFormat = command.Format
+	policy.LosslessPolicy = command.LosslessPolicy
 	plan := thumbnail.Configure(policy)
 	body, contentType, backend, outW, outH, err := thumbnail.ConvertWithPlan(os.Stdin, policy, plan)
 	if err != nil {
@@ -103,26 +118,6 @@ func runThumbnailConvert(args []string) error {
 		"size_bytes":   len(body),
 	})
 	return nil
-}
-
-func configureLogging(policy config.LoggingPolicy) {
-	var level slog.Level
-	switch policy.Level {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		level = slog.LevelInfo
-	}
-	opts := &slog.HandlerOptions{Level: level}
-	if policy.Format == "json" {
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, opts)))
-		return
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 }
 
 func logStartupConfig(cfg config.Config) {

@@ -75,14 +75,15 @@ facts:
       path: /api/drive/admin/reindex
       behavior: triggers the indexer rebuild; operator token only
   pagination: opaque cursor encoding sort key and offset
-  errors: JSON {code, message}; codes include revision_conflict, worm_readonly, not_registered
+  errors: RFC 9457 problem document (application/problem+json) with type, title, status, detail and code (decision:web-framework); codes include revision_conflict, worm_readonly, not_registered; a 5xx is reported as code internal
   openapi: generated from the Go handlers; TypeScript client for the UI, Go client for the CLI
   implemented_2026_10_08:
     done: register_file, get_file, update_file (plus clear_location), delete_file, search (q, tag, facet, exact, sort, limit, offset), facets, content/download/preview/thumbnail (proxy or presigned), stats, admin reindex, web UI at / and /ui/
     not_yet: restore_file, new_version, bulk_zip, views, journal_export, checkpoints, OpenAPI document and generated clients, API tokens
   implemented_2026_10_09:
     done: restore_file, new_version (plus GET versions and GET versions/{n}/content|download for earlier objects), journal_export (JSON lines; since/until accept a key, an event id or an RFC 3339 time), checkpoints, info (tenant, delivery, WORM mode and lock), worm_readonly refusals
-    not_yet: bulk_zip, views, OpenAPI document and generated clients, API tokens
+    framework: handlers moved to Popcorn Web (decision:web-framework); the OpenAPI document is generated from them and served at server.openapi (config/config.dev.toml serves /openapi.json and /docs); the journal export forwards each stored event byte for byte and a checkpoint is answered as the stored document
+    not_yet: bulk_zip, views, generated clients, API tokens
 relations:
   - relation: implements
     to: requirement:local-drive-api-and-web-ui

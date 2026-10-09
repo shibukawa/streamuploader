@@ -80,7 +80,7 @@ func (s *Server) recordAccess(w http.ResponseWriter, r *http.Request, fileID, ob
 		FileID:   fileID,
 		Access:   &journal.Access{ObjectKey: objectKey, Kind: kind, ClientHash: client},
 	}); err != nil {
-		s.fail(w, "record_access", err)
+		s.fail(w, r, "record_access", err)
 		return false
 	}
 	if s.deps.Indexer != nil {

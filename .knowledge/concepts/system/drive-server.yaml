@@ -24,12 +24,12 @@ facts:
     proposal: this repository, as cmd/drive plus drive/ packages and a search/ Rust crate, because the binary imports streamuploader as a library
     alternative: a separate repository that imports the streamuploader module
   implemented_2026_10_08:
-    entry: cmd/drive/main.go with subcommands serve, reindex, index-once
+    entry: cmd/drive/main.go, a Popcorn Web application (decision:web-framework): pw.Run serves the mux, pw.RegisterSubCommand declares reindex and index-once
     packages: drive/server (routes, overlay, files, search, delivery), drive/indexer, drive/journal, drive/meta, drive/sidecar, drive/memstore (in-memory storage.Store for tests and DRIVE_STORAGE=memory), drive/objerr
     streamuploader_embedding: internal/server.New(cfg, store).Handler() mounted under /api/upload/, /api/file/, /api/files/ and /healthz; ApplicationServerURL forced empty so no reverse proxy exists
     delivery_default: proxy (bytes through the server with Range passthrough) so the bdf viewer works without bucket CORS; presigned is a switch (DRIVE_DELIVERY)
     state_file: drive-state.json inside the index directory (last folded journal key, pending text keys); deleting the directory forces a rebuild
-    env: DRIVE_TENANT, DRIVE_PREFIX, DRIVE_INDEX_DIR, DRIVE_SEARCH_BIN, DRIVE_SEARCH_TOKENIZER, DRIVE_INDEX_INTERVAL, DRIVE_DELIVERY, DRIVE_STORAGE
+    config: the [drive] table of config.{APP_ENV}.toml bound with pw.RegisterConfig (drive.tenant, drive.prefix, drive.index_dir, drive.search_bin, drive.search_tokenizer, drive.index_interval, drive.index_snapshot, drive.snapshot_refresh, drive.snapshot_gc_grace, drive.delivery, drive.storage, drive.worm_mode, drive.worm_access_window), each also DRIVE_* in the environment and --drive-<key> on the command line; the listener is server.port / PORT
     not_yet: streamuploader cleanup loop is not started by the Drive
   implemented_2026_10_09:
     server_mode: drive server starts the sidecar with --read-only and a snapshot follower (drive/snapshot/follower.go) that stands in for the indexer behind the server's IndexerControl interface - LastJournalKey comes from the pointer, Poke is a no-op, the reindex endpoint answers 503 because the follower is not a Rebuilder
@@ -37,10 +37,11 @@ facts:
     before_first_publish: a server started before any indexer ran serves an empty index plus the journal overlay and picks the snapshot up on its next refresh
     indexer_mode: drive indexer runs the fold-and-publish loop without an HTTP listener
     memory_storage: server and indexer modes refuse DRIVE_STORAGE=memory because the bucket must be shared
-    env: DRIVE_INDEX_SNAPSHOT, DRIVE_SNAPSHOT_REFRESH, DRIVE_SNAPSHOT_GC_GRACE
+    config: drive.index_snapshot, drive.snapshot_refresh, drive.snapshot_gc_grace (DRIVE_INDEX_SNAPSHOT, DRIVE_SNAPSHOT_REFRESH, DRIVE_SNAPSHOT_GC_GRACE)
     scripts: scripts/run-drive-native.sh passes its arguments to the binary and uses .cache/drive/index-<mode> so indexer and server can share one RustFS container on the host
-    worm: DRIVE_WORM_MODE and DRIVE_WORM_ACCESS_WINDOW; SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION reused from streamuploader for journal and audit objects; the start log states the enforcement level ("application and checkpoint only" without a storage lock)
-    verify_subcommand: drive verify [--hash] [--json] walks the audit chain and exits non-zero on findings; needs no sidecar
+    worm: drive.worm_mode and drive.worm_access_window (DRIVE_WORM_MODE, DRIVE_WORM_ACCESS_WINDOW); SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION reused from streamuploader for journal and audit objects; the start log states the enforcement level ("application and checkpoint only" without a storage lock)
+    verify_subcommand: drive verify [--hash] [--json] (a pw.RegisterSubCommand) walks the audit chain and exits non-zero on findings; needs no sidecar
+    init_subcommand: drive init keeps its own flag parser and is answered before the framework reads any configuration, because it needs neither an environment nor an object store
     packages_added: drive/worm (mode and additive rule), drive/audit (checkpoint chain and verifier)
     init: implemented 2026-10-09 for the compose target (cmd/drive/init.go, drive/deploy); generates .env, compose.yaml, security.yaml and README.md; other targets exit 2 until their slice; configuration stays environment-based, data:drive-config-file is deferred; WORM variables are not part of the kit yet (deferred worm presets in requirement:drive-init-subcommand)
 open_questions:

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shibukawa/popcornweb/pw"
+
 	"streamuploader/drive/meta"
 	"streamuploader/drive/objerr"
 	"streamuploader/internal/storage"
@@ -19,18 +21,18 @@ const previewContentType = "application/x-bdf"
 // deliver serves the original or a derived asset. kind is content, download,
 // preview or thumbnail. See decision:presigned-zero-egress-delivery.
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request, kind string) {
-	f, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	f, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || f.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 	key, contentType, filename := assetFor(f, kind)
 	if key == "" {
-		writeError(w, http.StatusNotFound, "no_asset", "this file has no "+kind)
+		writeProblem(w, r, http.StatusNotFound, "no_asset", "this file has no "+kind)
 		return
 	}
 	attachment := kind == "download"
@@ -50,18 +52,18 @@ func accessKind(kind string) string {
 
 // deliverVersion serves an earlier object of a file (1-based n).
 func (s *Server) deliverVersion(w http.ResponseWriter, r *http.Request, attachment bool) {
-	f, ok, err := s.resolveFile(r.Context(), r.PathValue("id"))
+	f, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
 	if err != nil {
-		s.fail(w, "resolve_file", err)
+		s.fail(w, r, "resolve_file", err)
 		return
 	}
 	if !ok || f.Deleted {
-		writeError(w, http.StatusNotFound, "not_found", "file not found")
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	n, err := strconv.Atoi(r.PathValue("n"))
+	n, err := strconv.Atoi(pw.PathValue(r, "n"))
 	if err != nil || n < 1 || n > len(f.Versions) {
-		writeError(w, http.StatusNotFound, "no_version", "this file has no such version")
+		writeProblem(w, r, http.StatusNotFound, "no_version", "this file has no such version")
 		return
 	}
 	v := f.Versions[n-1]
@@ -90,11 +92,11 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, key, conten
 			Bucket: s.cfg.Bucket, Key: key, Expires: s.cfg.PresignTTL, ResponseContentDisposition: disposition,
 		})
 		if err != nil {
-			s.fail(w, "presign", err)
+			s.fail(w, r, "presign", err)
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		http.Redirect(w, r, out.URL, http.StatusFound)
+		pw.Redirect(w, r, out.URL, http.StatusFound)
 		return
 	}
 	s.proxyObject(w, r, key, contentType, filename, attachment, derived)
@@ -129,15 +131,15 @@ func (s *Server) proxyObject(w http.ResponseWriter, r *http.Request, key, conten
 		if objerr.IsNotFound(err) {
 			// Derived assets are produced after the upload; the client retries.
 			w.Header().Set("Cache-Control", "no-store")
-			writeError(w, http.StatusNotFound, "asset_pending", "the asset is not available yet")
+			writeProblem(w, r, http.StatusNotFound, "asset_pending", "the asset is not available yet")
 			return
 		}
 		if strings.Contains(strings.ToLower(err.Error()), "range") {
 			w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(-1, 10))
-			writeError(w, http.StatusRequestedRangeNotSatisfiable, "bad_range", err.Error())
+			writeProblem(w, r, http.StatusRequestedRangeNotSatisfiable, "bad_range", err.Error())
 			return
 		}
-		s.fail(w, "get_object", err)
+		s.fail(w, r, "get_object", err)
 		return
 	}
 	defer out.Body.Close()
@@ -150,6 +152,7 @@ func (s *Server) proxyObject(w http.ResponseWriter, r *http.Request, key, conten
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	pw.SetRoute(w, r)
 	h := w.Header()
 	h.Set("Content-Type", contentType)
 	h.Set("Accept-Ranges", "bytes")

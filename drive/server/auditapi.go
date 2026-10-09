@@ -1,39 +1,54 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shibukawa/popcornweb/pw"
+	"github.com/shibukawa/tinybind-go/jsonbind"
 
 	"streamuploader/drive/audit"
 	"streamuploader/drive/journal"
 	"streamuploader/drive/objerr"
 )
 
+// journalExportInput is the query of GET /api/drive/journal.
+type journalExportInput struct {
+	Since string `query:"since"`
+	Until string `query:"until"`
+	Type  string `query:"type"`
+	Limit int    `query:"limit"`
+}
+
 // exportJournal streams events as JSON lines for audit tooling. Query:
 // since and until are journal keys or event ids (exclusive lower bound,
 // inclusive upper bound), type filters by event type, limit bounds the
-// count (default 1000, max 10000).
+// count (default 1000, max 10000). Each line carries the stored bytes of the
+// event unchanged, so a consumer can verify the digest beside it.
 func (s *Server) exportJournal(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	since := s.journalBound(q.Get("since"), false)
-	until := s.journalBound(q.Get("until"), true)
-	typ := strings.TrimSpace(q.Get("type"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
+	in, err := pw.Parse[journalExportInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	since := s.journalBound(in.Since, false)
+	until := s.journalBound(in.Until, true)
+	typ := strings.TrimSpace(in.Type)
+	limit := in.Limit
 	if limit <= 0 {
 		limit = 1000
 	}
 	if limit > 10000 {
 		limit = 10000
 	}
+	pw.SetRoute(w, r)
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
 	cursor := since
 	written := 0
+	line := make([]byte, 0, 4096)
 	for written < limit {
 		page := 200
 		if remaining := limit - written; remaining < page {
@@ -42,7 +57,7 @@ func (s *Server) exportJournal(w http.ResponseWriter, r *http.Request) {
 		keys, err := s.deps.Journal.ListKeys(r.Context(), s.cfg.Tenant, cursor, page)
 		if err != nil {
 			if written == 0 {
-				s.fail(w, "list_journal", err)
+				s.fail(w, r, "list_journal", err)
 			}
 			return
 		}
@@ -51,14 +66,23 @@ func (s *Server) exportJournal(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			cursor = key
-			e, err := s.deps.Journal.Read(r.Context(), key)
+			e, raw, err := s.deps.Journal.ReadRaw(r.Context(), key)
 			if err != nil {
 				continue
 			}
 			if typ != "" && string(e.Event.Type) != typ {
 				continue
 			}
-			_ = enc.Encode(map[string]any{"key": e.Key, "sha256": e.Digest, "event": e.Event})
+			line = append(line[:0], `{"key":`...)
+			line = jsonbind.AppendString(line, e.Key)
+			line = append(line, `,"sha256":`...)
+			line = jsonbind.AppendString(line, e.Digest)
+			line = append(line, `,"event":`...)
+			line = append(line, raw...)
+			line = append(line, '}', '\n')
+			if _, err := w.Write(line); err != nil {
+				return
+			}
 			written++
 			if written >= limit {
 				return
@@ -96,29 +120,28 @@ func (s *Server) journalBound(value string, upper bool) string {
 	return value
 }
 
-type checkpointSummary struct {
-	N            int64       `json:"n"`
-	Key          string      `json:"key"`
-	At           time.Time   `json:"at"`
-	EventCount   int         `json:"event_count"`
-	Originals    int         `json:"originals"`
-	JournalRange audit.Range `json:"journal_range"`
-	MerkleRoot   string      `json:"journal_merkle_root"`
-	Prev         string      `json:"prev_checkpoint_sha256"`
+// checkpointsInput is the query of GET /api/drive/checkpoints.
+type checkpointsInput struct {
+	Limit int `query:"limit"`
 }
 
 func (s *Server) listCheckpoints(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Chain == nil {
-		writeError(w, http.StatusNotFound, "no_checkpoints", "audit checkpoints are written in WORM mode only")
+		writeProblem(w, r, http.StatusNotFound, "no_checkpoints", "audit checkpoints are written in WORM mode only")
+		return
+	}
+	in, err := pw.Parse[checkpointsInput](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
 	keys, err := s.deps.Chain.Keys(r.Context())
 	if err != nil {
-		s.fail(w, "list_checkpoints", err)
+		s.fail(w, r, "list_checkpoints", err)
 		return
 	}
 	// Newest first, bounded; the full chain is walked by `drive verify`.
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := in.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -126,32 +149,43 @@ func (s *Server) listCheckpoints(w http.ResponseWriter, r *http.Request) {
 	for i := len(keys) - 1; i >= 0 && len(out) < limit; i-- {
 		cp, _, err := s.deps.Chain.ReadKey(r.Context(), keys[i])
 		if err != nil {
-			s.fail(w, "read_checkpoint", err)
+			s.fail(w, r, "read_checkpoint", err)
 			return
 		}
-		out = append(out, checkpointSummary{N: cp.N, Key: keys[i], At: cp.At, EventCount: cp.EventCount, Originals: len(cp.Originals), JournalRange: cp.JournalRange, MerkleRoot: cp.JournalMerkleRoot, Prev: cp.PrevCheckpointSHA256})
+		out = append(out, checkpointSummary{
+			N:            cp.N,
+			Key:          keys[i],
+			At:           cp.At.Format(time.RFC3339Nano),
+			EventCount:   cp.EventCount,
+			Originals:    len(cp.Originals),
+			JournalRange: rangeView{First: cp.JournalRange.First, Last: cp.JournalRange.Last},
+			MerkleRoot:   cp.JournalMerkleRoot,
+			Prev:         cp.PrevCheckpointSHA256,
+		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": s.cfg.Tenant, "total": len(keys), "genesis": audit.Genesis(s.cfg.Tenant), "checkpoints": out})
+	pw.WriteAPI(w, r, checkpointsResponse{Tenant: s.cfg.Tenant, Total: len(keys), Genesis: audit.Genesis(s.cfg.Tenant), Checkpoints: out})
 }
 
+// getCheckpoint answers with the stored checkpoint document itself, byte for
+// byte, so its SHA-256 is the one the next checkpoint links to.
 func (s *Server) getCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Chain == nil {
-		writeError(w, http.StatusNotFound, "no_checkpoints", "audit checkpoints are written in WORM mode only")
+		writeProblem(w, r, http.StatusNotFound, "no_checkpoints", "audit checkpoints are written in WORM mode only")
 		return
 	}
-	n, err := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	n, err := strconv.ParseInt(pw.PathValue(r, "n"), 10, 64)
 	if err != nil || n <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_checkpoint", "checkpoint number must be a positive integer")
+		writeProblem(w, r, http.StatusBadRequest, "invalid_checkpoint", "checkpoint number must be a positive integer")
 		return
 	}
-	cp, _, err := s.deps.Chain.Read(r.Context(), n)
+	_, raw, err := s.deps.Chain.Read(r.Context(), n)
 	if err != nil {
 		if objerr.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "not_found", "checkpoint not found")
+			writeProblem(w, r, http.StatusNotFound, "not_found", "checkpoint not found")
 			return
 		}
-		s.fail(w, "read_checkpoint", err)
+		s.fail(w, r, "read_checkpoint", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, cp)
+	pw.WriteAPI(w, r, storedDocument(raw))
 }
