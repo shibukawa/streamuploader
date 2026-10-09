@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"streamuploader/drive/audit"
 	"streamuploader/drive/journal"
 	"streamuploader/drive/meta"
 	"streamuploader/drive/objerr"
@@ -50,6 +51,11 @@ type Config struct {
 	GCGrace time.Duration
 	// SnapshotNow replaces the snapshot clock in tests.
 	SnapshotNow func() time.Time
+	// Checkpoints makes every fold end with an audit checkpoint that chains
+	// the folded journal events (WORM mode).
+	Checkpoints bool
+	// Lock is the object lock attached to checkpoints.
+	Lock storage.LockPolicy
 }
 
 // State is what the indexer has folded so far.
@@ -76,6 +82,9 @@ type Report struct {
 	// Published is set when the run wrote a new snapshot generation.
 	Published  bool
 	Generation int64
+	// Checkpoint is the number of the audit checkpoint this run wrote, or
+	// zero when nothing new was chained.
+	Checkpoint int64
 	Duration   time.Duration
 }
 
@@ -103,6 +112,12 @@ type Indexer struct {
 	unpubIDs    []string
 	unpubFull   bool
 	publishErr  string
+
+	// chain and head are the audit checkpoint chain; head is loaded from
+	// the bucket on first use under runMu.
+	chain      *audit.Chain
+	head       audit.Head
+	headLoaded bool
 }
 
 func New(cfg Config, store storage.Store, jstore *journal.Store, search *sidecar.Client, metas *meta.Cache, logger *slog.Logger) *Indexer {
@@ -135,8 +150,14 @@ func New(cfg Config, store storage.Store, jstore *journal.Store, search *sidecar
 	if cfg.Snapshot {
 		ix.snap = &snapshot.Store{Objects: store, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Tenant: cfg.Tenant, Logger: logger, Now: cfg.SnapshotNow}
 	}
+	if cfg.Checkpoints {
+		ix.chain = &audit.Chain{Objects: store, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Tenant: cfg.Tenant, Lock: cfg.Lock}
+	}
 	return ix
 }
+
+// Chain is the audit checkpoint chain, nil unless checkpoints are enabled.
+func (ix *Indexer) Chain() *audit.Chain { return ix.chain }
 
 // LastJournalKey is the newest journal key folded into the index; the server
 // overlays everything after it.
@@ -426,6 +447,7 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 	}
 	ix.stateMu.RUnlock()
 
+	foldStart := lastKey
 	entries, err := ix.journal.ListAfter(ctx, ix.cfg.Tenant, lastKey, ix.cfg.MaxEventsPerRun)
 	if err != nil {
 		return rep, err
@@ -481,6 +503,9 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 			// The pointer's last_journal_key moves too, so servers do not
 			// overlay events that carry no file state.
 			ix.markUnpublished(nil, false)
+		}
+		if rep.Checkpoint, err = ix.checkpoint(ctx, foldStart, entries, lastKey); err != nil {
+			return rep, err
 		}
 		rep.PendingText = len(pending)
 		if err := ix.publishPendingLocked(ctx, &rep, nil); err != nil {
@@ -544,12 +569,57 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 	if err := ix.saveState(); err != nil {
 		return rep, err
 	}
+	if rep.Checkpoint, err = ix.checkpoint(ctx, foldStart, entries, lastKey); err != nil {
+		return rep, err
+	}
 	rep.PendingText = len(pending)
 	if err := ix.publishPendingLocked(ctx, &rep, &committed); err != nil {
 		return rep, err
 	}
 	rep.Duration = time.Since(started)
 	return rep, nil
+}
+
+// checkpoint extends the audit chain over every journal event between the
+// chain head and lastKey. The folded entries are reused when they line up
+// with the head; after a rebuild or a crash between the state save and the
+// checkpoint write, the uncovered range is fetched so the chain never has a
+// gap and every event is chained exactly once.
+func (ix *Indexer) checkpoint(ctx context.Context, foldStart string, entries []journal.Entry, lastKey string) (int64, error) {
+	if ix.chain == nil {
+		return 0, nil
+	}
+	if !ix.headLoaded {
+		head, err := ix.chain.Head(ctx)
+		if err != nil {
+			return 0, err
+		}
+		ix.head = head
+		ix.headLoaded = true
+	}
+	var batch []journal.Entry
+	if foldStart > ix.head.LastKey {
+		gap, err := ix.journal.ListRange(ctx, ix.cfg.Tenant, ix.head.LastKey, foldStart)
+		if err != nil {
+			return 0, err
+		}
+		batch = append(batch, gap...)
+	}
+	for _, e := range entries {
+		if e.Key > ix.head.LastKey {
+			batch = append(batch, e)
+		}
+	}
+	if len(batch) == 0 {
+		return 0, nil
+	}
+	head, cp, err := ix.chain.Append(ctx, ix.head, batch, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("write checkpoint: %w", err)
+	}
+	ix.head = head
+	ix.logger.Info("audit_checkpoint", "n", cp.N, "events", cp.EventCount, "originals", len(cp.Originals), "first", cp.JournalRange.First, "last", cp.JournalRange.Last)
+	return cp.N, nil
 }
 
 func (ix *Indexer) setLast(lastKey string, pending map[string]string) {
@@ -782,6 +852,7 @@ func (ix *Indexer) rebuildLocked(ctx context.Context) (Report, error) {
 	rep.PendingText = tail.PendingText
 	rep.Published = tail.Published
 	rep.Generation = tail.Generation
+	rep.Checkpoint = tail.Checkpoint
 	rep.Duration = time.Since(started)
 	return rep, err
 }

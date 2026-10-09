@@ -1,0 +1,39 @@
+id: data:drive-deployment-kit
+type: data
+title: Generated deployment kit per target
+summary: The file set `drive init` writes for one target - common files (.env, security.yaml, README, bucket rules for cloud targets) plus the provider's service spec and a deploy script - all plain text, all without secrets, all reproducible from the same flags.
+lifecycle: active
+facts:
+  common_files:
+    .env: every variable the spec references, rendered from the profile; the configuration surface for now (data:drive-config-file is deferred); cloud kits carry <<FILL:NAME>> placeholders for credentials, the compose kit carries the fixed RustFS development credentials
+    security.yaml: streamuploader intake policy; a copy of config/security.yaml (or a Drive preset) so the kit does not depend on the repository
+    image: the compose kit builds from the repository's Dockerfile.drive through the compose build context (local build first, user 2026-10-09); cloud kits reference the image that their deploy.sh pushes to ghcr.io, or the --image reference
+    .gitignore: excludes .env
+    bucket/: lifecycle rules (expire work/, abort incomplete multipart), CORS (presigned delivery only), lock rules (WORM only) in the provider's dialect - classes from policy:drive-s3-layout
+    README.md: placeholders to fill, deploy steps, the m1 checks to run, the target's known limits copied from system:drive-deployment-targets
+    deploy.sh: provider CLI steps (build, push, create or update); refuses to run while any <<FILL:...>> remains
+  per_target:
+    compose: compose.yaml with drive and rustfs (fixed development credentials, console on 9001) and an optional clamav service (--clamav); named volumes for the RustFS data and the index cache; ports 8080 and 9000; build context is the checkout found by --context, image tag <name>:local; `docker compose up --build` with no edits
+    aws: ECS Fargate task definition JSON and service parameters, ALB listener notes, ECR repository name; secrets as task-definition secret references to SSM Parameter Store or Secrets Manager
+    google: Cloud Run service YAML (Knative serving) with min and max instances 1, CPU always allocated, memory sized for the /tmp index, Secret Manager environment references; Artifact Registry push in deploy.sh; the HTTP/2 flag is emitted only once h2c exists in the server
+    azure: Container Apps YAML for `az containerapp create --yaml` with min and max replicas 1, secret references, ACR push; storage points at an external S3-compatible bucket
+    cloudflare: in scope by user decision 2026-10-09; wrangler.jsonc with a container binding, a minimal Worker that forwards requests to the container through its Durable Object, the image built from Dockerfile.drive; the Go binary keeps using the S3 API against R2 with HMAC keys, not an R2 binding; the README states the plan's request-body cap
+  compose_kit_2026_10_09: .env, compose.yaml, security.yaml, README.md - nothing else; no .gitignore because the only credentials are the RustFS development pair; the README carries the run, check and operate commands instead of a deploy.sh
+  conventions:
+    - rendered from embedded text/template files; the operator edits only placeholders
+    - placeholders use the form <<FILL:NAME>> so a grep finds unfilled values
+    - no timestamps or generated ids, so re-running init reproduces the kit byte for byte
+    - every kit states its topology and instance-count rule in README.md
+relations:
+  - relation: produced_by
+    to: requirement:drive-init-subcommand
+  - relation: contains
+    to: data:drive-config-file
+  - relation: constrained_by
+    to: policy:drive-s3-layout
+  - relation: constrained_by
+    to: system:drive-deployment-targets
+  - relation: builds_on
+    to: data:security-policy-config
+  - relation: mentions
+    to: requirement:streamuploader-drive-enablers

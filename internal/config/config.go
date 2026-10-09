@@ -11,6 +11,8 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
+
+	"streamuploader/internal/storage"
 )
 
 type Config struct {
@@ -50,6 +52,14 @@ type Config struct {
 	Thumbnails              ThumbnailPolicy
 	TextExtraction          TextExtractionPolicy
 	DocumentProcessing      DocumentProcessingPolicy
+	// ObjectLock is the retention attached to final uploaded objects
+	// (SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION). Derived assets,
+	// work sentinels and temporary objects are never locked.
+	ObjectLock storage.LockPolicy
+	// WORMMode removes the destructive backend control routes (object
+	// delete, shared-key delete) so nothing stored can be removed through
+	// the API (SU_WORM_MODE).
+	WORMMode bool
 }
 
 type SecurityPolicy struct {
@@ -508,7 +518,24 @@ func Load() Config {
 		Thumbnails:              security.Thumbnails,
 		TextExtraction:          security.TextExtraction,
 		DocumentProcessing:      security.DocumentProcessing,
+		ObjectLock:              loadObjectLock(),
+		WORMMode:                envBool("WORM_MODE", false),
 	}
+}
+
+// loadObjectLock reads SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION. An
+// invalid combination is fatal: a WORM deployment must not start without
+// the lock it was configured for.
+func loadObjectLock() storage.LockPolicy {
+	mode := env("OBJECT_LOCK_MODE", "")
+	if mode == "" {
+		return storage.LockPolicy{}
+	}
+	policy, err := storage.ParseLockPolicy(mode, envDuration("OBJECT_LOCK_RETENTION", 0))
+	if err != nil {
+		log.Fatalf("object lock configuration: %v", err)
+	}
+	return policy
 }
 
 func DefaultSecurityPolicy() SecurityPolicy {

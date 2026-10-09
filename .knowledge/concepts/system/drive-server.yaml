@@ -39,6 +39,10 @@ facts:
     memory_storage: server and indexer modes refuse DRIVE_STORAGE=memory because the bucket must be shared
     env: DRIVE_INDEX_SNAPSHOT, DRIVE_SNAPSHOT_REFRESH, DRIVE_SNAPSHOT_GC_GRACE
     scripts: scripts/run-drive-native.sh passes its arguments to the binary and uses .cache/drive/index-<mode> so indexer and server can share one RustFS container on the host
+    worm: DRIVE_WORM_MODE and DRIVE_WORM_ACCESS_WINDOW; SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION reused from streamuploader for journal and audit objects; the start log states the enforcement level ("application and checkpoint only" without a storage lock)
+    verify_subcommand: drive verify [--hash] [--json] walks the audit chain and exits non-zero on findings; needs no sidecar
+    packages_added: drive/worm (mode and additive rule), drive/audit (checkpoint chain and verifier)
+    init: implemented 2026-10-09 for the compose target (cmd/drive/init.go, drive/deploy); generates .env, compose.yaml, security.yaml and README.md; other targets exit 2 until their slice; configuration stays environment-based, data:drive-config-file is deferred; WORM variables are not part of the kit yet (deferred worm presets in requirement:drive-init-subcommand)
 open_questions:
   repository:
     text: Does the Drive live in this repository (cmd/drive) or in its own repository importing streamuploader?

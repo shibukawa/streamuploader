@@ -45,10 +45,11 @@ facts:
       storage: also smoke-tested against RustFS (real S3 API) with presigned delivery and a cold rebuild from the bucket by a second process
       not_in_m1: WORM, index snapshots on S3, Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge of S3 objects
     delivered_2026_10_09:
-      slice: index snapshots on S3 and the server/indexer split (data:search-index-snapshot, flow:search-index-publish)
+      worm: DRIVE_WORM_MODE (append_only, strict) with application refusals, file.accessed logging, object locks through SU_OBJECT_LOCK_*, the audit checkpoint chain and `drive verify`; see requirement:local-drive-worm-audit-mode
+      snapshot_split: index snapshots on S3 and the server/indexer split (data:search-index-snapshot, flow:search-index-publish)
       outcome: drive server (any number, read-only index refreshed from the bucket) and drive indexer (one per tenant, publishes after every commit) run as separate processes from the same image; an indexer restarted on an empty disk adopts the snapshot instead of rebuilding; all-in-one publishes too, so the bucket now holds everything needed for a cold start
       automated: drive/e2e TestServerIndexerSplit (server before first publish, publish, two followers, overlay edit then indexed edit, delete, adoption by a fresh indexer, local directory equals the pointer), drive/snapshot unit tests
-      not_yet: WORM, checkpoints, Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge, journal compaction, a poke from servers to the remote indexer
+      not_yet: Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge, journal compaction, a poke from servers to the remote indexer
 non_goals:
   - end-user permissions and sharing ACLs in the first milestones (deferred, see requirement:local-drive-api-and-web-ui)
   - a relational database of any kind

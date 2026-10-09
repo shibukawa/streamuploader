@@ -35,7 +35,8 @@ facts:
     single_writer_check: the pointer's ETag is compared before each publish; a change by another writer is logged and continued from, not overwritten blindly
     modes: drive indexer (loop, no HTTP), drive index-once, drive reindex; all-in-one keeps the in-process loop plus pokes
     status: Status() feeds /api/drive/stats with mode, generation, last_journal_key, unpublished and the last publish error
-    not_yet: checkpoints, journal compaction, a poke from servers to a remote indexer (queue or Jobs API)
+    checkpoints: with Config.Checkpoints (WORM mode) every fold ends by extending the audit chain over the journal keys between the chain head and the fold's last key; the head is read from the bucket on first use so a restarted or rebuilt process continues the chain; Report.Checkpoint carries the number written
+    still_not_yet: journal compaction (never in WORM mode), a poke from servers to a remote indexer (queue or Jobs API)
 relations:
   - relation: implements
     to: requirement:local-drive-s3-only-state

@@ -1,0 +1,268 @@
+id: requirement:drive-init-subcommand
+type: requirement
+title: drive init generates the deployment kit for a chosen target
+summary: A `drive init` subcommand turns a few choices (target, storage, delivery, image) into the files one deployment needs - the .env file, security policy, compose.yaml or the provider's service spec, bucket rules and a deploy script - so that every new runtime mode is added once as a template instead of being hand-written per deployment.
+lifecycle: accepted
+facts:
+  requested_by: user 2026-10-09 ("いろんなモードが今後増えるので設定ファイル、Dockerfile、compose.yamlなどのデプロイに必要なファイルなどを生成するinitサブコマンドを追加したい。デプロイ先のオプションはaws, google, azure, cloudflareあたり")
+  decided_by: user 2026-10-09 ("設定は一旦、.envで。最初はローカルcomposeで。ローカルはrustfsを使って欲しい。cloudflareはcontainers対応としたい。読み書きはS3互換ストレージは柔軟に組み合わせたり使い分けられると良いがそこは後回しで。azureもS3互換で良いです。イメージはまずはローカルでやってから、問題無くなったらdeployでghcrにpushしてからそちらの参照にしたい")
+  motivation:
+    - the Drive is configured only through SU_* and DRIVE_* environment variables today (cmd/drive/main.go, internal/config/config.go); every mode adds variables that must be repeated correctly in each compose file and cloud service spec
+    - planned modes multiply the combinations - all-in-one, server, indexer (system:drive-server), WORM strict and append-only (requirement:local-drive-worm-audit-mode), proxy or presigned delivery, lindera or ngram tokenizer
+    - requirement:local-drive-portable-deployment wants one image on several providers; the provider-specific part of a deployment is exactly the file set init generates
+    - the existing hand-written files (Dockerfile.drive, compose.yaml for the streamuploader demo, scripts/run-drive-*.sh) show what is repeated today; there was no compose file for the Drive itself before this requirement
+  command_shape:
+    invocation: "drive init --target <compose|aws|google|azure|cloudflare> [--storage rustfs|s3|gcs|r2|b2] [--delivery proxy|presigned] [--clamav] [--image REF | --context DIR] [--name NAME] [--out DIR] [--force] [--dry-run]"
+    default_target: compose
+    topology: all-in-one only - the binary implements nothing else (system:drive-server not_yet lists server-only and indexer-only); a --topology flag appears with the split topology
+    default_storage_by_target: {compose: rustfs, aws: s3, google: gcs, azure: r2, cloudflare: r2}
+    default_delivery: proxy everywhere except cloudflare, where presigned to R2 avoids billed container egress
+    default_out: deploy/<target>/ relative to the working directory
+    image_policy: compose builds the image locally from the repository checkout (--context, auto-detected by walking up to go.mod) and tags it <name>:local; cloud kits reference an image that deploy.sh pushes to ghcr.io first; --image replaces either with a prebuilt reference
+    non_interactive: flags plus defaults are sufficient; nothing prompts (an --interactive wizard is an optional later addition)
+    idempotence: refuses to overwrite existing files unless --force; --dry-run prints the file list and stops
+    exit_codes: {0: generated, 2: unsupported combination (names the missing capability and its knowledge id), 3: refused to overwrite}
+  configuration_surface: the .env file is the configuration for now; the binary stays environment-driven and drive.yaml (data:drive-config-file) stays a deferred proposal
+  profile:
+    description: the in-memory result of the flags - target, storage, delivery, clamav, image or context, name, output dir - that selects templates and renders the .env file; it is not persisted, the .env file is its durable form
+    extensibility: a new mode is one new profile field plus the template fragments that read it; a new target is one new template directory plus its entry in system:drive-deployment-targets
+  outputs: data:drive-deployment-kit, one directory per target
+  implemented_2026_10_09:
+    package: drive/deploy - Profile with Defaults and Validate, embedded templates (templates/compose/*.tmpl, templates/common/security.yaml), Render into a sorted Kit, Collisions and atomic Write, FindRepoRoot and RelativeContext for the build context, Placeholders for <<FILL:NAME>> markers
+    entry: cmd/drive/init.go runInit, dispatched in cmd/drive/main.go before config.Load; exit codes 2 (unsupported or usage) and 3 (refused overwrite) through exitError
+    flags: --target --storage --delivery --clamav --image --context --name --port --out --force --dry-run
+    kit: .env, compose.yaml, security.yaml, README.md; no Dockerfile copy (compose builds the checkout's Dockerfile.drive through the build context) and no deploy.sh (the compose commands are in README.md)
+    env_file: compose.yaml interpolates only ${VAR} names defined in .env and passes the whole file to the drive container; Render refuses a template whose references are missing
+    index_volume: the named volume mounts at /tmp because the distroless image's nonroot user can write only there; DRIVE_INDEX_DIR stays /tmp/drive-index
+    context_rule: relative path when the kit lives inside the checkout, absolute root otherwise
+    tests: drive/deploy/deploy_test.go - golden kits (compose-default, compose-clamav, compose-image-presigned), determinism, refused overwrite, unsupported combinations with knowledge ids, env roundtrip, security.yaml drift, no placeholders or credentials, repo root detection, docker compose config when docker is installed
+    verified: scripts/drive-compose-check.sh against a kit generated with --port 18080 on 2026-10-09 - seed, overlay listing, page-3 Japanese hit, drained overlay, facets, preview range 206, avif thumbnail, UI, and the rebuild after deleting the index volume; image build 34 s with a warm cache
+    tests_setup: "`docker compose config` resolves each golden kit; TestDockerComposeConfig skips without docker"
+  cloud_all_in_one_rule: all-in-one is a single writer with a local index, so every generated cloud spec pins the instance count to exactly one (min 1 so the indexer loop runs, max 1) and keeps CPU allocated outside requests; horizontal scale needs the split topology plus data:search-index-snapshot
+  secrets_rule: generated files never contain credentials other than the fixed development credentials of a local RustFS; cloud kits reference environment variables or the provider's secret store; init ends by listing the placeholders the operator must fill
+  delivery:
+    current_milestone: m3-init-core
+    confirmed_by: user 2026-10-09 ("最初はローカルcomposeで。ローカルはrustfsを使って欲しい")
+    outcome: "`drive init --target compose` writes a kit (.env, compose.yaml with drive and rustfs, security.yaml, README, optional clamav) that builds the image from the local checkout and passes the m1 checks with `docker compose up` and no edits"
+    excluded_from_core: every cloud target (exit 2 with the knowledge id), split topology, WORM, drive.yaml, mixing several S3-compatible stores
+    later: cloud kits - google (Cloud Run), aws (ECS Fargate), azure (Container Apps, external S3-compatible bucket) and cloudflare (Containers) - each verified by one real deployment, image pushed to ghcr.io by deploy.sh; order decided after m3-init-core (open question cloud-kit-order)
+    decisions:
+      config-file:
+        essential: true
+        answer: B - the .env file; no drive.yaml for now (user 2026-10-09 "設定は一旦、.envで")
+        revisit_when: a second target or a third mode makes the per-target variable lists diverge, or an operator asks for a validated file; data:drive-config-file keeps the design
+      first-slice-targets:
+        essential: true
+        answer: compose first, with RustFS as the local object store (user 2026-10-09)
+        consequence: cloud targets exit 2 in m3-init-core; the compose kit is the template every cloud kit copies its environment block from
+      cloudflare-meaning:
+        essential: true
+        answer: B - a Cloudflare Containers compute kit is in scope (user 2026-10-09 "cloudflareはcontainers対応としたい"); R2 stays the default storage there
+        consequence: the kit README states the plan's request-body cap (100 MB Free and Pro); uploads above it wait for resumable upload (open question resumable-upload in requirement:local-drive-portable-deployment); Containers are in open beta, so the kit is verified by one real deployment before it is called supported
+      azure-storage:
+        essential: true
+        answer: A - Container Apps with an external S3-compatible bucket (user 2026-10-09 "azureもS3互換で良いです"); no Blob adapter
+      image-reference:
+        essential: false
+        answer: local build first; once the compose kit is stable, deploy.sh of the cloud kits builds, pushes to ghcr.io and the service spec references that image (user 2026-10-09)
+        consequence: Cloud Run cannot pull ghcr.io directly, so the google kit mirrors through an Artifact Registry remote repository or a second push (system:drive-deployment-targets, verify)
+      storage-mix:
+        deferred: true
+        reason: the user wants to combine or switch between S3-compatible stores for reads and writes later ("柔軟に組み合わせたり使い分けられると良いがそこは後回しで"); one bucket per deployment for now
+        revisit_when: a deployment needs a second bucket or provider, for example zero-egress reads from R2 with writes elsewhere; touches internal/storage and policy:drive-s3-layout, not only init
+      interaction:
+        essential: false
+        provisional_choice: flags-only, non-interactive
+        alternative: an interactive wizard when stdin is a TTY
+        reason: reproducible in scripts and tests; a wizard can be layered on later without changing the kit
+      iac-depth:
+        essential: false
+        provisional_choice: provider-native spec files (compose.yaml, Cloud Run service YAML, ECS task definition, Container Apps YAML, wrangler.jsonc) plus a deploy.sh that calls the provider CLI
+        alternative: Terraform or OpenTofu modules
+        reason: the native specs are what the provider CLIs consume and what an operator reads first; IaC can wrap them later
+      bucket-setup:
+        essential: false
+        provisional_choice: include bucket rule files (lifecycle for work/ and incomplete multipart, CORS for presigned delivery, lock rules for WORM) with the first cloud kit; the compose kit needs none because RustFS is local
+        alternative: defer bucket setup to documentation
+        reason: policy:drive-s3-layout already defines the classes; the rules are small JSON files per provider dialect
+      tls-ingress:
+        deferred: true
+        reason: compose on a public VM needs TLS termination; cloud targets get it from their load balancer
+        revisit_when: the compose kit is used on a public VM; candidate is an optional caddy service in compose.yaml
+      doctor-subcommand:
+        deferred: true
+        reason: validating the environment, probing the bucket and checking the sidecar is useful but separate from generation
+        revisit_when: after m3-init-core, when the first operator reports a misconfiguration
+      split-topology:
+        deferred: true
+        reason: server and indexer modes and data:search-index-snapshot do not exist yet; init has no --topology flag until they do
+        revisit_when: system:drive-server implements server-only and indexer-only modes
+constraints:
+  - Generated files are plain, readable text that the operator owns afterwards; init keeps no state, has no lock file and never edits files it did not generate
+  - No credential, token or key is written into a generated file, except the fixed development credentials of a local RustFS container
+  - A kit for a combination the binary cannot run yet (a cloud target before its slice, split topology, WORM, azure-blob storage) is refused with the reason and the knowledge id, never silently produced
+  - Every generated cloud spec for the all-in-one topology fixes the instance count to one
+  - Templates are embedded in the binary; init needs no network access and, apart from the local build context, no repository checkout at run time
+  - Output is deterministic - no timestamps, hostnames or random values - so re-running init yields identical files and golden tests stay stable
+non_goals:
+  - Running gcloud, aws, az or wrangler from init itself; the kit contains a deploy script the operator runs
+  - Terraform or Pulumi modules in the first slices
+  - Provisioning DNS, TLS certificates or identity providers
+  - Migrating an existing deployment's environment variables into a config file
+acceptance:
+  compose-roundtrip:
+    text: "`drive init --target compose` followed by `docker compose up --build` in the kit directory, with no edits, passes the m1 completion checks of vision:local-drive - upload through the API, tag folder listing, Japanese page hit, viewer bytes served."
+    scope: {milestone: m3-init-core}
+    verified_by: [compose-e2e]
+  refuse-overwrite:
+    text: Running init twice into the same directory exits with code 3 and leaves every file byte-identical; --force rewrites them.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  env-roundtrip:
+    text: compose.yaml references variables only through the generated .env, and every variable it references is defined there, so `docker compose config` resolves without warnings.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  unsupported-combination:
+    text: An unsupported combination (a cloud target in this slice, or --storage azure-blob) exits with code 2 and names the missing capability and its knowledge id.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  golden-kits:
+    text: Every supported (target, storage, delivery, clamav, image-or-build) combination has a golden kit under drive/deploy/testdata that the generator reproduces byte for byte.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  no-secrets-in-kit:
+    text: Apart from the RustFS development credentials, a grep of the kit finds no key, token or password; cloud kits contain only placeholders and secret references.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  security-policy-drift:
+    text: The security.yaml embedded for the kits is byte-identical to config/security.yaml.
+    scope: {milestone: m3-init-core}
+    verified_by: [init-unit]
+  rebuild-after-volume-loss:
+    text: Deleting the index volume and restarting the compose kit reproduces the same page hit and folder listing from the bucket.
+    scope: {milestone: m3-init-core}
+    verified_by: [compose-e2e]
+  google-deploy:
+    text: The google kit's deploy.sh pushes the image, deploys an all-in-one Drive to Cloud Run pinned to one instance, and the m1 checks pass through the public URL with files under 32 MiB.
+    scope: {milestone: m3-init-google}
+    verified_by: [google-manual]
+  aws-deploy:
+    text: The aws kit deploys an all-in-one Drive on ECS Fargate behind an ALB from the ghcr.io image and the m1 checks pass, including a 200 MB upload.
+    scope: {milestone: m3-init-aws}
+    verified_by: [aws-manual]
+  azure-deploy:
+    text: The azure kit deploys an all-in-one Drive on Container Apps from the ghcr.io image against an external S3-compatible bucket and the m1 checks pass; the observed request-body limit is recorded in system:drive-deployment-targets.
+    scope: {milestone: m3-init-azure}
+    verified_by: [azure-manual]
+  cloudflare-deploy:
+    text: The cloudflare kit deploys an all-in-one Drive on Cloudflare Containers with presigned delivery to R2 and the m1 checks pass for files under the plan's request-body cap; the cap is stated in the generated README.
+    scope: {milestone: m3-init-cloudflare}
+    verified_by: [cloudflare-manual]
+verification:
+  compose-e2e:
+    state: passed
+    method: manual
+    scope: {milestone: m3-init-core}
+    authority: observed
+    evidence: {path: scripts/drive-compose-check.sh, note: "run 2026-10-09 with DRIVE_CHECK_REBUILD=1 against a kit from `drive init --target compose --name driveinit-e2e --port 18080`; all checks passed, including the rebuild after deleting the index volume"}
+  init-unit:
+    state: passed
+    method: unit
+    test: TestGoldenKits TestWriteRefusesOverwrite TestUnsupportedCombinations TestEnvRoundtrip TestSecurityPolicyMatchesRepoConfig TestComposeKitNeedsNoEdits TestDockerComposeConfig
+    scope: {milestone: m3-init-core}
+    authority: observed
+    evidence: {path: drive/deploy/deploy_test.go, note: "go test ./drive/deploy on 2026-10-09; TestDockerComposeConfig ran with docker compose v5.1.2"}
+  google-manual:
+    state: not_run
+    method: manual
+    scope: {milestone: m3-init-google}
+  aws-manual:
+    state: not_run
+    method: manual
+    scope: {milestone: m3-init-aws}
+  azure-manual:
+    state: not_run
+    method: manual
+    scope: {milestone: m3-init-azure}
+  cloudflare-manual:
+    state: not_run
+    method: manual
+    scope: {milestone: m3-init-cloudflare}
+open_questions:
+  config-file:
+    text: Does the Drive gain a configuration file (drive.yaml read by `drive serve --config`, environment variables overriding) or does init only emit .env files for the existing environment-variable configuration?
+    state: answered
+    resolution: .env files for now (user 2026-10-09 "設定は一旦、.envで"); drive.yaml stays a proposal in data:drive-config-file with its revisit trigger under facts.delivery.decisions.config-file.
+  first-slice-targets:
+    text: Is the first slice compose plus the framework, or all four cloud kits at once?
+    state: answered
+    resolution: compose first with RustFS (user 2026-10-09); cloud kits follow one per slice.
+  cloud-kit-order:
+    text: Which cloud kit comes first after compose - google, aws, azure or cloudflare?
+    state: open
+    resolution: Decide after m3-init-core; the provisional suggestion is google because its limits are already recorded, then cloudflare because the user asked for Containers support.
+  cloudflare-meaning:
+    text: Does the cloudflare target mean R2 storage only, or a Cloudflare Containers compute kit?
+    state: answered
+    resolution: A Containers compute kit (user 2026-10-09 "cloudflareはcontainers対応としたい"); the request-body cap is documented in the kit and resumable upload stays deferred.
+  azure-storage:
+    text: Does the azure kit use an external S3-compatible bucket, or does streamuploader gain an Azure Blob Storage adapter?
+    state: answered
+    resolution: External S3-compatible bucket (user 2026-10-09 "azureもS3互換で良いです").
+  image-reference:
+    text: Build and push from the kit, or default cloud kits to a published ghcr.io image?
+    state: answered
+    resolution: Local build for compose; once stable, the cloud kits' deploy.sh pushes to ghcr.io and the specs reference that image (user 2026-10-09).
+  storage-mix:
+    text: How are several S3-compatible stores combined or selected for reads and writes within one deployment?
+    state: deferred
+    resolution: Later by user decision (2026-10-09 "そこは後回しで"); one bucket per deployment until a concrete need appears.
+  interaction:
+    text: Flags-only, or an interactive wizard when stdin is a TTY?
+    state: open
+    resolution: Provisional default flags-only; not blocking.
+  iac-depth:
+    text: Provider-native spec files plus a deploy script, or Terraform modules?
+    state: open
+    resolution: Provisional default native specs plus deploy.sh; not blocking.
+  bucket-setup:
+    text: Are bucket lifecycle, CORS and lock rule files part of the first cloud kit?
+    state: open
+    resolution: Provisional default yes, with the first cloud kit; the compose kit needs none.
+  tls-ingress:
+    text: Does the compose kit include an optional TLS-terminating proxy (caddy) for use on a public VM?
+    state: deferred
+    resolution: Not needed for local or LAN use; decide when the compose kit is first used on a public VM.
+  doctor-subcommand:
+    text: Should a `drive doctor` validate the environment, probe the bucket and check the sidecar?
+    state: deferred
+    resolution: Separate from generation; decide after m3-init-core from operator feedback.
+  split-topology:
+    text: When do the kits gain the split topology (server service plus indexer job)?
+    state: deferred
+    resolution: After system:drive-server implements server-only and indexer-only modes and the index snapshot on S3 exists.
+relations:
+  - relation: refines
+    to: requirement:local-drive-portable-deployment
+  - relation: extends
+    to: system:drive-server
+  - relation: realized_by
+    to: flow:drive-init-generation
+  - relation: writes
+    to: data:drive-deployment-kit
+  - relation: mentions
+    to: data:drive-config-file
+  - relation: depends_on
+    to: system:drive-deployment-targets
+  - relation: depends_on
+    to: system:object-storage-providers
+  - relation: constrained_by
+    to: policy:drive-s3-layout
+  - relation: mentions
+    to: requirement:local-drive-worm-audit-mode
+  - relation: mentions
+    to: requirement:local-drive-s3-only-state
+  - relation: mentions
+    to: data:search-index-snapshot
+  - relation: mentions
+    to: vision:local-drive

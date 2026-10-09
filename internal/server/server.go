@@ -231,8 +231,15 @@ func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
 	base := strings.TrimRight(s.cfg.BackendBasePath, "/")
 	mux.HandleFunc("POST "+base+"/file/presigned-url", s.createPresignedURL)
 	mux.HandleFunc("POST "+base+"/file/shared-keys", s.createSharedKey)
-	mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.deleteSharedKeyAPI)
-	mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.deleteObjectAPI)
+	if s.cfg.WORMMode {
+		// Nothing stored can be removed through the API in WORM mode; the
+		// routes stay registered so callers get a clear refusal, not a 404.
+		mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.wormReadonly)
+		mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.wormReadonly)
+	} else {
+		mux.HandleFunc("DELETE "+base+"/file/shared-keys/{sharedKey}", s.deleteSharedKeyAPI)
+		mux.HandleFunc("DELETE "+base+"/objects/{objectKey}", s.deleteObjectAPI)
+	}
 	mux.HandleFunc("GET "+base+"/objects/{objectKey}/extracted-content", func(w http.ResponseWriter, r *http.Request) {
 		s.getExtractedContent(w, r, r.PathValue("objectKey"))
 	})
@@ -240,6 +247,16 @@ func (s *Server) registerBackendRoutes(mux *http.ServeMux) {
 		s.createExtractedContentPresignedURL(w, r, r.PathValue("objectKey"))
 	})
 	mux.HandleFunc("GET "+base+"/tasks/wait", s.waitAsyncTasks)
+}
+
+// wormReadonly refuses a destructive backend operation in WORM mode.
+func (s *Server) wormReadonly(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusMethodNotAllowed, "worm_readonly", "this deployment runs in WORM mode: stored objects cannot be deleted or replaced")
+}
+
+// finalRetention is the object lock attached to a final uploaded object.
+func (s *Server) finalRetention() *storage.Retention {
+	return s.cfg.ObjectLock.For(time.Now())
 }
 
 func (s *Server) backendRoutesHandler() http.Handler {
@@ -1000,11 +1017,17 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 		documentFullScanDone = done
 		sideWriters = append(sideWriters, documentWriter)
 	}
-	result, err := s.putObjectWithSecurityScan(uploadCtx, storage.PutInput{
+	finalPut := storage.PutInput{
 		Bucket:      s.cfg.Bucket,
 		Key:         objectKey,
 		ContentType: contentType,
-	}, measured, sideWriters...)
+	}
+	if !securityStagedUpload {
+		// The bytes land on the final key directly, so the lock goes on now;
+		// a staged upload locks the copy below instead.
+		finalPut.Retention = s.finalRetention()
+	}
+	result, err := s.putObjectWithSecurityScan(uploadCtx, finalPut, measured, sideWriters...)
 	if err != nil {
 		if securityStagedUpload {
 			_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
@@ -1073,6 +1096,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request, uploadKey st
 			SourceKey:   objectKey,
 			Key:         target.objectKey,
 			ContentType: contentType,
+			Retention:   s.finalRetention(),
 		})
 		_ = s.store.DeleteObject(context.Background(), storage.DeleteInput{Bucket: s.cfg.Bucket, Key: objectKey})
 		if err != nil {

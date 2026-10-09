@@ -44,6 +44,7 @@ Security configuration:
 - `file_sanitization` is on by default. JPEG/PNG metadata is stripped without re-encoding, SVG and markup active/external content is rejected, Office/PDF active content is scanned before publish, and legacy `.doc/.xls/.ppt` plus RTF files are rejected unless a per-type `accept_as_is` override is configured.
 - `resource_limits` and `structural_validation` enforce parser limits and basic format validity before files are published.
 - `SU_MAX_UPLOAD_KEYS_PER_OWNER` limits active `key_created` or `uploading` keys per owner cookie to prevent state exhaustion.
+- `SU_OBJECT_LOCK_MODE` (`governance`, `compliance` or `legal_hold`) with `SU_OBJECT_LOCK_RETENTION` puts S3 Object Lock headers on every final uploaded object; temporary, derived and sentinel objects stay unlocked. `SU_WORM_MODE=true` makes `DELETE /internal/objects/{object_key}` and `DELETE /internal/file/shared-keys/{shared_key}` answer `405 worm_readonly`. Both are used by the Drive's WORM audit mode (see below) and are off by default.
 - The YAML security config is validated against the built-in JSON Schema at startup, so unknown file type or MIME keys fail fast. The editor-facing schema is `config/security.schema.json`.
 - ClamAV scanning is optional and enabled by setting `SU_CLAMAV_HOST` to a clamd TCP address such as `clamav:3310`; when enabled, uploads are streamed to ClamAV and S3 in parallel and only published after the scan passes.
 - If the demo app is opened directly instead of through streamuploader, it proxies `/api/upload/*` to `SU_STREAMUPLOADER_PROXY_URL`.
@@ -263,6 +264,8 @@ Subcommands:
 | `drive indexer` | indexer only: folds journal events and extracted text, writes meta snapshots, publishes the index snapshot, in a loop; run exactly one per tenant |
 | `drive index-once` | one indexer run (fold, publish) and exit; for a cron job or a Cloud Run Job |
 | `drive reindex` | rebuild the index from the bucket, publish it and exit |
+| `drive verify` | walk the audit checkpoint chain and report tampering (WORM mode); exits non-zero on findings |
+| `drive init` | write the deployment files for a target (below) |
 
 At start an indexer adopts the published snapshot when its local directory is missing, stale or behind it, and rebuilds from the meta snapshots only when there is nothing to adopt. A server starts serving as soon as it has downloaded the current snapshot; until the first publish it serves an empty index plus the journal overlay. Edits are visible on every server at once (overlay) and from the index after the next indexer run and refresh. Rebuilds are started where the indexer runs (`drive reindex`); `POST /api/drive/admin/reindex` answers 503 on a server-only process.
 
@@ -275,6 +278,33 @@ Split run on the host (two terminals, one RustFS container):
 ```bash
 ./scripts/run-drive-native.sh server
 ```
+
+### Deployment kit: `drive init`
+
+`drive init` writes everything one deployment needs into `deploy/<target>/` so that each runtime mode is maintained once, as a template, instead of by hand per deployment. The first target is docker compose with a local RustFS bucket:
+
+```bash
+go run ./cmd/drive init --target compose
+cd deploy/compose && docker compose up --build -d
+```
+
+The kit is `.env` (every setting, read by compose and passed to the container), `compose.yaml` (drive built from this checkout with `Dockerfile.drive`, rustfs, optionally clamav), `security.yaml` (a copy of `config/security.yaml`) and a `README.md` with the m1 checks. Nothing needs editing before the first `up`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--target` | `compose` | `compose`; `aws`, `google`, `azure`, `cloudflare` are planned and refused with the reason (exit 2) |
+| `--storage` | per target | `rustfs` for compose; others arrive with the cloud kits |
+| `--delivery` | `proxy` | `proxy` or `presigned` (see `DRIVE_DELIVERY`) |
+| `--clamav` | off | add a ClamAV service and scan every upload |
+| `--image REF` | build locally | run a prebuilt image instead of building from `--context` |
+| `--context DIR` | this checkout | build context for `Dockerfile.drive`; found by walking up to `go.mod` |
+| `--name` | `drive` | compose project name and the `<name>:local` image tag |
+| `--port` | `8080` | host port of the Drive |
+| `--out DIR` | `deploy/<target>` | output directory |
+| `--force` | off | overwrite existing files (otherwise exit 3, nothing written) |
+| `--dry-run` | off | list the files and exit |
+
+Generated files carry no credentials except the development pair of the local RustFS. Re-running `drive init --force` regenerates the kit from the flags, not from edits. The requirement, the per-target limits and the open questions are in `.knowledge/concepts/requirement/drive-init-subcommand.yaml`; the generator is `drive/deploy` with golden kits under `drive/deploy/testdata`.
 
 Environment (in addition to the `SU_*` variables of streamuploader, whose S3 settings the Drive reuses):
 
@@ -291,14 +321,38 @@ Environment (in addition to the `SU_*` variables of streamuploader, whose S3 set
 | `DRIVE_SNAPSHOT_GC_GRACE` | `15m` | how long a segment file no pointer references stays in the bucket; keep it longer than the refresh interval plus a download |
 | `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
 | `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
+| `DRIVE_WORM_MODE` | `off` | `append_only` or `strict` turns on the WORM audit mode described below |
+| `DRIVE_WORM_ACCESS_WINDOW` | `1m` | repeated reads of one object by one client within this window produce a single `file.accessed` event; `0` records every request |
+| `SU_OBJECT_LOCK_MODE` | unset | `governance`, `compliance` or `legal_hold`: the Object Lock put on originals, journal events and checkpoints |
+| `SU_OBJECT_LOCK_RETENTION` | unset | retention period for `governance` and `compliance`, such as `87600h` |
 
 API (same origin as the upload API; no authentication yet):
 
+- `GET /api/drive/info` describes the deployment: tenant, delivery mode, WORM mode and the storage lock it relies on
 - `POST /api/drive/files` registers an upload: body `{"upload": <item from POST /api/upload/wait>, "tags": ["projects/2026"], "author": "...", "location": {"lat":..,"lon":..}}`
-- `GET /api/drive/files/{id}`, `PATCH /api/drive/files/{id}` (`name`, `tags`, `author`, `location`, `clear_location`, `expected_revision`), `DELETE /api/drive/files/{id}`
+- `GET /api/drive/files/{id}`, `PATCH /api/drive/files/{id}` (`name`, `tags`, `author`, `location`, `clear_location`, `expected_revision`), `DELETE /api/drive/files/{id}`, `POST /api/drive/files/{id}/restore`
+- `POST /api/drive/files/{id}/versions` with `{"upload": <item>, "expected_revision": n}` replaces the bytes with a new upload; the earlier object stays and is listed by `GET /api/drive/files/{id}/versions` and served by `GET /api/drive/files/{id}/versions/{n}/content|download`
 - `GET /api/drive/files/{id}/content|download|preview|thumbnail`
 - `GET /api/drive/search?q=&tag=&facet=&exact=&sort=&limit=&offset=` returns hits with the best page and a highlighted snippet
 - `GET /api/drive/facets?path=/tags/projects` lists the children of a facet path with counts (`/tags`, `/type`, `/date`, `/author`, `/geo`)
+- `GET /api/drive/journal?since=&until=&type=&limit=` streams journal events as JSON lines (`since`/`until` take a journal key, an event id or an RFC 3339 time)
+- `GET /api/drive/checkpoints`, `GET /api/drive/checkpoints/{n}` expose the audit chain (WORM mode)
 - `GET /api/drive/stats` (includes `indexer`: mode, snapshot generation, last journal key), `POST /api/drive/admin/reindex` (all-in-one only)
 
 Tests: `go test ./drive/...` includes `drive/e2e`, which runs the whole stack in one process against the in-memory store and needs the built sidecar (`search/target/release/drivesearch` or `DRIVE_SEARCH_BIN`); without it the sidecar tests are skipped. `TestServerIndexerSplit` runs an indexer and two server-only processes against one in-memory bucket.
+
+### WORM audit mode
+
+`DRIVE_WORM_MODE=strict` (or `append_only`) turns the Drive into a write-once-read-many archive: nothing registered can be edited, overwritten or deleted, every read is recorded, and tampering with the bucket is detectable. The design is in `.knowledge/concepts/requirement/local-drive-worm-audit-mode.yaml` and `policy/worm-enforcement.yaml`. Enforcement has three layers:
+
+1. **Application.** `DELETE /api/drive/files/{id}` and `POST .../restore` answer `405 {"code":"worm_readonly"}`. `PATCH` is refused in `strict`; in `append_only` it is accepted only when it adds something (new tags, a first author override, a first location) and refused when it renames, removes a tag, rewrites the author or clears the location. The only way to change bytes is `POST /api/drive/files/{id}/versions`; every earlier version keeps its object and stays downloadable. Streamuploader's backend control routes `DELETE /internal/objects/{key}` and `DELETE /internal/file/shared-keys/{key}` answer `405 worm_readonly` too (`SU_WORM_MODE=true`, set automatically by the Drive).
+   Every download, inline view, preview and thumbnail read writes a `file.accessed` journal event with the actor, time, object key, kind and a hash of the client address before any byte is served; if the event cannot be written the read fails. With `DRIVE_DELIVERY=presigned` the URL is issued together with the event and its lifetime is capped at five minutes. A viewer's burst of range requests on one object is collapsed into one event per `DRIVE_WORM_ACCESS_WINDOW`; `HEAD` requests are not reads.
+2. **Storage lock.** `SU_OBJECT_LOCK_MODE` plus `SU_OBJECT_LOCK_RETENTION` (or `legal_hold` for an indefinite lock) put S3 Object Lock headers on every original at upload and, in WORM mode, on every journal event and audit checkpoint. Derived assets (`thumbnail`, `.text.json`, `.bdf`), meta snapshots, work sentinels and temporary objects are never locked because they are reproducible or short-lived. The bucket must have Object Lock enabled (AWS S3, Backblaze B2, MinIO) or the writes fail, which is intended: a WORM deployment must not silently run unlocked. Cloudflare R2 locks by bucket rule instead of per-object headers and GCS uses its own retention API, so on those providers leave `SU_OBJECT_LOCK_MODE` unset and configure the bucket; the Drive then logs and reports (`GET /api/drive/info`) that it is "WORM by application and checkpoint only". The credentials the Drive uses should not be allowed to change lock configuration.
+3. **Tamper evidence.** After every fold the indexer writes `drive/audit/{tenant}/checkpoint-{n}.json`: the keys and SHA-256 of every journal event folded since the previous checkpoint, a Merkle root over them, the originals registered in that range with their checksums, and the SHA-256 of the previous checkpoint (checkpoint 1 links to a per-tenant genesis value). `drive verify` walks the chain, re-lists the journal and names every missing, extra or modified event and every missing or resized original; `drive verify --hash` also re-reads each original and compares it with the checksum recorded at upload. It exits non-zero on any finding, so it can run on a schedule. A restarted or rebuilt process continues the chain from the bucket; the journal is never compacted in WORM mode, so a full replay stays possible.
+
+```bash
+DRIVE_WORM_MODE=strict SU_OBJECT_LOCK_MODE=compliance SU_OBJECT_LOCK_RETENTION=87600h ./drive
+./drive verify --hash
+```
+
+Switching a tenant from `off` to a WORM mode is safe at any time; the first checkpoint then covers the whole existing journal. Switching from `append_only` to `strict` later is also safe. Switching WORM off again does not remove any lock the storage already holds.

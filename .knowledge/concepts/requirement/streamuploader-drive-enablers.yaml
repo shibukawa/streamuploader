@@ -34,11 +34,15 @@ capabilities:
     state: planned
     implements: [requirement:local-drive-search]
   retention-headers:
-    state: planned
+    state: implemented
     implements: [requirement:local-drive-worm-audit-mode]
+    authority: observed
+    evidence: {path: internal/storage/retention.go, note: "2026-10-09 storage.PutInput/CopyInput.Retention mapped to S3 Object Lock headers; SU_OBJECT_LOCK_MODE and SU_OBJECT_LOCK_RETENTION lock the final object only (direct PUT or the copy from the staging key); the Drive locks journal and audit objects with the same policy. Prefix classes are not configurable yet; the class split is by call site."}
   worm-route-disable:
-    state: planned
+    state: implemented
     implements: [requirement:local-drive-worm-audit-mode]
+    authority: observed
+    evidence: {path: internal/server/server.go, note: "2026-10-09 SU_WORM_MODE=true keeps DELETE /internal/objects/{key} and DELETE /internal/file/shared-keys/{key} registered but answering 405 worm_readonly; object replace and rename were never implemented so nothing else needed removing"}
   work-prefix:
     state: planned
     implements: [requirement:local-drive-worm-audit-mode]
