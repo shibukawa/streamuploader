@@ -187,3 +187,65 @@ func TestSidecarJapaneseSearchAndFacets(t *testing.T) {
 		t.Fatalf("tenant isolation: %+v err %v", res.Hits, err)
 	}
 }
+
+func TestSidecarCommitFilesAndReadOnly(t *testing.T) {
+	bin := testBinary(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	dir := filepath.Join(t.TempDir(), "index")
+	w := New(bin, dir)
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if w.SchemaVersion() == "" {
+		t.Fatal("schema version not reported by the ready line")
+	}
+	up := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+	f := &meta.File{TenantID: "t1", FileID: "01A", Name: "成田国際空港の案内.pdf", Dates: meta.Dates{Uploaded: up, Modified: up}}
+	docs := BuildDocs(f, &extraction.Content{Pages: []extraction.PageText{{View: "main", Page: 2, Text: "千葉県成田市にある空港。"}}}, DefaultLimits)
+	if err := w.Upsert(ctx, docs); err != nil {
+		t.Fatal(err)
+	}
+	committed, err := w.Commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.NumDocs != 2 || committed.Opstamp == 0 || len(committed.Files) == 0 || committed.MetaJSON == "" {
+		t.Fatalf("commit result: %+v", committed)
+	}
+	for _, name := range committed.Files {
+		if st, err := os.Stat(filepath.Join(dir, name)); err != nil || st.IsDir() {
+			t.Fatalf("listed file %s does not exist: %v", name, err)
+		}
+	}
+	listed, err := w.Files(ctx)
+	if err != nil || listed.Opstamp != committed.Opstamp || len(listed.Files) != len(committed.Files) {
+		t.Fatalf("files: %+v err %v", listed, err)
+	}
+	st, err := w.Stats(ctx)
+	if err != nil || st.Opstamp != committed.Opstamp || st.ReadOnly {
+		t.Fatalf("stats: %+v err %v", st, err)
+	}
+
+	// A read-only sidecar on the same directory searches but never writes.
+	r := New(bin, dir)
+	r.ReadOnly = true
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.Upsert(ctx, docs); err == nil {
+		t.Fatal("read-only sidecar accepted an upsert")
+	}
+	if n, err := r.Reload(ctx); err != nil || n != 2 {
+		t.Fatalf("reload: %d %v", n, err)
+	}
+	res, err := r.Search(ctx, SearchRequest{Tenant: "t1", Query: "成田市", WithPages: true})
+	if err != nil || len(res.Hits) != 1 || res.Hits[0].Page != 2 {
+		t.Fatalf("read-only search: %+v err %v", res.Hits, err)
+	}
+	if st, err := r.Stats(ctx); err != nil || !st.ReadOnly {
+		t.Fatalf("read-only stats: %+v err %v", st, err)
+	}
+}

@@ -29,7 +29,9 @@ type Config struct {
 	// endpoint with CORS for range requests).
 	Delivery   string
 	PresignTTL time.Duration
-	// OverlayTTL caches the recent-journal listing between requests.
+	// OverlayTTL caches the recent-journal listing between requests; a
+	// change written by another server becomes visible here within one
+	// TTL. Zero means 2s; a negative value disables the cache (tests).
 	OverlayTTL time.Duration
 	MaxOverlay int
 	// Actor is recorded on events until there are users.
@@ -45,11 +47,23 @@ type Config struct {
 	ObjectLock storage.LockPolicy
 }
 
-// IndexerControl is what the server needs from the indexer.
+// IndexerControl is what the server needs from whoever keeps the index: the
+// in-process indexer in all-in-one mode, or the snapshot follower in server
+// mode. Everything after LastJournalKey is overlaid from the journal.
 type IndexerControl interface {
 	LastJournalKey() string
 	Poke()
+}
+
+// Rebuilder is implemented by an in-process indexer; a follower cannot
+// rebuild, so the reindex endpoint answers 503 without it.
+type Rebuilder interface {
 	RebuildAsync()
+}
+
+// StatusReporter adds the index keeper's state to /api/drive/stats.
+type StatusReporter interface {
+	Status() map[string]any
 }
 
 type Deps struct {
@@ -79,7 +93,7 @@ func New(cfg Config, deps Deps) *Server {
 	if cfg.PresignTTL <= 0 {
 		cfg.PresignTTL = 15 * time.Minute
 	}
-	if cfg.OverlayTTL <= 0 {
+	if cfg.OverlayTTL == 0 {
 		cfg.OverlayTTL = 2 * time.Second
 	}
 	if cfg.MaxOverlay <= 0 {

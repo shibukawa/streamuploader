@@ -227,6 +227,7 @@ The manifest expects images named `streamuploader:local` and `streamuploader-dem
 How it fits together:
 
 - Durable state is only in the bucket. Metadata changes are append-only journal events (`drive/journal/{tenant}/{yyyy}/{mm}/{ulid}.json`); the indexer folds them into `drive/meta/{tenant}/{file_id}.json` snapshots and a local tantivy index; a server patches results with the journal entries the indexer has not folded yet, so edits are visible at once.
+- The index itself is published to the bucket as a snapshot under `drive/search/{tenant}/`: the immutable tantivy segment files plus `meta.json`, which is tantivy's own meta.json extended with a `drive` object (generation, the last folded journal key, the file list, retired files and a short change history). Segments are uploaded first and the pointer last. Servers follow the pointer with a read-only sidecar, the indexer resumes from it after a restart, and segment files no pointer references are deleted after a grace period. This is what lets servers and the indexer run as separate processes.
 - Search runs in `search/`, a Rust sidecar (`drivesearch`) built on tantivy with the lindera IPADIC tokenizer. The Go server talks to it over JSON lines on stdin/stdout. Tags, type, date and author are hierarchical facets, which is what makes "tags as folders" work.
 - The web UI (`drive/ui`) is a plain ES module bundled with esbuild; the built `dist/` is embedded into the binary and uses `@bdfkit/viewer` to render `.bdf` previews.
 
@@ -254,7 +255,29 @@ go build ./cmd/drive
 
 `Dockerfile.drive` builds both binaries into one image; `drive` finds `drivesearch` next to itself or through `DRIVE_SEARCH_BIN`.
 
-Subcommands: `drive` serves (all-in-one: server plus indexer loop), `drive reindex` rebuilds the index from the bucket and exits, `drive index-once` folds pending journal events and exits, `drive init` writes the deployment files for a target (below). A missing or stale index directory is rebuilt from the bucket at start.
+Subcommands:
+
+| Command | Role |
+|---|---|
+| `drive` | all-in-one: server plus indexer loop in one process |
+| `drive server` | server only: upload intake, Drive API, web UI and search over the published snapshot; the index is read-only and refreshed from the bucket; any number of instances |
+| `drive indexer` | indexer only: folds journal events and extracted text, writes meta snapshots, publishes the index snapshot, in a loop; run exactly one per tenant |
+| `drive index-once` | one indexer run (fold, publish) and exit; for a cron job or a Cloud Run Job |
+| `drive reindex` | rebuild the index from the bucket, publish it and exit |
+| `drive verify` | walk the audit checkpoint chain and report tampering (WORM mode); exits non-zero on findings |
+| `drive init` | write the deployment files for a target (below) |
+
+At start an indexer adopts the published snapshot when its local directory is missing, stale or behind it, and rebuilds from the meta snapshots only when there is nothing to adopt. A server starts serving as soon as it has downloaded the current snapshot; until the first publish it serves an empty index plus the journal overlay. Edits are visible on every server at once (overlay) and from the index after the next indexer run and refresh. Rebuilds are started where the indexer runs (`drive reindex`); `POST /api/drive/admin/reindex` answers 503 on a server-only process.
+
+Split run on the host (two terminals, one RustFS container):
+
+```bash
+./scripts/run-drive-native.sh indexer
+```
+
+```bash
+./scripts/run-drive-native.sh server
+```
 
 ### Deployment kit: `drive init`
 
@@ -292,7 +315,10 @@ Environment (in addition to the `SU_*` variables of streamuploader, whose S3 set
 | `DRIVE_INDEX_DIR` | `.cache/drive/index` | local tantivy directory; deleting it forces a rebuild |
 | `DRIVE_SEARCH_BIN` | next to the binary, then `PATH` | path of `drivesearch` |
 | `DRIVE_SEARCH_TOKENIZER` | `lindera` | `lindera` (IPADIC) or `ngram` |
-| `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; writes also poke the indexer immediately |
+| `DRIVE_INDEX_INTERVAL` | `30s` | indexer period; in all-in-one mode writes also poke the indexer immediately |
+| `DRIVE_INDEX_SNAPSHOT` | `true` | publish the index to `drive/search/{tenant}/` after every commit and adopt it at start; `false` keeps the index local (all-in-one only) |
+| `DRIVE_SNAPSHOT_REFRESH` | `10s` | server mode: how often the pointer is checked for a new generation (one HEAD request) |
+| `DRIVE_SNAPSHOT_GC_GRACE` | `15m` | how long a segment file no pointer references stays in the bucket; keep it longer than the refresh interval plus a download |
 | `DRIVE_DELIVERY` | `proxy` | `proxy` streams bytes through the server; `presigned` redirects to the bucket (needs a browser-reachable endpoint with CORS for range requests) |
 | `DRIVE_STORAGE` | `s3` | `memory` for a throwaway run |
 | `DRIVE_WORM_MODE` | `off` | `append_only` or `strict` turns on the WORM audit mode described below |
@@ -311,9 +337,9 @@ API (same origin as the upload API; no authentication yet):
 - `GET /api/drive/facets?path=/tags/projects` lists the children of a facet path with counts (`/tags`, `/type`, `/date`, `/author`, `/geo`)
 - `GET /api/drive/journal?since=&until=&type=&limit=` streams journal events as JSON lines (`since`/`until` take a journal key, an event id or an RFC 3339 time)
 - `GET /api/drive/checkpoints`, `GET /api/drive/checkpoints/{n}` expose the audit chain (WORM mode)
-- `GET /api/drive/stats`, `POST /api/drive/admin/reindex`
+- `GET /api/drive/stats` (includes `indexer`: mode, snapshot generation, last journal key), `POST /api/drive/admin/reindex` (all-in-one only)
 
-Tests: `go test ./drive/...` includes `drive/e2e`, which runs the whole stack in one process against the in-memory store and needs the built sidecar (`search/target/release/drivesearch` or `DRIVE_SEARCH_BIN`); without it the sidecar tests are skipped.
+Tests: `go test ./drive/...` includes `drive/e2e`, which runs the whole stack in one process against the in-memory store and needs the built sidecar (`search/target/release/drivesearch` or `DRIVE_SEARCH_BIN`); without it the sidecar tests are skipped. `TestServerIndexerSplit` runs an indexer and two server-only processes against one in-memory bucket.
 
 ### WORM audit mode
 

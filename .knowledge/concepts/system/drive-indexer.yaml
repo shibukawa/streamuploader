@@ -28,10 +28,15 @@ facts:
     pending_text: files whose .text.json is not there yet are re-checked by HeadObject on every run
     poke: the server calls Poke after every journal write; the loop coalesces pokes and also ticks every DRIVE_INDEX_INTERVAL
     stale_index_guard: at start, an index that holds documents while the bucket has no snapshots is rebuilt (found when a memory-storage run reused the previous index directory and facet counts doubled); DRIVE_STORAGE=memory also wipes the directory
-    not_yet: publishing the index to S3 (search/ prefix), checkpoints, journal compaction
   implemented_2026_10_09:
+    snapshot_publish: after every commit the index is published to search/{tenant}/ (flow:search-index-publish, data:search-index-snapshot); DRIVE_INDEX_SNAPSHOT=false keeps it local
+    adopt_at_start: a published generation the local directory does not match is downloaded instead of rebuilt, so an indexer restarted on an empty disk (Cloud Run Job, new machine) resumes from the pointer's last_journal_key and pending_text
+    unpublished_tracking: in-memory flag plus the changed file ids; a crash between commit and publish is detected at start by comparing the local tantivy opstamp with the pointer's and republished as a full change
+    single_writer_check: the pointer's ETag is compared before each publish; a change by another writer is logged and continued from, not overwritten blindly
+    modes: drive indexer (loop, no HTTP), drive index-once, drive reindex; all-in-one keeps the in-process loop plus pokes
+    status: Status() feeds /api/drive/stats with mode, generation, last_journal_key, unpublished and the last publish error
     checkpoints: with Config.Checkpoints (WORM mode) every fold ends by extending the audit chain over the journal keys between the chain head and the fold's last key; the head is read from the bucket on first use so a restarted or rebuilt process continues the chain; Report.Checkpoint carries the number written
-    still_not_yet: publishing the index to S3, journal compaction (never in WORM mode)
+    still_not_yet: journal compaction (never in WORM mode), a poke from servers to a remote indexer (queue or Jobs API)
 relations:
   - relation: implements
     to: requirement:local-drive-s3-only-state

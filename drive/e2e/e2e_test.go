@@ -28,9 +28,11 @@ import (
 	"streamuploader/drive/meta"
 	driveserver "streamuploader/drive/server"
 	"streamuploader/drive/sidecar"
+	"streamuploader/drive/snapshot"
 	"streamuploader/internal/config"
 	"streamuploader/internal/model"
 	suserver "streamuploader/internal/server"
+	"streamuploader/internal/storage"
 )
 
 const (
@@ -60,13 +62,31 @@ type stack struct {
 	cfg    config.Config
 	search *sidecar.Client
 	metas  *meta.Cache
-	ix     *indexer.Indexer
-	srv    *httptest.Server
-	client *http.Client
-	index  string
+	// ix is the in-process indexer of an all-in-one stack; follower is the
+	// snapshot follower of a server-only stack.
+	ix       *indexer.Indexer
+	follower *snapshot.Follower
+	startRep indexer.Report
+	srv      *httptest.Server
+	client   *http.Client
+	index    string
 }
 
+// newStack builds an all-in-one stack (server plus indexer) that publishes
+// its index to the bucket.
 func newStack(t *testing.T, store *memstore.Store, indexDir string) *stack {
+	t.Helper()
+	return buildStack(t, store, indexDir, "all")
+}
+
+// newServerStack builds a server-only stack that follows the published
+// snapshot with a read-only sidecar.
+func newServerStack(t *testing.T, store *memstore.Store, indexDir string) *stack {
+	t.Helper()
+	return buildStack(t, store, indexDir, "server")
+}
+
+func buildStack(t *testing.T, store *memstore.Store, indexDir, mode string) *stack {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
@@ -94,18 +114,37 @@ func newStack(t *testing.T, store *memstore.Store, indexDir string) *stack {
 	t.Cleanup(func() { _ = search.Close() })
 	jstore := &journal.Store{Objects: store, Bucket: cfg.Bucket, Prefix: "drive/"}
 	metas := meta.NewCache()
-	ix := indexer.New(indexer.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", IndexDir: indexDir}, store, jstore, search, metas, nil)
-	if _, err := ix.Start(ctx); err != nil {
-		t.Fatalf("indexer start: %v", err)
+	s := &stack{t: t, ctx: ctx, store: store, cfg: cfg, search: search, metas: metas, index: indexDir}
+	var control driveserver.IndexerControl
+	switch mode {
+	case "all":
+		ix := indexer.New(indexer.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", IndexDir: indexDir, Snapshot: true}, store, jstore, search, metas, nil)
+		rep, err := ix.Start(ctx)
+		if err != nil {
+			t.Fatalf("indexer start: %v", err)
+		}
+		s.ix, s.startRep, control = ix, rep, ix
+	case "server":
+		snapStore := &snapshot.Store{Objects: store, Bucket: cfg.Bucket, Prefix: "drive/", Tenant: "t1"}
+		follower := snapshot.NewFollower(snapStore, search, metas, indexDir, nil)
+		if err := follower.Start(ctx); err != nil {
+			t.Fatalf("follower start: %v", err)
+		}
+		s.follower, control = follower, follower
+	default:
+		t.Fatalf("unknown stack mode %q", mode)
 	}
 	uploader := suserver.New(cfg, store).Handler()
-	drv := driveserver.New(driveserver.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", OverlayTTL: time.Millisecond}, driveserver.Deps{
-		Store: store, Journal: jstore, Metas: metas, Search: search, Indexer: ix, Uploader: uploader,
+	// A negative overlay TTL disables the overlay cache, so a write through
+	// one stack is visible through another at once.
+	drv := driveserver.New(driveserver.Config{Tenant: "t1", Bucket: cfg.Bucket, Prefix: "drive/", OverlayTTL: -1}, driveserver.Deps{
+		Store: store, Journal: jstore, Metas: metas, Search: search, Indexer: control, Uploader: uploader,
 	})
 	srv := httptest.NewServer(drv.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &stack{t: t, ctx: ctx, store: store, cfg: cfg, search: search, metas: metas, ix: ix, srv: srv, client: &http.Client{Jar: jar}, index: indexDir}
+	s.srv, s.client = srv, &http.Client{Jar: jar}
+	return s
 }
 
 func (s *stack) do(method, path string, body []byte, contentType string) (*http.Response, []byte) {
@@ -466,4 +505,179 @@ func TestAllInOneMilestone(t *testing.T) {
 
 func urlQuery(s string) string {
 	return url.QueryEscape(s)
+}
+
+// refresh makes a server-only stack load the latest published generation.
+func (s *stack) refresh() bool {
+	s.t.Helper()
+	changed, err := s.follower.Refresh(s.ctx)
+	if err != nil {
+		s.t.Fatalf("follower refresh: %v", err)
+	}
+	return changed
+}
+
+func (s *stack) stats() map[string]any {
+	s.t.Helper()
+	var out map[string]any
+	s.json(http.MethodGet, "/api/drive/stats", nil, &out, http.StatusOK)
+	return out
+}
+
+func generationOf(stats map[string]any) int64 {
+	ix, _ := stats["indexer"].(map[string]any)
+	g, _ := ix["generation"].(float64)
+	return int64(g)
+}
+
+// TestServerIndexerSplit covers the m2 scenario: an indexer publishes the
+// index to the bucket as a snapshot and separate server processes follow it
+// with a read-only sidecar, while edits stay visible at once through the
+// journal overlay. A restarted indexer with an empty directory adopts the
+// snapshot instead of rebuilding.
+func TestServerIndexerSplit(t *testing.T) {
+	store := memstore.New()
+	ctx := context.Background()
+	snapStore := &snapshot.Store{Objects: store, Bucket: "bucket", Prefix: "drive/", Tenant: "t1"}
+
+	// A server started before any indexer ran serves an empty index and
+	// still answers; the overlay shows registrations at once.
+	early := newServerStack(t, store, filepath.Join(t.TempDir(), "early"))
+	if res := early.find("tag=inbox"); res.Total != 0 {
+		t.Fatalf("empty server: %+v", res)
+	}
+	if generationOf(early.stats()) != 0 {
+		t.Fatalf("early server stats: %+v", early.stats())
+	}
+
+	// The all-in-one (or indexer) process: upload, register, fold, publish.
+	a := newStack(t, store, filepath.Join(t.TempDir(), "a"))
+	if a.startRep.Adopted || a.startRep.Rebuilt != true {
+		t.Fatalf("first indexer start on an empty bucket: %+v", a.startRep)
+	}
+	docx := a.upload("文書グリッド.docx", docxType, fixture(t, "../../internal/docpreview/testdata/sample.docx"), "inbox")
+	pdf := a.upload("空港の案内.pdf", pdfType, fixture(t, "../testdata/kuko-3pages.pdf"), "inbox")
+	if res := early.find("tag=inbox&sort=name"); res.Total != 2 || !res.Hits[0].Fresh {
+		t.Fatalf("overlay on the early server: %+v", res)
+	}
+	rep := a.runIndexer()
+	if rep.FilesIndexed != 2 || !rep.Published || rep.Generation < 1 {
+		t.Fatalf("first fold should publish: %+v", rep)
+	}
+	p, _, found, err := snapStore.ReadPointer(ctx)
+	if err != nil || !found || p.Generation != rep.Generation || p.NumDocs == 0 || len(p.Files) == 0 || p.LastJournalKey == "" {
+		t.Fatalf("published pointer: %+v found %v err %v", p, found, err)
+	}
+	for _, f := range p.Files {
+		if _, err := store.HeadObject(ctx, storage.HeadInput{Bucket: "bucket", Key: snapStore.FileKey(f.Name)}); err != nil {
+			t.Fatalf("segment %s not in the bucket: %v", f.Name, err)
+		}
+	}
+
+	// A server-only process started now loads the snapshot from the bucket.
+	b := newServerStack(t, store, filepath.Join(t.TempDir(), "b"))
+	if b.metas.Len() != 2 || generationOf(b.stats()) != p.Generation {
+		t.Fatalf("server b after start: files %d stats %+v", b.metas.Len(), b.stats())
+	}
+	hit := b.find("q=" + urlQuery("大阪湾の人工島"))
+	if len(hit.Hits) != 1 || hit.Hits[0].File.FileID != pdf.FileID || hit.Hits[0].Page != 3 || hit.Hits[0].Fresh {
+		t.Fatalf("page search on the server: %+v", hit)
+	}
+	folder := b.find("tag=inbox&sort=name")
+	if folder.Total != 2 || folder.Overlay != 0 {
+		t.Fatalf("folder on the server: total %d overlay %d", folder.Total, folder.Overlay)
+	}
+	var facets facetsResult
+	b.json(http.MethodGet, "/api/drive/facets?path=/tags", nil, &facets, http.StatusOK)
+	if len(facets.Children) != 1 || facets.Children[0].Path != "/tags/inbox" || facets.Children[0].Count != 2 {
+		t.Fatalf("facets on the server: %+v", facets.Children)
+	}
+	// The early server catches up on its next refresh.
+	if !early.refresh() || early.metas.Len() != 2 {
+		t.Fatalf("early server did not pick up generation %d", p.Generation)
+	}
+	if res := early.find("tag=inbox"); res.Total != 2 || res.Overlay != 0 {
+		t.Fatalf("early server after refresh: %+v", res)
+	}
+	// Rebuilding is the indexer's job.
+	if resp, _ := b.do(http.MethodPost, "/api/drive/admin/reindex", nil, ""); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("reindex on a server: status %d", resp.StatusCode)
+	}
+
+	// An edit through the all-in-one process is visible on the server at
+	// once through the overlay and from the index after the next generation.
+	var moved fileView
+	a.json(http.MethodPatch, "/api/drive/files/"+docx.FileID, map[string]any{"tags": []string{"archive/2026"}, "expected_revision": docx.Revision}, &moved, http.StatusOK)
+	if res := b.find("tag=archive/2026"); res.Total != 1 || res.Hits[0].File.FileID != docx.FileID || !res.Hits[0].Fresh {
+		t.Fatalf("overlay edit on the server: %+v", res)
+	}
+	if res := b.find("tag=inbox"); res.Total != 1 {
+		t.Fatalf("overlay should hide the moved file: %+v", res)
+	}
+	rep = a.runIndexer()
+	if !rep.Published || rep.Generation != p.Generation+1 {
+		t.Fatalf("second fold: %+v", rep)
+	}
+	if !b.refresh() {
+		t.Fatal("server did not see the new generation")
+	}
+	if b.refresh() {
+		t.Fatal("a second refresh without a new generation should be a no-op")
+	}
+	if res := b.find("tag=archive/2026"); res.Total != 1 || res.Overlay != 0 || res.Hits[0].Fresh {
+		t.Fatalf("indexed edit on the server: %+v", res)
+	}
+	if generationOf(b.stats()) != rep.Generation {
+		t.Fatalf("server generation: %+v", b.stats())
+	}
+	var detail fileView
+	b.json(http.MethodGet, "/api/drive/files/"+docx.FileID, nil, &detail, http.StatusOK)
+	if len(detail.Tags) != 1 || detail.Tags[0] != "/archive/2026" || detail.Author.Extracted == "" {
+		t.Fatalf("server meta cache after incremental refresh: %+v", detail.File)
+	}
+
+	// A delete reaches the server the same way.
+	if resp, _ := a.do(http.MethodDelete, "/api/drive/files/"+pdf.FileID, nil, ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status %d", resp.StatusCode)
+	}
+	if res := b.find("q=" + urlQuery("大阪湾の人工島")); len(res.Hits) != 0 {
+		t.Fatalf("deleted file still found through the overlay: %+v", res)
+	}
+	a.runIndexer()
+	b.refresh()
+	if res := b.find("q=" + urlQuery("大阪湾の人工島")); len(res.Hits) != 0 || res.Overlay != 0 {
+		t.Fatalf("deleted file still indexed on the server: %+v", res)
+	}
+	if resp, _ := b.do(http.MethodGet, "/api/drive/files/"+pdf.FileID, nil, ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted file GET on the server: %d", resp.StatusCode)
+	}
+
+	// A new indexer process with an empty directory adopts the published
+	// snapshot instead of rebuilding, and continues from its journal key.
+	a2 := newStack(t, store, filepath.Join(t.TempDir(), "a2"))
+	if !a2.startRep.Adopted || a2.startRep.Rebuilt || a2.startRep.Published {
+		t.Fatalf("restarted indexer should adopt the snapshot: %+v", a2.startRep)
+	}
+	if res := a2.find("tag=archive/2026"); res.Total != 1 || res.Hits[0].File.FileID != docx.FileID || res.Overlay != 0 {
+		t.Fatalf("adopted index: %+v", res)
+	}
+	if a2.ix.LastJournalKey() != a.ix.LastJournalKey() || a2.ix.Generation() != a.ix.Generation() {
+		t.Fatalf("adopted state: key %q vs %q, generation %d vs %d", a2.ix.LastJournalKey(), a.ix.LastJournalKey(), a2.ix.Generation(), a.ix.Generation())
+	}
+	// Local segment files equal the published list; nothing else lingers.
+	p, _, _, _ = snapStore.ReadPointer(ctx)
+	want := map[string]bool{}
+	for _, f := range p.Files {
+		want[f.Name] = true
+	}
+	entries, _ := os.ReadDir(a2.index)
+	for _, e := range entries {
+		if snapshot.IsSegmentFile(e.Name()) && !want[e.Name()] {
+			t.Fatalf("adopted directory holds unreferenced segment file %s", e.Name())
+		}
+		delete(want, e.Name())
+	}
+	if len(want) != 0 {
+		t.Fatalf("adopted directory lacks %v", want)
+	}
 }

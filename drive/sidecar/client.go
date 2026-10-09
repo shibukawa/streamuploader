@@ -25,17 +25,21 @@ type Client struct {
 	Binary    string
 	IndexDir  string
 	Tokenizer string
-	Logger    *slog.Logger
+	// ReadOnly starts the sidecar without an index writer: the Drive server
+	// serves a snapshot the Go side downloads into IndexDir and reloads.
+	ReadOnly bool
+	Logger   *slog.Logger
 	// StartTimeout bounds the wait for the ready line.
 	StartTimeout time.Duration
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Scanner
-	stderr io.ReadCloser
-	nextID atomic.Int64
-	closed bool
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	stdout        *bufio.Scanner
+	stderr        io.ReadCloser
+	nextID        atomic.Int64
+	closed        bool
+	schemaVersion string
 }
 
 // ErrSchemaMismatch is reported when the index directory was built by a
@@ -90,6 +94,9 @@ func (c *Client) startLocked(ctx context.Context) error {
 	if c.Tokenizer != "" {
 		args = append(args, "--tokenizer", c.Tokenizer)
 	}
+	if c.ReadOnly {
+		args = append(args, "--read-only")
+	}
 	cmd := exec.Command(c.Binary, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -121,8 +128,9 @@ func (c *Client) startLocked(ctx context.Context) error {
 		timeout = 60 * time.Second
 	}
 	readyCh := make(chan error, 1)
+	schemaCh := make(chan string, 1)
 	go func() {
-		var line rawResponse
+		var line readyLine
 		if !scanner.Scan() {
 			readyCh <- fmt.Errorf("sidecar: exited before ready: %v", scanner.Err())
 			return
@@ -139,6 +147,7 @@ func (c *Client) startLocked(ctx context.Context) error {
 			readyCh <- fmt.Errorf("sidecar: %s", line.Error)
 			return
 		}
+		schemaCh <- line.SchemaVersion
 		readyCh <- nil
 	}()
 	select {
@@ -147,6 +156,7 @@ func (c *Client) startLocked(ctx context.Context) error {
 			c.killLocked()
 			return err
 		}
+		c.schemaVersion = <-schemaCh
 	case <-time.After(timeout):
 		c.killLocked()
 		return errors.New("sidecar: timeout waiting for ready")
@@ -154,8 +164,24 @@ func (c *Client) startLocked(ctx context.Context) error {
 		c.killLocked()
 		return ctx.Err()
 	}
-	c.logger().Info("drivesearch_started", "binary", c.Binary, "index_dir", c.IndexDir, "tokenizer", c.Tokenizer)
+	c.logger().Info("drivesearch_started", "binary", c.Binary, "index_dir", c.IndexDir, "tokenizer", c.Tokenizer, "read_only", c.ReadOnly, "schema_version", c.schemaVersion)
 	return nil
+}
+
+// SchemaVersion is the index schema the sidecar reported when it started;
+// empty before the first start. A published snapshot carries the same value.
+func (c *Client) SchemaVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.schemaVersion
+}
+
+// Stop ends the process without closing the client; the next call or Start
+// relaunches it. Used while the index directory is replaced from a snapshot.
+func (c *Client) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.killLocked()
 }
 
 func isSchemaMismatch(msg string) bool {
@@ -208,6 +234,12 @@ type rawResponse struct {
 	ID    json.RawMessage `json:"id"`
 	OK    bool            `json:"ok"`
 	Error string          `json:"error"`
+}
+
+type readyLine struct {
+	rawResponse
+	SchemaVersion string `json:"schema_version"`
+	ReadOnly      bool   `json:"read_only"`
 }
 
 // call sends one request and decodes the response into out. A broken pipe
@@ -300,12 +332,39 @@ func (c *Client) Delete(ctx context.Context, fileIDs []string) error {
 	return c.call(ctx, "delete", map[string]any{"file_ids": fileIDs}, nil)
 }
 
-// Commit makes pending changes searchable and returns the document count.
-func (c *Client) Commit(ctx context.Context) (int64, error) {
+// IndexFiles describes the committed index as one consistent unit: the
+// content of meta.json and the segment files it references (only those that
+// exist on disk), both read from the same tantivy IndexMeta.
+type IndexFiles struct {
+	NumDocs  int64    `json:"num_docs"`
+	Opstamp  uint64   `json:"opstamp"`
+	MetaJSON string   `json:"meta_json"`
+	Files    []string `json:"files"`
+}
+
+// Commit makes pending changes searchable. The sidecar merges segments
+// synchronously inside the call, so the returned file list is stable until
+// the next write.
+func (c *Client) Commit(ctx context.Context) (IndexFiles, error) {
+	var out IndexFiles
+	err := c.call(ctx, "commit", nil, &out)
+	return out, err
+}
+
+// Files reports the committed index without committing.
+func (c *Client) Files(ctx context.Context) (IndexFiles, error) {
+	var out IndexFiles
+	err := c.call(ctx, "files", nil, &out)
+	return out, err
+}
+
+// Reload reopens the index after the Go side replaced meta.json and segment
+// files from a snapshot; returns the document count.
+func (c *Client) Reload(ctx context.Context) (int64, error) {
 	var out struct {
 		NumDocs int64 `json:"num_docs"`
 	}
-	if err := c.call(ctx, "commit", nil, &out); err != nil {
+	if err := c.call(ctx, "reload", nil, &out); err != nil {
 		return 0, err
 	}
 	return out.NumDocs, nil
@@ -315,6 +374,8 @@ type Stats struct {
 	NumDocs       int64  `json:"num_docs"`
 	Segments      int    `json:"segments"`
 	SchemaVersion string `json:"schema_version"`
+	Opstamp       uint64 `json:"opstamp"`
+	ReadOnly      bool   `json:"read_only"`
 }
 
 func (c *Client) Stats(ctx context.Context) (Stats, error) {

@@ -7,6 +7,13 @@
 //!
 //! Request:  {"id": 1, "op": "search", ...}
 //! Response: {"id": 1, "ok": true, ...} or {"id": 1, "ok": false, "error": "..."}
+//!
+//! Writes are only accepted without `--read-only`. Background merges are
+//! disabled; `commit` merges synchronously and then returns the `meta.json`
+//! content together with the segment files it references, read from the same
+//! `IndexMeta`, so the Go side can publish a consistent snapshot to S3. A
+//! `--read-only` sidecar (the Drive server) never writes the directory: the Go
+//! side replaces files and `meta.json` from the snapshot and calls `reload`.
 
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
@@ -17,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tantivy::collector::{Count, FacetCollector, TopDocs};
 use tantivy::directory::MmapDirectory;
+use tantivy::merge_policy::{LogMergePolicy, MergePolicy, NoMergePolicy};
 use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, QueryParser, TermQuery};
 use tantivy::schema::{
     Facet, FacetOptions, Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value as _,
@@ -133,13 +141,17 @@ fn register_tokenizers(index: &Index, tokenizer: Tokenizer) -> Result<()> {
 struct Engine {
     index: Index,
     reader: IndexReader,
-    writer: IndexWriter,
+    /// None in read-only mode.
+    writer: Option<IndexWriter>,
+    /// Applied by hand inside `commit`; the writer itself never merges in
+    /// the background, so the directory only changes during a request.
+    merge_policy: LogMergePolicy,
     f: Fields,
     dir: PathBuf,
 }
 
 impl Engine {
-    fn open(dir: &Path, tokenizer: Tokenizer) -> Result<Engine> {
+    fn open(dir: &Path, tokenizer: Tokenizer, read_only: bool) -> Result<Engine> {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let version_file = dir.join("DRIVESEARCH_SCHEMA");
         if version_file.exists() {
@@ -156,8 +168,67 @@ impl Engine {
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
-        let writer = index.writer::<TantivyDocument>(WRITER_HEAP_BYTES)?;
-        Ok(Engine { index, reader, writer, f, dir: dir.to_path_buf() })
+        let writer = if read_only {
+            None
+        } else {
+            let writer = index.writer::<TantivyDocument>(WRITER_HEAP_BYTES)?;
+            writer.set_merge_policy(Box::new(NoMergePolicy));
+            Some(writer)
+        };
+        Ok(Engine { index, reader, writer, merge_policy: LogMergePolicy::default(), f, dir: dir.to_path_buf() })
+    }
+
+    fn writer(&mut self) -> Result<&mut IndexWriter> {
+        self.writer.as_mut().ok_or_else(|| anyhow!("read_only: this sidecar was started with --read-only"))
+    }
+
+    /// Commits, merges what the log merge policy asks for (synchronously, so
+    /// nothing changes on disk after this returns), and reports the files.
+    fn commit(&mut self) -> Result<Value> {
+        self.writer()?.commit()?;
+        let mut merged = false;
+        loop {
+            let metas = self.index.searchable_segment_metas()?;
+            let candidates = self.merge_policy.compute_merge_candidates(&metas);
+            if candidates.is_empty() {
+                break;
+            }
+            let writer = self.writer.as_mut().expect("writer checked above");
+            for candidate in candidates {
+                writer.merge(&candidate.0).wait()?;
+                merged = true;
+            }
+        }
+        if merged {
+            // The merge saved meta.json on the segment updater thread; a
+            // second commit is queued behind it and behind the file garbage
+            // collection, so once it returns the directory is settled.
+            self.writer()?.commit()?;
+        }
+        self.reader.reload()?;
+        self.index_files()
+    }
+
+    /// The current meta.json content and the segment files it references,
+    /// both taken from one `IndexMeta`, plus the files that exist on disk
+    /// (a segment without deletes lists a .del file that was never written).
+    fn index_files(&self) -> Result<Value> {
+        let meta = self.index.load_metas()?;
+        let mut files: Vec<String> = meta
+            .segments
+            .iter()
+            .flat_map(|segment| segment.list_files())
+            .filter(|path| self.dir.join(path).is_file())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        files.dedup();
+        Ok(json!({
+            "num_docs": self.reader.searcher().num_docs(),
+            "opstamp": meta.opstamp,
+            "meta_json": serde_json::to_string_pretty(&meta)?,
+            "files": files,
+        }))
     }
 
     fn handle(&mut self, req: &Request) -> Result<Value> {
@@ -165,21 +236,21 @@ impl Engine {
             "ping" => Ok(json!({"schema_version": SCHEMA_VERSION, "dir": self.dir.display().to_string()})),
             "upsert" => self.upsert(&req.docs),
             "delete" => self.delete(&req.file_ids),
-            "commit" => {
-                self.writer.commit()?;
-                self.reader.reload()?;
-                Ok(json!({"num_docs": self.reader.searcher().num_docs()}))
-            }
+            "commit" => self.commit(),
+            "files" => self.index_files(),
             "reload" => {
                 self.reader.reload()?;
                 Ok(json!({"num_docs": self.reader.searcher().num_docs()}))
             }
             "stats" => {
                 let searcher = self.reader.searcher();
+                let opstamp = self.index.load_metas().map(|m| m.opstamp).unwrap_or(0);
                 Ok(json!({
                     "num_docs": searcher.num_docs(),
                     "segments": searcher.segment_readers().len(),
                     "schema_version": SCHEMA_VERSION,
+                    "opstamp": opstamp,
+                    "read_only": self.writer.is_none(),
                 }))
             }
             "search" => self.search(req),
@@ -193,24 +264,31 @@ impl Engine {
         // A file's documents are replaced as a group; page documents are only
         // written together with their file document, so deleting by file_id
         // before adding keeps the index free of stale pages.
+        let f = self.f;
+        let mut documents = Vec::with_capacity(docs.len());
+        for d in docs {
+            documents.push(self.to_document(d)?);
+        }
+        let writer = self.writer()?;
         let mut seen: Vec<&str> = Vec::new();
         for d in docs {
             if d.kind == "file" && !seen.contains(&d.file_id.as_str()) {
-                self.writer.delete_term(Term::from_field_text(self.f.file_id, &d.file_id));
+                writer.delete_term(Term::from_field_text(f.file_id, &d.file_id));
                 seen.push(&d.file_id);
             }
         }
-        let mut n = 0usize;
-        for d in docs {
-            self.writer.add_document(self.to_document(d)?)?;
-            n += 1;
+        let n = documents.len();
+        for document in documents {
+            writer.add_document(document)?;
         }
         Ok(json!({"added": n}))
     }
 
     fn delete(&mut self, file_ids: &[String]) -> Result<Value> {
+        let f = self.f;
+        let writer = self.writer()?;
         for id in file_ids {
-            self.writer.delete_term(Term::from_field_text(self.f.file_id, id));
+            writer.delete_term(Term::from_field_text(f.file_id, id));
         }
         Ok(json!({"deleted_file_ids": file_ids.len()}))
     }
@@ -528,10 +606,12 @@ fn respond(out: &mut impl Write, id: Value, result: Result<Value>) -> io::Result
 fn main() -> Result<()> {
     let mut dir: Option<PathBuf> = None;
     let mut tokenizer = Tokenizer::Lindera;
+    let mut read_only = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--index-dir" => dir = Some(PathBuf::from(args.next().ok_or_else(|| anyhow!("--index-dir needs a path"))?)),
+            "--read-only" => read_only = true,
             "--tokenizer" => {
                 tokenizer = match args.next().as_deref() {
                     Some("lindera") | Some("ipadic") => Tokenizer::Lindera,
@@ -546,17 +626,17 @@ fn main() -> Result<()> {
             other => bail!("unknown argument {other}"),
         }
     }
-    let dir = dir.ok_or_else(|| anyhow!("usage: drivesearch --index-dir PATH [--tokenizer lindera|ngram]"))?;
+    let dir = dir.ok_or_else(|| anyhow!("usage: drivesearch --index-dir PATH [--tokenizer lindera|ngram] [--read-only]"))?;
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
-    let mut engine = match Engine::open(&dir, tokenizer) {
+    let mut engine = match Engine::open(&dir, tokenizer, read_only) {
         Ok(e) => e,
         Err(e) => {
             respond(&mut out, Value::Null, Err(e))?;
             std::process::exit(2);
         }
     };
-    respond(&mut out, Value::Null, Ok(json!({"event": "ready", "schema_version": SCHEMA_VERSION})))?;
+    respond(&mut out, Value::Null, Ok(json!({"event": "ready", "schema_version": SCHEMA_VERSION, "read_only": read_only})))?;
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = line?;
