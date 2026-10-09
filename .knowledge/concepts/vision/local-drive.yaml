@@ -44,6 +44,12 @@ facts:
       manual: UI checked in the desktop browser pane on 2026-10-08 - folder tree, search hit opened the bdf viewer at page 3, image viewer, details panel tag edit
       storage: also smoke-tested against RustFS (real S3 API) with presigned delivery and a cold rebuild from the bucket by a second process
       not_in_m1: WORM, index snapshots on S3, Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge of S3 objects
+    delivered_2026_10_09:
+      worm: DRIVE_WORM_MODE (append_only, strict) with application refusals, file.accessed logging, object locks through SU_OBJECT_LOCK_*, the audit checkpoint chain and `drive verify`; see requirement:local-drive-worm-audit-mode
+      snapshot_split: index snapshots on S3 and the server/indexer split (data:search-index-snapshot, flow:search-index-publish)
+      outcome: drive server (any number, read-only index refreshed from the bucket) and drive indexer (one per tenant, publishes after every commit) run as separate processes from the same image; an indexer restarted on an empty disk adopts the snapshot instead of rebuilding; all-in-one publishes too, so the bucket now holds everything needed for a cold start
+      automated: drive/e2e TestServerIndexerSplit (server before first publish, publish, two followers, overlay edit then indexed edit, delete, adoption by a fresh indexer, local directory equals the pointer), drive/snapshot unit tests
+      not_yet: Cloud Run h2c, EXIF-before-strip, API tokens, geo views, trash purge, journal compaction, a poke from servers to the remote indexer
 non_goals:
   - end-user permissions and sharing ACLs in the first milestones (deferred, see requirement:local-drive-api-and-web-ui)
   - a relational database of any kind
@@ -65,6 +71,10 @@ acceptance:
     text: Opening a search hit shows the bdf preview at the matched page; an image hit opens the full image.
     scope: {milestone: m1-all-in-one-local}
     verified_by: [ui-manual]
+  m2-split:
+    text: A server-only process started against a bucket serves the indexer's latest published generation, sees edits at once through the overlay and from the index after the next publish, and a fresh indexer process adopts the snapshot without a rebuild.
+    scope: {milestone: m2-server-indexer-split}
+    verified_by: [e2e-split]
 verification:
   e2e-milestone:
     state: passed
@@ -79,6 +89,13 @@ verification:
     scope: {milestone: m1-all-in-one-local}
     authority: observed
     evidence: {path: drive/ui/src/app.js, note: "checked in the desktop browser pane on 2026-10-08 with scripts/run-drive-memory.sh and scripts/drive-demo-seed.sh"}
+  e2e-split:
+    state: passed
+    method: integration
+    test: TestServerIndexerSplit
+    scope: {milestone: m2-server-indexer-split}
+    authority: observed
+    evidence: {path: drive/e2e/e2e_test.go, locator: TestServerIndexerSplit}
 relations:
   - relation: builds_on
     to: vision:stream-upload-wrapper

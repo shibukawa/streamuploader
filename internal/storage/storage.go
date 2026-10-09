@@ -12,6 +12,8 @@ type PutInput struct {
 	Body        io.Reader
 	ContentType string
 	Metadata    map[string]string
+	// Retention, when set, asks the store to lock the object (Object Lock).
+	Retention *Retention
 }
 
 type PutResult struct {
@@ -24,6 +26,8 @@ type CopyInput struct {
 	Key         string
 	ContentType string
 	Metadata    map[string]string
+	// Retention, when set, locks the copy (Object Lock).
+	Retention *Retention
 }
 
 type CopyResult struct {

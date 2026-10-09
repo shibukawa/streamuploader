@@ -17,6 +17,7 @@ facts:
     - sessions in signed cookies
     - upload progress in S3 .work (decision:serverless-upload-state)
     - watch WebSocket pinned by load-balancer sticky cookie or replaced by polling
+  s2_enabler_2026_10_09: data:search-index-snapshot is implemented; drive server instances follow the published index and drive indexer is the single writer, so stage s2 needs only a load balancer in front of the servers
 constraints:
   - tenant_id is mandatory in every journal event, meta snapshot, object key prefix and index document even while there is a single tenant
   - No cross-tenant query path exists in the server; operator reports run in the indexer

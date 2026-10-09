@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
-# All-in-one Drive image: the Go binary (streamuploader + Drive API + UI) and
-# the Rust search sidecar side by side. The lindera IPADIC dictionary is
-# compiled into the sidecar.
+# Drive image: the Go binary (streamuploader + Drive API + UI) and the Rust
+# search sidecar side by side. The lindera IPADIC dictionary is compiled into
+# the sidecar. The same image runs all-in-one (no arguments), as a server
+# (`server`) or as the indexer (`indexer`, `index-once`, `reindex`); servers
+# and the indexer share the index through the snapshot in the bucket.
 
 FROM rust:1-bookworm AS sidecar
 WORKDIR /src/search

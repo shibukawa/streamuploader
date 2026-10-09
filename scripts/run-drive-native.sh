@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# Runs the Drive all-in-one on the host against a RustFS container, the same
-# way scripts/run-host-native.sh runs streamuploader. Data persists under
-# .cache/native/rustfs; the search index under .cache/drive/index.
+# Runs the Drive on the host against a RustFS container, the same way
+# scripts/run-host-native.sh runs streamuploader. Data persists under
+# .cache/native/rustfs; the search index under .cache/drive/index-<mode>.
+#
+# Arguments are passed to the drive binary, so the split deployment can be
+# tried with two terminals sharing one RustFS container:
+#
+#   ./scripts/run-drive-native.sh indexer     # folds and publishes search/{tenant}/
+#   ./scripts/run-drive-native.sh server      # follows the snapshot, read-only index
+#
+# Without arguments it runs all-in-one (server plus indexer in one process).
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME="${CONTAINER_RUNTIME:-docker}"
@@ -10,7 +18,9 @@ RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
 RUSTFS_DATA_DIR="${RUSTFS_DATA_DIR:-$ROOT_DIR/.cache/native/rustfs}"
 BIN_DIR="$ROOT_DIR/.cache/drive/bin"
 SIDECAR="${DRIVE_SEARCH_BIN:-$ROOT_DIR/search/target/release/drivesearch}"
+MODE="${1:-serve}"
 PORT="${DRIVE_PORT:-8080}"
+INDEX_DIR="${DRIVE_INDEX_DIR:-$ROOT_DIR/.cache/drive/index-$MODE}"
 STARTED_RUSTFS=0
 
 cleanup() {
@@ -44,10 +54,14 @@ for _ in {1..120}; do
   sleep 1
 done
 
-echo "==> drive on http://localhost:$PORT (RustFS at http://localhost:9000)"
+if [[ "$MODE" == "indexer" ]]; then
+  echo "==> drive indexer (RustFS at http://localhost:9000, index dir $INDEX_DIR)"
+else
+  echo "==> drive $MODE on http://localhost:$PORT (RustFS at http://localhost:9000, index dir $INDEX_DIR)"
+fi
 exec env \
   DRIVE_SEARCH_BIN="$SIDECAR" \
-  DRIVE_INDEX_DIR="$ROOT_DIR/.cache/drive/index" \
+  DRIVE_INDEX_DIR="$INDEX_DIR" \
   DRIVE_DELIVERY="${DRIVE_DELIVERY:-proxy}" \
   PORT="$PORT" \
   SU_PUBLIC_BASE_URL="http://localhost:$PORT" \

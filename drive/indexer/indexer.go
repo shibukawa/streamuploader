@@ -1,6 +1,7 @@
 // Package indexer is the Drive's single writer: it folds journal events and
 // extracted text into the tantivy index through the sidecar, keeps the meta
-// cache and snapshots current, and rebuilds everything from the bucket.
+// cache and snapshots current, rebuilds everything from the bucket, and
+// publishes the index to the bucket as a snapshot that servers follow.
 // See .knowledge/concepts/system/drive-indexer.yaml.
 package indexer
 
@@ -17,10 +18,12 @@ import (
 	"sync"
 	"time"
 
+	"streamuploader/drive/audit"
 	"streamuploader/drive/journal"
 	"streamuploader/drive/meta"
 	"streamuploader/drive/objerr"
 	"streamuploader/drive/sidecar"
+	"streamuploader/drive/snapshot"
 	"streamuploader/internal/extraction"
 	"streamuploader/internal/storage"
 )
@@ -38,6 +41,21 @@ type Config struct {
 	MaxEventsPerRun int
 	// MaxTextBytes bounds one .text.json read.
 	MaxTextBytes int64
+	// Snapshot syncs the index with search/{tenant}/ in the bucket: at
+	// start a published generation the local directory does not have is
+	// adopted instead of rebuilt, and every commit is published so that
+	// servers (drive server) and the next indexer process can follow it.
+	Snapshot bool
+	// GCGrace is how long a segment file no pointer references stays in the
+	// bucket; longer than any server's refresh interval plus download time.
+	GCGrace time.Duration
+	// SnapshotNow replaces the snapshot clock in tests.
+	SnapshotNow func() time.Time
+	// Checkpoints makes every fold end with an audit checkpoint that chains
+	// the folded journal events (WORM mode).
+	Checkpoints bool
+	// Lock is the object lock attached to checkpoints.
+	Lock storage.LockPolicy
 }
 
 // State is what the indexer has folded so far.
@@ -45,7 +63,10 @@ type State struct {
 	LastJournalKey string            `json:"last_journal_key"`
 	PendingText    map[string]string `json:"pending_text"`
 	SchemaVersion  string            `json:"schema_version"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	// Generation is the snapshot generation this directory was last
+	// published as or adopted from; 0 when the index was never synced.
+	Generation int64     `json:"generation,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // Report summarizes one run.
@@ -55,7 +76,16 @@ type Report struct {
 	FilesDeleted int
 	PendingText  int
 	Rebuilt      bool
-	Duration     time.Duration
+	// Adopted is set when Start replaced the local index with the
+	// published snapshot instead of rebuilding.
+	Adopted bool
+	// Published is set when the run wrote a new snapshot generation.
+	Published  bool
+	Generation int64
+	// Checkpoint is the number of the audit checkpoint this run wrote, or
+	// zero when nothing new was chained.
+	Checkpoint int64
+	Duration   time.Duration
 }
 
 type Indexer struct {
@@ -65,12 +95,29 @@ type Indexer struct {
 	search  *sidecar.Client
 	metas   *meta.Cache
 	logger  *slog.Logger
+	snap    *snapshot.Store
 
 	runMu   sync.Mutex
 	stateMu sync.RWMutex
 	state   State
 	poke    chan struct{}
 	rebuild chan struct{}
+
+	// Snapshot bookkeeping. pointer is what this process last published
+	// or adopted; the unpublished fields describe local commits the bucket
+	// does not have yet (guarded by stateMu, changed only under runMu).
+	pointer     *snapshot.Pointer
+	pointerETag string
+	unpublished bool
+	unpubIDs    []string
+	unpubFull   bool
+	publishErr  string
+
+	// chain and head are the audit checkpoint chain; head is loaded from
+	// the bucket on first use under runMu.
+	chain      *audit.Chain
+	head       audit.Head
+	headLoaded bool
 }
 
 func New(cfg Config, store storage.Store, jstore *journal.Store, search *sidecar.Client, metas *meta.Cache, logger *slog.Logger) *Indexer {
@@ -83,10 +130,13 @@ func New(cfg Config, store storage.Store, jstore *journal.Store, search *sidecar
 	if cfg.Limits.MaxBodyBytes <= 0 {
 		cfg.Limits = sidecar.DefaultLimits
 	}
+	if cfg.GCGrace <= 0 {
+		cfg.GCGrace = 15 * time.Minute
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Indexer{
+	ix := &Indexer{
 		cfg:     cfg,
 		store:   store,
 		journal: jstore,
@@ -97,7 +147,17 @@ func New(cfg Config, store storage.Store, jstore *journal.Store, search *sidecar
 		poke:    make(chan struct{}, 1),
 		rebuild: make(chan struct{}, 1),
 	}
+	if cfg.Snapshot {
+		ix.snap = &snapshot.Store{Objects: store, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Tenant: cfg.Tenant, Logger: logger, Now: cfg.SnapshotNow}
+	}
+	if cfg.Checkpoints {
+		ix.chain = &audit.Chain{Objects: store, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Tenant: cfg.Tenant, Lock: cfg.Lock}
+	}
+	return ix
 }
+
+// Chain is the audit checkpoint chain, nil unless checkpoints are enabled.
+func (ix *Indexer) Chain() *audit.Chain { return ix.chain }
 
 // LastJournalKey is the newest journal key folded into the index; the server
 // overlays everything after it.
@@ -121,6 +181,31 @@ func (ix *Indexer) RebuildAsync() {
 	case ix.rebuild <- struct{}{}:
 	default:
 	}
+}
+
+// Status describes the indexer for /api/drive/stats.
+func (ix *Indexer) Status() map[string]any {
+	ix.stateMu.RLock()
+	defer ix.stateMu.RUnlock()
+	out := map[string]any{
+		"mode":             "indexer",
+		"snapshot":         ix.snap != nil,
+		"generation":       ix.state.Generation,
+		"last_journal_key": ix.state.LastJournalKey,
+		"pending_text":     len(ix.state.PendingText),
+		"unpublished":      ix.unpublished,
+	}
+	if ix.publishErr != "" {
+		out["last_publish_error"] = ix.publishErr
+	}
+	return out
+}
+
+// Generation is the snapshot generation of the local index, 0 when never synced.
+func (ix *Indexer) Generation() int64 {
+	ix.stateMu.RLock()
+	defer ix.stateMu.RUnlock()
+	return ix.state.Generation
 }
 
 func (ix *Indexer) statePath() string {
@@ -153,6 +238,7 @@ func (ix *Indexer) saveState() error {
 	st := ix.state
 	ix.stateMu.RUnlock()
 	st.UpdatedAt = time.Now().UTC()
+	st.SchemaVersion = ix.search.SchemaVersion()
 	body, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
@@ -164,31 +250,65 @@ func (ix *Indexer) saveState() error {
 	return os.Rename(tmp, ix.statePath())
 }
 
-// Start opens the sidecar and makes the index consistent with the bucket: a
-// missing state file or a schema mismatch triggers a full rebuild, then the
-// journal is folded up to now.
+// Start opens the sidecar and makes the index consistent with the bucket.
+// With snapshots on, a published generation the local directory does not
+// match is adopted; otherwise a missing state file or a schema mismatch
+// triggers a full rebuild. Then the journal is folded up to now and the
+// result is published.
 func (ix *Indexer) Start(ctx context.Context) (Report, error) {
 	ix.runMu.Lock()
 	defer ix.runMu.Unlock()
-	needRebuild := false
+	rep := Report{}
+	localOK := true
 	if err := ix.search.Start(ctx); err != nil {
-		if errors.Is(err, sidecar.ErrSchemaMismatch) {
-			ix.logger.Warn("index_schema_mismatch_rebuilding", "error", err)
-			needRebuild = true
-		} else {
-			return Report{}, err
+		if !errors.Is(err, sidecar.ErrSchemaMismatch) {
+			return rep, err
 		}
+		ix.logger.Warn("index_schema_mismatch_clearing", "error", err)
+		if err := ix.search.Reset(ctx); err != nil {
+			return rep, fmt.Errorf("reset index: %w", err)
+		}
+		localOK = false
 	}
-	if !needRebuild {
+	if localOK {
 		found, err := ix.loadState()
 		if err != nil {
-			ix.logger.Warn("index_state_unreadable_rebuilding", "error", err)
-			needRebuild = true
+			ix.logger.Warn("index_state_unreadable", "error", err)
+			localOK = false
 		} else if !found {
-			needRebuild = true
+			localOK = false
 		}
 	}
-	if needRebuild {
+	var remote *snapshot.Pointer
+	remoteETag := ""
+	if ix.snap != nil {
+		p, etag, found, err := ix.snap.ReadPointer(ctx)
+		if err != nil {
+			return rep, err
+		}
+		if found {
+			if want := ix.search.SchemaVersion(); p.SchemaVersion != want {
+				ix.logger.Warn("index_snapshot_schema_differs", "published", p.SchemaVersion, "sidecar", want, "note", "the published snapshot is ignored and will be replaced")
+			} else {
+				remote, remoteETag = p, etag
+			}
+		}
+	}
+	if remote != nil {
+		adopt := !localOK
+		if localOK && ix.Generation() != remote.Generation {
+			ix.logger.Info("index_snapshot_generation_differs", "local", ix.Generation(), "published", remote.Generation)
+			adopt = true
+		}
+		if adopt {
+			if err := ix.adoptLocked(ctx, remote, remoteETag); err != nil {
+				return rep, fmt.Errorf("adopt index snapshot: %w", err)
+			}
+			rep.Adopted = true
+			localOK = true
+		}
+	}
+	if !localOK {
 		return ix.rebuildLocked(ctx)
 	}
 	if ix.metas.Len() == 0 {
@@ -204,7 +324,64 @@ func (ix *Indexer) Start(ctx context.Context) (Report, error) {
 			return ix.rebuildLocked(ctx)
 		}
 	}
-	return ix.runOnceLocked(ctx)
+	if ix.snap != nil && !rep.Adopted {
+		// Local commits the bucket does not have: a crash between commit
+		// and publish, a deleted pointer, or snapshots newly switched on.
+		st, err := ix.search.Stats(ctx)
+		if err != nil {
+			return rep, err
+		}
+		ix.pointer, ix.pointerETag = remote, remoteETag
+		if remote == nil || remote.Opstamp != st.Opstamp {
+			ix.markUnpublished(nil, true)
+		}
+	}
+	tail, err := ix.runOnceLocked(ctx)
+	rep.Events = tail.Events
+	rep.FilesIndexed = tail.FilesIndexed
+	rep.FilesDeleted = tail.FilesDeleted
+	rep.PendingText = tail.PendingText
+	rep.Published = tail.Published
+	rep.Generation = tail.Generation
+	rep.Duration = tail.Duration
+	return rep, err
+}
+
+// adoptLocked replaces the local index with the published snapshot: the
+// sidecar is stopped while files and meta.json are swapped, then the state
+// and the meta cache are taken from the pointer and the bucket.
+func (ix *Indexer) adoptLocked(ctx context.Context, p *snapshot.Pointer, etag string) error {
+	ix.logger.Info("index_snapshot_adopting", "generation", p.Generation, "files", len(p.Files), "num_docs", p.NumDocs)
+	ix.search.Stop()
+	fetched, err := ix.snap.Download(ctx, p, ix.cfg.IndexDir)
+	if err != nil {
+		return err
+	}
+	if _, err := snapshot.Prune(ix.cfg.IndexDir, p.Files); err != nil {
+		return err
+	}
+	if err := ix.search.Start(ctx); err != nil {
+		return err
+	}
+	pending := make(map[string]string, len(p.PendingText))
+	for k, v := range p.PendingText {
+		pending[k] = v
+	}
+	ix.stateMu.Lock()
+	ix.state = State{LastJournalKey: p.LastJournalKey, PendingText: pending, Generation: p.Generation}
+	ix.unpublished, ix.unpubIDs, ix.unpubFull, ix.publishErr = false, nil, false, ""
+	ix.stateMu.Unlock()
+	if err := ix.saveState(); err != nil {
+		return err
+	}
+	fresh := meta.NewCache()
+	if _, err := fresh.LoadSnapshots(ctx, ix.store, ix.cfg.Bucket, ix.cfg.Prefix, ix.cfg.Tenant); err != nil {
+		return fmt.Errorf("load snapshots: %w", err)
+	}
+	ix.metas.ReplaceAll(fresh.All())
+	ix.pointer, ix.pointerETag = p, etag
+	ix.logger.Info("index_snapshot_adopted", "generation", p.Generation, "fetched", fetched, "files_cached", ix.metas.Len())
+	return nil
 }
 
 // RunOnce folds new journal events and newly available text.
@@ -236,7 +413,7 @@ func (ix *Indexer) RunLoop(ctx context.Context, interval time.Duration) {
 			if rep, err := ix.Rebuild(ctx); err != nil {
 				ix.logger.Error("index_rebuild_failed", "error", err)
 			} else {
-				ix.logger.Info("index_rebuilt", "files", rep.FilesIndexed, "pending_text", rep.PendingText, "duration", rep.Duration)
+				ix.logger.Info("index_rebuilt", "files", rep.FilesIndexed, "pending_text", rep.PendingText, "generation", rep.Generation, "duration", rep.Duration)
 			}
 		case <-ix.poke:
 			// Coalesce a burst of pokes into one run shortly after the last.
@@ -254,8 +431,8 @@ func (ix *Indexer) runAndLog(ctx context.Context) {
 		ix.logger.Error("index_run_failed", "error", err)
 		return
 	}
-	if rep.Events > 0 || rep.FilesIndexed > 0 || rep.FilesDeleted > 0 {
-		ix.logger.Info("index_run", "events", rep.Events, "indexed", rep.FilesIndexed, "deleted", rep.FilesDeleted, "pending_text", rep.PendingText, "duration", rep.Duration)
+	if rep.Events > 0 || rep.FilesIndexed > 0 || rep.FilesDeleted > 0 || rep.Published {
+		ix.logger.Info("index_run", "events", rep.Events, "indexed", rep.FilesIndexed, "deleted", rep.FilesDeleted, "pending_text", rep.PendingText, "published", rep.Published, "generation", rep.Generation, "duration", rep.Duration)
 	}
 }
 
@@ -270,6 +447,7 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 	}
 	ix.stateMu.RUnlock()
 
+	foldStart := lastKey
 	entries, err := ix.journal.ListAfter(ctx, ix.cfg.Tenant, lastKey, ix.cfg.MaxEventsPerRun)
 	if err != nil {
 		return rep, err
@@ -322,8 +500,17 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 			if err := ix.saveState(); err != nil {
 				return rep, err
 			}
+			// The pointer's last_journal_key moves too, so servers do not
+			// overlay events that carry no file state.
+			ix.markUnpublished(nil, false)
+		}
+		if rep.Checkpoint, err = ix.checkpoint(ctx, foldStart, entries, lastKey); err != nil {
+			return rep, err
 		}
 		rep.PendingText = len(pending)
+		if err := ix.publishPendingLocked(ctx, &rep, nil); err != nil {
+			return rep, err
+		}
 		rep.Duration = time.Since(started)
 		return rep, nil
 	}
@@ -362,9 +549,11 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 	if err := ix.search.Upsert(ctx, docs); err != nil {
 		return rep, err
 	}
-	if _, err := ix.search.Commit(ctx); err != nil {
+	committed, err := ix.search.Commit(ctx)
+	if err != nil {
 		return rep, err
 	}
+	ix.markUnpublished(order, false)
 	for _, f := range snapshots {
 		ix.metas.Put(f)
 		if err := meta.WriteSnapshot(ctx, ix.store, ix.cfg.Bucket, ix.cfg.Prefix, f); err != nil {
@@ -380,9 +569,57 @@ func (ix *Indexer) runOnceLocked(ctx context.Context) (Report, error) {
 	if err := ix.saveState(); err != nil {
 		return rep, err
 	}
+	if rep.Checkpoint, err = ix.checkpoint(ctx, foldStart, entries, lastKey); err != nil {
+		return rep, err
+	}
 	rep.PendingText = len(pending)
+	if err := ix.publishPendingLocked(ctx, &rep, &committed); err != nil {
+		return rep, err
+	}
 	rep.Duration = time.Since(started)
 	return rep, nil
+}
+
+// checkpoint extends the audit chain over every journal event between the
+// chain head and lastKey. The folded entries are reused when they line up
+// with the head; after a rebuild or a crash between the state save and the
+// checkpoint write, the uncovered range is fetched so the chain never has a
+// gap and every event is chained exactly once.
+func (ix *Indexer) checkpoint(ctx context.Context, foldStart string, entries []journal.Entry, lastKey string) (int64, error) {
+	if ix.chain == nil {
+		return 0, nil
+	}
+	if !ix.headLoaded {
+		head, err := ix.chain.Head(ctx)
+		if err != nil {
+			return 0, err
+		}
+		ix.head = head
+		ix.headLoaded = true
+	}
+	var batch []journal.Entry
+	if foldStart > ix.head.LastKey {
+		gap, err := ix.journal.ListRange(ctx, ix.cfg.Tenant, ix.head.LastKey, foldStart)
+		if err != nil {
+			return 0, err
+		}
+		batch = append(batch, gap...)
+	}
+	for _, e := range entries {
+		if e.Key > ix.head.LastKey {
+			batch = append(batch, e)
+		}
+	}
+	if len(batch) == 0 {
+		return 0, nil
+	}
+	head, cp, err := ix.chain.Append(ctx, ix.head, batch, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("write checkpoint: %w", err)
+	}
+	ix.head = head
+	ix.logger.Info("audit_checkpoint", "n", cp.N, "events", cp.EventCount, "originals", len(cp.Originals), "first", cp.JournalRange.First, "last", cp.JournalRange.Last)
+	return cp.N, nil
 }
 
 func (ix *Indexer) setLast(lastKey string, pending map[string]string) {
@@ -390,6 +627,129 @@ func (ix *Indexer) setLast(lastKey string, pending map[string]string) {
 	ix.state.LastJournalKey = lastKey
 	ix.state.PendingText = pending
 	ix.stateMu.Unlock()
+}
+
+// markUnpublished records that the local index is ahead of the bucket. ids
+// are the files whose documents changed; full means every file (a rebuild,
+// or an unknown set after a crash).
+func (ix *Indexer) markUnpublished(ids []string, full bool) {
+	if ix.snap == nil {
+		return
+	}
+	ix.stateMu.Lock()
+	ix.unpublished = true
+	if full {
+		ix.unpubFull = true
+		ix.unpubIDs = nil
+	} else if !ix.unpubFull {
+		ix.unpubIDs = append(ix.unpubIDs, ids...)
+	}
+	ix.stateMu.Unlock()
+}
+
+// publishPendingLocked publishes when the local index is ahead of the
+// bucket. files is the result of the commit that just happened, or nil.
+func (ix *Indexer) publishPendingLocked(ctx context.Context, rep *Report, files *sidecar.IndexFiles) error {
+	if ix.snap == nil {
+		return nil
+	}
+	ix.stateMu.RLock()
+	pending := ix.unpublished
+	ix.stateMu.RUnlock()
+	if !pending {
+		rep.Generation = ix.Generation()
+		return nil
+	}
+	p, err := ix.publishLocked(ctx, files)
+	if err != nil {
+		ix.stateMu.Lock()
+		ix.publishErr = err.Error()
+		ix.stateMu.Unlock()
+		return fmt.Errorf("publish index snapshot: %w", err)
+	}
+	rep.Published = true
+	rep.Generation = p.Generation
+	return nil
+}
+
+func (ix *Indexer) publishLocked(ctx context.Context, files *sidecar.IndexFiles) (*snapshot.Pointer, error) {
+	if files == nil {
+		f, err := ix.search.Files(ctx)
+		if err != nil {
+			return nil, err
+		}
+		files = &f
+	}
+	// The bucket's pointer is the base of the next generation. Normally it
+	// is the one this process wrote; another writer is a deployment error,
+	// but its pointer is still continued from rather than overwritten
+	// blindly, so file bookkeeping stays consistent.
+	prev, prevETag := ix.pointer, ix.pointerETag
+	etag, found, err := ix.snap.HeadPointer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !found && prev != nil:
+		ix.logger.Warn("index_snapshot_pointer_missing_republishing", "local_generation", prev.Generation)
+		prev = nil
+	case found && (prev == nil || etag != prevETag):
+		p, _, found2, err := ix.snap.ReadPointer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if found2 {
+			if prev != nil {
+				ix.logger.Warn("index_snapshot_pointer_changed_by_another_writer", "local_generation", prev.Generation, "published_generation", p.Generation)
+			}
+			prev = p
+		}
+	}
+	ix.stateMu.RLock()
+	pub := snapshot.Publication{
+		MetaJSON:       files.MetaJSON,
+		Files:          files.Files,
+		Opstamp:        files.Opstamp,
+		NumDocs:        files.NumDocs,
+		SchemaVersion:  ix.search.SchemaVersion(),
+		Tokenizer:      ix.search.Tokenizer,
+		LastJournalKey: ix.state.LastJournalKey,
+		PendingText:    ix.state.PendingText,
+		Changed:        ix.unpubIDs,
+		Full:           ix.unpubFull,
+	}
+	ix.stateMu.RUnlock()
+	p, newETag, err := ix.snap.Publish(ctx, pub, prev, ix.cfg.IndexDir, ix.cfg.GCGrace)
+	if errors.Is(err, snapshot.ErrLocalFileMissing) {
+		// The directory changed since the file list was taken; ask again.
+		ix.logger.Warn("index_snapshot_file_list_stale_retrying", "error", err)
+		f, ferr := ix.search.Files(ctx)
+		if ferr != nil {
+			return nil, ferr
+		}
+		pub.MetaJSON, pub.Files, pub.Opstamp, pub.NumDocs = f.MetaJSON, f.Files, f.Opstamp, f.NumDocs
+		p, newETag, err = ix.snap.Publish(ctx, pub, prev, ix.cfg.IndexDir, ix.cfg.GCGrace)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ix.pointer, ix.pointerETag = p, newETag
+	ix.stateMu.Lock()
+	ix.state.Generation = p.Generation
+	ix.unpublished, ix.unpubIDs, ix.unpubFull, ix.publishErr = false, nil, false, ""
+	ix.stateMu.Unlock()
+	if err := ix.saveState(); err != nil {
+		return nil, err
+	}
+	if n, err := ix.snap.SweepOrphans(ctx, p, ix.cfg.GCGrace); err != nil {
+		ix.logger.Warn("index_snapshot_sweep_failed", "error", err)
+	} else if n > 0 {
+		ix.logger.Info("index_snapshot_orphans_deleted", "count", n)
+	}
+	if _, err := snapshot.Prune(ix.cfg.IndexDir, p.Files); err != nil {
+		ix.logger.Warn("index_dir_prune_failed", "error", err)
+	}
+	return p, nil
 }
 
 // fetchText reads the file's .text.json. A missing object is not an error:
@@ -476,6 +836,8 @@ func (ix *Indexer) rebuildLocked(ctx context.Context) (Report, error) {
 	if _, err := ix.search.Commit(ctx); err != nil {
 		return rep, err
 	}
+	// Everything changed from a follower's point of view.
+	ix.markUnpublished(nil, true)
 	// Snapshots that are missing from the cache were never written; the
 	// journal after the newest snapshot event fills the gap.
 	ix.setLast(lastKey, pending)
@@ -484,13 +846,13 @@ func (ix *Indexer) rebuildLocked(ctx context.Context) (Report, error) {
 	}
 	rep.PendingText = len(pending)
 	tail, err := ix.runOnceLocked(ctx)
-	if err != nil {
-		return rep, err
-	}
 	rep.Events = tail.Events
 	rep.FilesIndexed += tail.FilesIndexed
 	rep.FilesDeleted += tail.FilesDeleted
 	rep.PendingText = tail.PendingText
+	rep.Published = tail.Published
+	rep.Generation = tail.Generation
+	rep.Checkpoint = tail.Checkpoint
 	rep.Duration = time.Since(started)
-	return rep, nil
+	return rep, err
 }

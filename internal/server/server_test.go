@@ -3011,6 +3011,112 @@ func TestDownloadHeadersUseCachePolicy(t *testing.T) {
 	}
 }
 
+func TestWORMModeDisablesDestructiveBackendRoutes(t *testing.T) {
+	store := &fakeStore{objects: map[string][]byte{"uploads/test/file.txt": []byte("hello")}}
+	cfg := config.Config{
+		Mode:            "standalone_cross_origin",
+		PublicBaseURL:   "http://example.test",
+		UploadBasePath:  "/api/upload",
+		BackendBasePath: "/internal",
+		AllowedOrigins:  []string{"*"},
+		Bucket:          "bucket",
+		SessionTTL:      time.Hour,
+		MaxUploadBytes:  1024,
+		EnableSharedKey: true,
+		WORMMode:        true,
+	}
+	app := newTestServer(t, New(cfg, store).Handler())
+	defer app.Close()
+
+	for _, target := range []string{"/internal/objects/" + url.PathEscape("uploads/test/file.txt"), "/internal/file/shared-keys/abc"} {
+		req, _ := http.NewRequest(http.MethodDelete, app.URL+target, nil)
+		resp := do(t, req)
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed || body["code"] != "worm_readonly" {
+			t.Fatalf("DELETE %s: status %d code %q", target, resp.StatusCode, body["code"])
+		}
+	}
+	store.mu.Lock()
+	_, ok := store.objects["uploads/test/file.txt"]
+	store.mu.Unlock()
+	if !ok {
+		t.Fatal("object was deleted in WORM mode")
+	}
+	// Reads on the backend listener keep working.
+	resp, err := http.Get(app.URL + "/internal/objects/" + url.PathEscape("uploads/test/file.txt") + "/extracted-content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Fatalf("read route refused: %d", resp.StatusCode)
+	}
+}
+
+func TestObjectLockOnFinalUpload(t *testing.T) {
+	store := &lockRecordingStore{fakeStore: &fakeStore{objects: map[string][]byte{}}}
+	cfg := config.Config{
+		Mode:           "standalone_cross_origin",
+		PublicBaseURL:  "http://example.test",
+		UploadBasePath: "/api/upload",
+		AllowedOrigins: []string{"*"},
+		Bucket:         "bucket",
+		SessionTTL:     time.Hour,
+		MaxUploadBytes: 1024,
+		ObjectLock:     storage.LockPolicy{Mode: storage.LockModeCompliance, Period: 24 * time.Hour},
+	}
+	app := newTestServer(t, New(cfg, store).Handler())
+	defer app.Close()
+
+	var key model.CreateUploadKeyResponse
+	decode(t, postJSON(t, app.URL+"/api/upload/keys", `{"file_name":"hello.txt","content_type":"text/plain"}`), &key)
+	req, _ := http.NewRequest(http.MethodPut, app.URL+"/api/upload/keys/"+key.UploadKey+"/content", strings.NewReader("hello"))
+	req.Header.Set("Content-Type", "text/plain")
+	resp := do(t, req)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status %d", resp.StatusCode)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	r, ok := store.retention[key.ObjectKey]
+	if !ok || r == nil || r.Mode != storage.LockModeCompliance || !r.RetainUntil.After(time.Now().Add(23*time.Hour)) {
+		t.Fatalf("final object retention = %+v (recorded %v)", r, store.retention)
+	}
+	for k, r := range store.retention {
+		if k != key.ObjectKey && r != nil {
+			t.Fatalf("non-final object %s was locked: %+v", k, r)
+		}
+	}
+}
+
+// lockRecordingStore remembers the retention passed with each put or copy.
+type lockRecordingStore struct {
+	*fakeStore
+	retention map[string]*storage.Retention
+}
+
+func (s *lockRecordingStore) record(key string, r *storage.Retention) {
+	s.mu.Lock()
+	if s.retention == nil {
+		s.retention = map[string]*storage.Retention{}
+	}
+	s.retention[key] = r
+	s.mu.Unlock()
+}
+
+func (s *lockRecordingStore) PutObject(ctx context.Context, input storage.PutInput) (storage.PutResult, error) {
+	s.record(input.Key, input.Retention)
+	return s.fakeStore.PutObject(ctx, input)
+}
+
+func (s *lockRecordingStore) CopyObject(ctx context.Context, input storage.CopyInput) (storage.CopyResult, error) {
+	s.record(input.Key, input.Retention)
+	return s.fakeStore.CopyObject(ctx, input)
+}
+
 func TestBackendDeleteObjectSamePort(t *testing.T) {
 	store := &fakeStore{objects: map[string][]byte{"uploads/test/file.txt": []byte("hello")}}
 	cfg := config.Config{

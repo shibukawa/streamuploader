@@ -26,8 +26,11 @@ const api = {
   search(params) { return this.call("GET", "/api/drive/search?" + new URLSearchParams(params)); },
   facets(params) { return this.call("GET", "/api/drive/facets?" + new URLSearchParams(params)); },
   file(id) { return this.call("GET", `/api/drive/files/${id}`); },
+  info() { return this.call("GET", "/api/drive/info"); },
   patch(id, body) { return this.call("PATCH", `/api/drive/files/${id}`, body); },
   remove(id) { return this.call("DELETE", `/api/drive/files/${id}`); },
+  versions(id) { return this.call("GET", `/api/drive/files/${id}/versions`); },
+  newVersion(id, upload, revision) { return this.call("POST", `/api/drive/files/${id}/versions`, { upload, expected_revision: revision }); },
   createUploadKey(file) {
     return this.call("POST", "/api/upload/keys", { file_name: file.name, content_type: file.type || "application/octet-stream", size_bytes: file.size });
   },
@@ -41,7 +44,28 @@ const state = {
   hits: [],
   selectedId: null,
   expanded: new Set(),
+  // worm is "off", "append_only" or "strict"; the server refuses what the
+  // UI hides, this only keeps the panel honest.
+  worm: "off",
 };
+const WORM_LABEL = { append_only: "WORM: 追記のみ", strict: "WORM: 厳格" };
+const WORM_HINT = {
+  append_only: "監査モード（追記のみ）: タグの追加と、未設定の著者・位置の記入はできますが、名前の変更、タグの削除、ファイルの削除はできません。",
+  strict: "監査モード（厳格）: 登録後のメタデータ変更と削除はできません。内容の更新は「新しい版」としてアップロードし、以前の版も残ります。",
+};
+
+async function loadInfo() {
+  try {
+    const info = await api.info();
+    state.worm = info?.worm?.mode || "off";
+  } catch { state.worm = "off"; }
+  const badge = $("wormBadge");
+  if (!badge) return;
+  if (state.worm === "off") { badge.hidden = true; return; }
+  badge.hidden = false;
+  badge.textContent = WORM_LABEL[state.worm] || "WORM";
+  badge.title = WORM_HINT[state.worm] || "";
+}
 
 const ROOTS = [
   { id: "tagTree", path: "/tags", exact: true },
@@ -229,31 +253,47 @@ async function selectFile(id) {
   let f;
   try { f = await api.file(id); } catch (e) { panel.innerHTML = `<p class='msg'>${esc(e.message)}</p>`; return; }
   const tags = (f.tags || []).slice();
+  const original = new Set(tags);
+  const worm = state.worm;
+  const strict = worm === "strict";
+  const appendOnly = worm === "append_only";
+  const canEditName = !strict && !appendOnly;
+  const canEditAuthor = !strict && !(appendOnly && f.author?.override);
+  const versions = (f.versions || []).length;
+  const versionRows = (f.versions || []).map((v, i) =>
+    `<li><a href="/api/drive/files/${esc(f.file_id)}/versions/${i + 1}/download">版 ${i + 1}</a> <span class="msg">${fmtDate(v.at)} ${fmtSize(v.size_bytes)}</span></li>`).join("");
   panel.innerHTML = `
     ${f.urls.thumbnail ? `<img class="thumb-large" src="${esc(f.urls.thumbnail)}" alt="" onerror="this.remove()">` : ""}
     <h3>${esc(f.name)}</h3>
+    ${worm !== "off" ? `<p class="worm-hint">${esc(WORM_HINT[worm] || "")}</p>` : ""}
     <dl>
       <dt>種類</dt><dd>${esc(f.content_type || "")}</dd>
       <dt>サイズ</dt><dd>${fmtSize(f.size_bytes)}</dd>
       <dt>追加</dt><dd>${fmtDate(f.dates?.uploaded)}</dd>
       <dt>更新</dt><dd>${fmtDate(f.dates?.modified)}</dd>
       <dt>著者</dt><dd>${esc(f.author?.extracted || "") || "<span class='msg'>（未抽出）</span>"}</dd>
-      <dt>改訂</dt><dd>${f.revision}</dd>
+      <dt>改訂</dt><dd>${f.revision}${versions ? `（版 ${versions + 1}）` : ""}</dd>
     </dl>
-    <label>名前</label><input type="text" id="dName" value="${esc(f.name)}">
-    <label>タグ（Enter で追加。「/」で階層）</label>
+    <label>名前</label><input type="text" id="dName" value="${esc(f.name)}"${canEditName ? "" : " disabled"}>
+    <label>タグ${strict ? "" : "（Enter で追加。「/」で階層）"}</label>
     <div class="tagedit" id="dTags"></div>
-    <label>著者（上書き）</label><input type="text" id="dAuthor" value="${esc(f.author?.override || "")}" placeholder="${esc(f.author?.extracted || "")}">
+    <label>著者（上書き）</label><input type="text" id="dAuthor" value="${esc(f.author?.override || "")}" placeholder="${esc(f.author?.extracted || "")}"${canEditAuthor ? "" : " disabled"}>
+    ${versions ? `<label>以前の版</label><ul class="versions">${versionRows}</ul>` : ""}
     <div class="row">
-      <button class="btn primary" id="dSave">保存</button>
+      ${strict ? "" : `<button class="btn primary" id="dSave">保存</button>`}
       <a class="btn" href="${esc(f.urls.download)}">ダウンロード</a>
-      <button class="btn danger" id="dDelete">削除</button>
+      <label class="btn" for="dVersionInput">新しい版</label>
+      <input id="dVersionInput" type="file" hidden>
+      ${worm === "off" ? `<button class="btn danger" id="dDelete">削除</button>` : ""}
     </div>
     <p class="msg" id="dMsg"></p>`;
   const tagBox = $("dTags");
   const renderTags = () => {
-    tagBox.innerHTML = tags.map((t, i) => `<span class="chip">${esc(t.slice(1))}<button type="button" data-i="${i}" aria-label="削除">×</button></span>`).join("") + `<input id="dTagInput" placeholder="タグを追加">`;
+    const removable = (t) => worm === "off" || (appendOnly && !original.has(t));
+    tagBox.innerHTML = tags.map((t, i) => `<span class="chip">${esc(t.slice(1))}${removable(t) ? `<button type="button" data-i="${i}" aria-label="削除">×</button>` : ""}</span>`).join("")
+      + (strict ? "" : `<input id="dTagInput" placeholder="タグを追加">`);
     tagBox.querySelectorAll("button[data-i]").forEach((b) => b.addEventListener("click", () => { tags.splice(Number(b.dataset.i), 1); renderTags(); }));
+    if (strict) return;
     $("dTagInput").addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
@@ -265,18 +305,35 @@ async function selectFile(id) {
     });
   };
   renderTags();
-  $("dSave").addEventListener("click", async () => {
+  $("dSave")?.addEventListener("click", async () => {
     const msg = $("dMsg");
     msg.textContent = "保存中…";
     try {
-      await api.patch(id, { name: $("dName").value, tags, author: $("dAuthor").value, expected_revision: f.revision });
+      const body = { tags, expected_revision: f.revision };
+      if (canEditName) body.name = $("dName").value;
+      if (canEditAuthor) body.author = $("dAuthor").value;
+      await api.patch(id, body);
       msg.textContent = "保存しました";
       await refresh();
       await renderTrees();
       selectFile(id);
-    } catch (e) { msg.textContent = "保存できませんでした: " + e.message; }
+    } catch (e) { msg.textContent = (e.code === "worm_readonly" ? "監査モードのため変更できません: " : "保存できませんでした: ") + e.message; }
   });
-  $("dDelete").addEventListener("click", async () => {
+  $("dVersionInput").addEventListener("change", async (ev) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) return;
+    const msg = $("dMsg");
+    msg.textContent = "新しい版をアップロード中…";
+    try {
+      const item = await uploadOne(file, () => {});
+      await api.newVersion(id, item, f.revision);
+      msg.textContent = "新しい版を登録しました";
+      await refresh();
+      selectFile(id);
+    } catch (e) { msg.textContent = "新しい版を登録できませんでした: " + e.message; }
+  });
+  $("dDelete")?.addEventListener("click", async () => {
     if (!confirm(`「${f.name}」を削除しますか？`)) return;
     try {
       await api.remove(id);
@@ -358,6 +415,32 @@ function putWithProgress(url, file, headers, onProgress) {
   });
 }
 
+// uploadOne runs the streamuploader flow for one file and returns the
+// uploaded item, ready to register or to attach as a new version.
+async function uploadOne(file, onProgress) {
+  const key = await api.createUploadKey(file);
+  const url = `/api/upload/keys/${encodeURIComponent(key.upload_key)}/content`;
+  const headers = { "Content-Type": file.type || "application/octet-stream" };
+  onProgress(0, "送信中");
+  try {
+    await putWithProgress(url, file, headers, (p) => onProgress(p));
+  } catch (e) {
+    if (e.code === "document_password_required") {
+      const pw = prompt(`「${file.name}」はパスワード付きです。パスワードを入力してください。`);
+      if (pw === null) throw new Error("キャンセルしました");
+      await putWithProgress(url, file, { ...headers, "X-Document-Password": pw }, (p) => onProgress(p));
+    } else throw e;
+  }
+  onProgress(1, "処理中");
+  for (let i = 0; i < 20; i++) {
+    const res = await api.wait([key.upload_key]);
+    const it = res.items?.[0];
+    if (it && it.status === "uploaded") return it;
+    if (it && (it.status === "failed" || it.status === "canceled" || it.status === "expired")) throw new Error(it.error || it.status);
+  }
+  throw new Error("timeout");
+}
+
 async function uploadFiles(files) {
   const tag = currentTag();
   const tags = tag ? [tag] : [];
@@ -369,28 +452,7 @@ async function uploadFiles(files) {
     const progress = row.querySelector("progress");
     const status = row.querySelector(".status");
     try {
-      const key = await api.createUploadKey(file);
-      const url = `/api/upload/keys/${encodeURIComponent(key.upload_key)}/content`;
-      const headers = { "Content-Type": file.type || "application/octet-stream" };
-      status.textContent = "送信中";
-      try {
-        await putWithProgress(url, file, headers, (p) => { progress.value = p; });
-      } catch (e) {
-        if (e.code === "document_password_required") {
-          const pw = prompt(`「${file.name}」はパスワード付きです。パスワードを入力してください。`);
-          if (pw === null) throw new Error("キャンセルしました");
-          await putWithProgress(url, file, { ...headers, "X-Document-Password": pw }, (p) => { progress.value = p; });
-        } else throw e;
-      }
-      status.textContent = "処理中";
-      let item = null;
-      for (let i = 0; i < 20 && !item; i++) {
-        const res = await api.wait([key.upload_key]);
-        const it = res.items?.[0];
-        if (it && it.status === "uploaded") item = it;
-        else if (it && (it.status === "failed" || it.status === "canceled" || it.status === "expired")) throw new Error(it.error || it.status);
-      }
-      if (!item) throw new Error("timeout");
+      const item = await uploadOne(file, (p, phase) => { progress.value = p; if (phase) status.textContent = phase; });
       await api.register(item, tags);
       status.textContent = "完了";
       progress.value = 1;
@@ -428,4 +490,5 @@ document.addEventListener("drop", (ev) => {
 
 const initial = viewFromHash();
 if (initial.kind === "search") $("searchInput").value = initial.q;
+loadInfo();
 setView(initial, false);

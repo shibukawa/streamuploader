@@ -28,7 +28,7 @@ func (s *Server) overlayStates(ctx context.Context) (map[string]*meta.File, erro
 	}
 	s.overlay.mu.Lock()
 	defer s.overlay.mu.Unlock()
-	if s.overlay.states != nil && s.overlay.since == since && time.Since(s.overlay.fetchedAt) < s.cfg.OverlayTTL {
+	if s.cfg.OverlayTTL > 0 && s.overlay.states != nil && s.overlay.since == since && time.Since(s.overlay.fetchedAt) < s.cfg.OverlayTTL {
 		return s.overlay.states, nil
 	}
 	entries, err := s.deps.Journal.ListAfter(ctx, s.cfg.Tenant, since, s.cfg.MaxOverlay)

@@ -1,0 +1,59 @@
+id: system:drive-deployment-targets
+type: system
+title: Deployment targets and their limits
+summary: The compute services the init kits target - docker compose on a VM, AWS ECS Fargate, Google Cloud Run, Azure Container Apps, Cloudflare Containers - with the request-size, timeout, scaling and storage facts that decide what a kit may generate and which combinations init refuses.
+lifecycle: active
+facts:
+  observed_2026_10_09:
+    compose_vm:
+      compute: docker compose on any host; no platform request limits
+      storage: RustFS container for local use, any S3-compatible bucket for production
+      state: the index cache on a named volume mounted at /tmp (the only directory the distroless nonroot user can write); TLS termination is outside the kit (open question tls-ingress in requirement:drive-init-subcommand)
+      verified_2026_10_09: Dockerfile.drive builds on docker 29 arm64; the generated kit passed scripts/drive-compose-check.sh including the rebuild from the bucket
+    aws:
+      compute: ECS on Fargate behind an Application Load Balancer (no request-body cap; idle timeout configurable up to 4000 s), or one EC2 host running the compose kit
+      excluded: Lambda (6 MB payload, requirement:local-drive-portable-deployment); App Runner - 120 s total request timeout that includes reading the body (docs.aws.amazon.com/apprunner/latest/dg/develop.html)
+      storage: S3 (egress billed) or R2 and B2 (zero egress) through the same S3 settings
+      registry_and_secrets: the task pulls the ghcr.io image (public directly; private through repositoryCredentials pointing at a Secrets Manager secret); SSM Parameter Store or Secrets Manager for environment secrets
+    google:
+      compute: Cloud Run service; all-in-one needs min instances 1, max instances 1 and CPU always allocated so the indexer loop runs between requests; a Cloud Run Job hosts the indexer once the split topology exists
+      request_size: 32 MiB per request on HTTP/1; HTTP/2 end-to-end lifts it but needs h2c in the Go server (capability h2c in requirement:streamuploader-drive-enablers, planned)
+      timeout_and_tmp: 60 min per request; /tmp is memory-backed, so instance memory must cover the index (1 to 2 GiB for a small tenant)
+      storage: GCS through its S3 interoperability API with HMAC keys, or R2 and B2
+      registry_and_secrets: Cloud Run deploys only images in Artifact Registry (or public Docker Hub), so the ghcr.io image is mirrored through an Artifact Registry remote repository or pushed a second time by deploy.sh (verify remote-repository support for ghcr.io); Secret Manager exposed as environment variables
+    azure:
+      compute: Container Apps; all-in-one pins min and max replicas to 1; HTTP ingress has a 240 s request timeout (learn.microsoft.com/azure/container-apps/ingress-overview); no documented request-body cap was found
+      storage_gap: Azure Blob Storage is not S3-compatible and the Drive has no Blob adapter, so an azure kit must point at R2, B2 or S3 (open question azure-storage in requirement:drive-init-subcommand)
+      registry_and_secrets: Container Apps pulls ghcr.io directly (registry credentials as a Container Apps secret for a private image); Container Apps secrets or Key Vault references for environment secrets
+    cloudflare:
+      storage: R2 is the recommended bucket for every target (zero egress, system:object-storage-providers); presigned URLs work only on the S3 API endpoint, not custom domains
+      compute: in scope by user decision 2026-10-09; Cloudflare Containers - open beta (changelog 2026-02-25 raised account limits); instance types lite (1/16 vCPU, 256 MiB, 2 GB disk) to standard-4 (4 vCPU, 12 GiB, 20 GB disk); billed per 10 ms of active time, sleeps when idle; always fronted by a Worker and a Durable Object (developers.cloudflare.com/containers)
+      request_body_cap: every request crosses the Cloudflare edge, so the account plan's request-body limit applies - 100 MB Free and Pro, 200 MB Business, 500 MB Enterprise; larger requests receive 413 (developers.cloudflare.com/workers/platform/limits); uploads above the cap need chunked or resumable upload (open question resumable-upload in requirement:local-drive-portable-deployment)
+      egress: container egress is billed per GB, so proxy delivery through the container doubles egress; presigned delivery to R2 is the default for this target
+      disk: the index must fit the instance disk (2 to 20 GB) and is lost when the container sleeps, so every wake rebuilds from the bucket until the S3 index snapshot exists
+  verify_before_use:
+    - Cloudflare Containers image source - wrangler builds and pushes to Cloudflare's registry; whether a ghcr.io image can be referenced directly
+    - Artifact Registry remote repositories as a ghcr.io mirror for Cloud Run
+    - Azure Container Apps request-body size limit and behaviour for multi-minute uploads
+    - Cloudflare Containers behaviour for streamed request bodies near the plan cap and for WebSocket (upload progress)
+    - Cloud Run HTTP/2 end-to-end once h2c exists in streamuploader
+    - all list prices and limits change; the kit README repeats the values with their observation date
+  combination_rules:
+    - topology split is refused for every target until server and indexer modes exist
+    - storage azure-blob is refused (no adapter)
+    - cloudflare compute defaults to presigned delivery; proxy is allowed but the README warns about egress
+    - google all-in-one emits the 32 MiB limit in the README until h2c lands
+    - every cloud all-in-one spec fixes the instance count to one
+relations:
+  - relation: informs
+    to: requirement:drive-init-subcommand
+  - relation: builds_on
+    to: requirement:local-drive-portable-deployment
+  - relation: depends_on
+    to: system:object-storage-providers
+  - relation: mentions
+    to: requirement:streamuploader-drive-enablers
+  - relation: mentions
+    to: data:search-index-snapshot
+  - relation: informs
+    to: metric:drive-operating-cost

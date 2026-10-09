@@ -36,6 +36,53 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, kind string) {
 		return
 	}
 	attachment := kind == "download"
+	if !s.recordAccess(w, r, f.FileID, key, accessKind(kind)) {
+		return
+	}
+	s.serveObject(w, r, key, contentType, filename, attachment, kind != "content" && kind != "download")
+}
+
+// accessKind names a read in the journal: content is an inline view.
+func accessKind(kind string) string {
+	if kind == "content" {
+		return "inline"
+	}
+	return kind
+}
+
+// deliverVersion serves an earlier object of a file (1-based n).
+func (s *Server) deliverVersion(w http.ResponseWriter, r *http.Request, attachment bool) {
+	f, ok, err := s.resolveFile(r.Context(), pw.PathValue(r, "id"))
+	if err != nil {
+		s.fail(w, r, "resolve_file", err)
+		return
+	}
+	if !ok || f.Deleted {
+		writeProblem(w, r, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	n, err := strconv.Atoi(pw.PathValue(r, "n"))
+	if err != nil || n < 1 || n > len(f.Versions) {
+		writeProblem(w, r, http.StatusNotFound, "no_version", "this file has no such version")
+		return
+	}
+	v := f.Versions[n-1]
+	name := v.Name
+	if name == "" {
+		name = f.Name
+	}
+	kind := "inline"
+	if attachment {
+		kind = "download"
+	}
+	if !s.recordAccess(w, r, f.FileID, v.ObjectKey, kind) {
+		return
+	}
+	s.serveObject(w, r, v.ObjectKey, v.ContentType, name, attachment, false)
+}
+
+// serveObject redirects to a presigned URL or proxies the bytes.
+func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, key, contentType, filename string, attachment, derived bool) {
 	if s.cfg.Delivery == "presigned" {
 		disposition := ""
 		if attachment {
@@ -52,7 +99,7 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, kind string) {
 		pw.Redirect(w, r, out.URL, http.StatusFound)
 		return
 	}
-	s.proxyObject(w, r, key, contentType, filename, attachment, kind != "content" && kind != "download")
+	s.proxyObject(w, r, key, contentType, filename, attachment, derived)
 }
 
 // assetFor picks the object key, content type and download name for a kind.

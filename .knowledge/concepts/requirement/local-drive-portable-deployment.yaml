@@ -16,7 +16,11 @@ facts:
     tmp: /tmp is memory-backed; size instance memory for the index cache or mount a GCS FUSE volume
   excluded_targets:
     aws_lambda: request payload limit of 6 MB makes it unsuitable for streaming uploads
-  index_cache_dir: configurable; disk on VM and Fly volumes, /tmp or FUSE on Cloud Run
+    aws_app_runner: 120 s total request timeout including body read (observed 2026-10-09)
+    cloudflare_workers_without_containers: no container runtime; Cloudflare Containers are a compute option with the plan's request-body cap (system:drive-deployment-targets)
+  tooling: requirement:drive-init-subcommand generates the per-target deployment files from one profile
+  index_cache_dir: configurable; disk on VM and Fly volumes, /tmp or FUSE on Cloud Run; since 2026-10-09 it is only a cache in every mode - a server downloads the published snapshot and an indexer adopts it, so an empty directory costs a download, not a rebuild
+  modes_2026_10_09: drive (all-in-one), drive server, drive indexer, drive index-once (Cloud Run Job or cron), drive reindex
 constraints:
   - No feature may require a persistent local volume; a volume is only a cache
   - No feature may require conditional PUT, event notifications or queues from the storage provider; those are optional accelerations

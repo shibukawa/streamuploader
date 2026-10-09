@@ -1,0 +1,190 @@
+# yaml-language-server: $schema=./security.schema.json
+mime_magic:
+  prefix_bytes: 3072
+  reject_script_uploads: true
+  allowed_script_types: {}
+  # allowed_script_types:
+  #   shell: true
+  #   python: true
+  #   powershell: true
+  #   batch: true
+  #   make: true
+  allowed_script_extensions: {}
+  # allowed_script_extensions:
+  #   sh: true
+  #   py: true
+  #   ps1: true
+  #   bat: true
+  #   makefile: true
+  allow_file_types: {}
+  # allow_file_types:
+  #   images: true
+  #   pdf: true
+  deny_file_types:
+    exe: true
+  allow_mime_types: {}
+  # allow_mime_types:
+  #   application/pdf: true
+  deny_mime_types:
+    application/vnd.microsoft.portable-executable: true
+    application/x-coredump: true
+    application/x-dosexec: true
+    application/x-elf: true
+    application/x-executable: true
+    application/x-mach-binary: true
+    application/x-msdownload: true
+    application/x-object: true
+    application/x-sharedlib: true
+  equivalent_mime_types:
+    - [application/xml, text/xml]
+    - [image/jpeg, image/pjpeg]
+    - [image/heic, image/heif, image/heic-sequence, image/heif-sequence]
+    - [application/gzip, application/x-gzip]
+    - [application/rtf, text/rtf]
+    - [application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/x-ole-storage]
+archive_guard:
+  enabled: true
+  strict: true
+  allow_encrypted: false
+  max_total_uncompressed_bytes: 536870912
+  max_single_entry_bytes: 268435456
+  max_compression_ratio: 100
+  max_entries: 10000
+  max_depth: 3
+  max_filename_bytes: 512
+  max_inspection_time_ms: 5000
+  max_probe_bytes: 67108864
+  worker_memory_bytes: 67108864
+  decompress_buffer_bytes: 32768
+clamav:
+  enabled: false
+  address: clamav:3310
+  scan_timeout_ms: 30000
+  stream_chunk_bytes: 131072
+resource_limits:
+  enabled: true
+  max_file_size_bytes: 1073741824
+  max_decompressed_size_bytes: 536870912
+  max_pdf_page_count: 500
+  max_image_width: 32768
+  max_image_height: 32768
+  max_image_pixel_count: 268435456
+  max_object_count: 100000
+  max_xml_depth: 64
+  max_zip_entries: 10000
+  max_embedded_object_count: 0
+  max_parser_time_ms: 5000
+  max_sanitized_memory_bytes: 67108864
+structural_validation:
+  enabled: true
+  strict: true
+file_sanitization:
+  enabled: true
+  default_mode: secure_default
+  per_file_type:
+    image/jpeg:
+      mode: sanitize_metadata
+    image/png:
+      mode: sanitize_metadata
+    video/quicktime:
+      mode: sanitize_metadata
+    application/pdf:
+      mode: reject_active_content
+    application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+      mode: reject_active_content
+    application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+      mode: reject_active_content
+    application/vnd.openxmlformats-officedocument.presentationml.presentation:
+      mode: reject_active_content
+    image/svg+xml:
+      mode: reject_active_or_external_content
+    text/markdown:
+      mode: reject_active_or_external_content
+    text/html:
+      mode: reject_active_or_external_content
+    application/xml:
+      mode: reject_active_or_external_content
+    application/msword:
+      mode: reject
+    application/vnd.ms-excel:
+      mode: reject
+    application/vnd.ms-powerpoint:
+      mode: reject
+    text/rtf:
+      mode: reject
+    application/rtf:
+      mode: reject
+  image_video_metadata:
+    default_mode: sanitize_metadata
+    preserve:
+      - Orientation
+      - ICC Profile
+    no_reencode: true
+  office_pdf:
+    default_mode: reject_active_content
+    full_scan_required: true
+  legacy_office:
+    default_mode: reject
+  legacy_or_complex_documents:
+    default_mode: reject
+  svg:
+    default_mode: reject_active_or_external_content
+    prefer_streaming_xml_parser: true
+    allow_data_urls: false
+  markup:
+    default_mode: reject_active_or_external_content
+    markdown_raw_html_inspection: true
+    html_active_content_inspection: true
+    xml_external_entity_resolution: disabled
+upload_deadlines:
+  enabled: true
+  marker_prefix: .uploading/
+  start_timeout: 10s
+  finish_timeout: 1m
+  cleanup_enabled: true
+  cleanup_interval: 1m
+  cleanup_mode: server_loop
+shared_key:
+  # Empty means no default expiry. Startup logs a warning when shared keys are enabled.
+  default_ttl: ""
+  max_ttl: ""
+http_cache:
+  mode: private
+  max_age: 24h
+  s_max_age: ""
+  forward_etag: true
+  forward_last_modified: true
+logging:
+  format: text
+  level: info
+thumbnails:
+  enabled: true
+  execution_mode: async
+  width: 400
+  height: 400
+  fit: contain
+  upscale: false
+  lossless_policy: force_avif_reduction
+  preferred_format: avif
+  object_key_suffix: /thumbnail
+  external_webhook_url: ""
+  external_timeout: 30s
+  video_candidate_keyframes: 10
+text_extraction:
+  enabled: true
+  execution_mode: async
+  object_key_suffix: .text.json
+  max_input_bytes: 67108864
+  max_output_bytes: 16777216
+  external_command: ""
+  external_timeout: 30s
+  enable_ocr: false
+  ocr_command: ""
+  extract_metadata: true
+  include_plain_text: true
+document_processing:
+  # PDF and OOXML Office thumbnails, the .bdf preview and search text are
+  # always generated in-process. Refuse a type with mime_magic.deny_file_types.
+  fail_upload_on_error: false
+  max_input_bytes: 67108864
+  execution_mode: async
